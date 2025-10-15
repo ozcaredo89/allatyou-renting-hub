@@ -1,0 +1,13 @@
+﻿# Root
+node_modules/
+dist/
+.env
+*.log
+
+# Frontend
+web/node_modules/
+web/dist/
+web/.env
+
+# Misc
+.DS_Store
