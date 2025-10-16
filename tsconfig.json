@@ -20,5 +20,7 @@
     "strict": true,
     "isolatedModules": true,
     "moduleDetection": "force"
-  }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "web"]
 }
