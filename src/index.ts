@@ -1,4 +1,3 @@
-// src/index.ts
 import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors, { CorsOptionsDelegate } from "cors";
@@ -8,7 +7,9 @@ const app = express();
 
 /** CORS: WEB_ORIGIN + localhost + *.vercel.app (previews) */
 const corsOptions: CorsOptionsDelegate = (req, cb) => {
-  const origin = req.header("Origin") || "";
+  // En CorsRequest no existe .header(), tomamos el header directamente
+  const origin = (req.headers?.origin as string) || "";
+
   const allowList = [
     process.env.WEB_ORIGIN,       // ej: https://allatyou-renting-hub.vercel.app  (luego: https://allatyou.com)
     "http://localhost:5173",
@@ -36,10 +37,8 @@ app.get("/", (_req: Request, res: Response) => {
   res.send("AllAtYou Renting API ✅");
 });
 
-/** Healthcheck */
 app.get("/health", (_req: Request, res: Response) => res.json({ ok: true }));
 
-/** Rutas */
 app.use("/payments", payments);
 
 const PORT = process.env.PORT || 3000;
