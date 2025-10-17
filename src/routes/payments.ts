@@ -43,11 +43,26 @@ r.post("/", async (req: Request, res: Response) => {
   const allowedStatus = new Set(["pending", "confirmed", "rejected"]);
   const safeStatus = allowedStatus.has(status) ? status : "pending";
 
+  const upperPlate = plate.toUpperCase();
+
+  const { data: v, error: vErr } = await supabase
+    .from("vehicles")
+    .select("plate")
+    .eq("plate", upperPlate)
+    .single();
+
+  if (vErr && vErr.code !== "PGRST116") {
+    return res.status(500).json({ error: vErr.message });
+  }
+  if (!v) {
+    return res.status(400).json({ error: "unknown plate" });
+  }
+
   const { data, error } = await supabase
     .from("payments")
     .insert([{
       payer_name: payer_name.trim(),
-      plate: plate.toUpperCase(),
+      plate: upperPlate,
       payment_date,
       amount,
       installment_number: installment_number ?? null,

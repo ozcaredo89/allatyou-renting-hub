@@ -63,38 +63,70 @@ export default function App() {
     return url as string;
   }
 
-  // Autocompletar por placa válida (no bloquea campos)
   useEffect(() => {
     let cancelled = false;
+
     async function fetchDriver() {
+      if (!plateValid) return;
+
       try {
         const rs = await fetch(`${API}/drivers/${f.plate}`);
         if (!rs.ok) return;
-        const data: DriverResp = await rs.json();
+        const raw = await rs.json();
         if (cancelled) return;
 
-        if (data.found && data.driver.has_credit) {
-          setPlateExists(true);
-          const n = data.driver.default_amount || 0;
-          setF(prev => ({
-            ...prev,
-            payer_name: data.driver.driver_name || prev.payer_name,
-            amountStr: n ? fmtCOP.format(n) : prev.amountStr,
-            installment_number: data.driver.default_installment
-              ? String(data.driver.default_installment)
-              : prev.installment_number,
-          }));
-        } else {
-          setPlateExists(false);
+        // Normalizamos respuesta para que el front funcione igual con ambos formatos:
+        // A) { found: true/false, driver: {...} }
+        // B) { plate, driver_name, has_credit, default_amount, default_installment }
+        let found = false;
+        let d:
+          | {
+              plate: string;
+              driver_name: string;
+              has_credit: boolean;
+              default_amount: number | null;
+              default_installment: number | null;
+            }
+          | null = null;
+
+        if ("found" in raw) {
+          found = !!raw.found;
+          d = raw.driver ?? null;
+        } else if ("plate" in raw) {
+          found = true;
+          d = raw;
+        }
+
+        setPlateExists(found);
+
+        if (found && d) {
+          // autocompletar SUGERIDO (sin bloquear)
+          if (d.driver_name) {
+            setF(prev => ({ ...prev, payer_name: d!.driver_name || prev.payer_name }));
+          }
+          if (d.has_credit) {
+            const n = d.default_amount || 0;
+            setF(prev => ({
+              ...prev,
+              amountStr: n ? new Intl.NumberFormat("es-CO").format(n) : prev.amountStr,
+              installment_number: d.default_installment
+                ? String(d.default_installment)
+                : prev.installment_number,
+            }));
+          }
         }
       } catch {
+        // ante error de red, no bloqueamos (si quieres ser estricto, pon setPlateExists(false))
         setPlateExists(true);
       }
     }
 
-    if (plateValid) fetchDriver();
-    return () => { cancelled = true; };
+    fetchDriver();
+    return () => {
+      cancelled = true;
+    };
   }, [f.plate, plateValid]);
+
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
