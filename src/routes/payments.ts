@@ -39,6 +39,10 @@ r.post("/", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "installment_number must be an integer > 0" });
   }
 
+  if (typeof proof_url !== "string" || !/^https?:\/\//i.test(proof_url)) {
+    return res.status(400).json({ error: "proof_url required (upload image first)" });
+  }
+
   // (Opcional) status whitelist
   const allowedStatus = new Set(["pending", "confirmed", "rejected"]);
   const safeStatus = allowedStatus.has(status) ? status : "pending";

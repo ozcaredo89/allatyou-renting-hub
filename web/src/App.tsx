@@ -123,6 +123,11 @@ export default function App() {
       return;
     }
 
+    if (!file) {
+      alert("Adjunta la imagen del comprobante antes de guardar.");
+      return;
+    }
+
     setLoading(true);
     try {
       const proof_url = await uploadProofIfNeeded();
@@ -245,8 +250,15 @@ export default function App() {
                 type="file"
                 accept="image/*"
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
+                required
               />
-              {file ? <div className="mt-1 text-xs text-gray-600">{file.name}</div> : null}
+              {file ? (
+                <div className="mt-1 text-xs text-gray-600">{file.name}</div>
+              ) : (
+                <div className="mt-1 text-xs text-gray-500">
+                  Debes adjuntar una imagen (jpg/png) del comprobante para poder guardar.
+                </div>
+              )}
             </div>
 
             <div>
@@ -264,7 +276,7 @@ export default function App() {
 
             <div className="md:col-span-3 flex justify-end">
               <button
-                disabled={loading || !plateValid || !plateExists}
+                disabled={loading || !plateValid || !plateExists || !file}
                 className="rounded-xl bg-black px-5 py-2.5 font-medium text-white shadow hover:opacity-90 disabled:opacity-50"
               >
                 {loading ? "Guardando..." : "Guardar pago"}
