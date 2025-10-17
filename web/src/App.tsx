@@ -11,18 +11,18 @@ type Payment = {
   status: "pending" | "confirmed" | "rejected";
 };
 
+type DriverFlat = {
+  plate: string;
+  driver_name: string;
+  has_credit: boolean;
+  default_amount: number | null;
+  default_installment: number | null;
+};
+
 type DriverResp =
   | { found: false }
-  | {
-      found: true;
-      driver: {
-        plate: string;
-        driver_name: string;
-        has_credit: boolean;
-        default_amount: number | null;
-        default_installment: number | null;
-      };
-    };
+  | { found: true; driver: DriverFlat }
+  | DriverFlat; // también soporta formato plano del backend
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -63,70 +63,58 @@ export default function App() {
     return url as string;
   }
 
+  // Autocompletar / validación de existencia de placa (acepta ambos formatos de respuesta del backend)
   useEffect(() => {
     let cancelled = false;
 
     async function fetchDriver() {
-      if (!plateValid) return;
+      // si la placa no es válida, no bloquees por existencia (ya el botón se deshabilita por formato)
+      if (!plateValid) { setPlateExists(true); return; }
 
       try {
         const rs = await fetch(`${API}/drivers/${f.plate}`);
-        if (!rs.ok) return;
-        const raw = await rs.json();
+        if (!rs.ok) { setPlateExists(false); return; }
+        const raw: DriverResp = await rs.json();
         if (cancelled) return;
 
-        // Normalizamos respuesta para que el front funcione igual con ambos formatos:
-        // A) { found: true/false, driver: {...} }
-        // B) { plate, driver_name, has_credit, default_amount, default_installment }
+        // Normalizar
         let found = false;
-        let d:
-          | {
-              plate: string;
-              driver_name: string;
-              has_credit: boolean;
-              default_amount: number | null;
-              default_installment: number | null;
-            }
-          | null = null;
+        let d: DriverFlat | null = null;
 
         if ("found" in raw) {
-          found = !!raw.found;
-          d = raw.driver ?? null;
+          if (raw.found === true) {
+            found = true;
+            d = raw.driver;
+          } else {
+            found = false;
+          }
         } else if ("plate" in raw) {
           found = true;
-          d = raw;
+          d = raw as DriverFlat;
         }
 
         setPlateExists(found);
 
         if (found && d) {
-          // autocompletar SUGERIDO (sin bloquear)
-          if (d.driver_name) {
-            setF(prev => ({ ...prev, payer_name: d!.driver_name || prev.payer_name }));
-          }
-          if (d.has_credit) {
-            const n = d.default_amount || 0;
-            setF(prev => ({
-              ...prev,
-              amountStr: n ? new Intl.NumberFormat("es-CO").format(n) : prev.amountStr,
-              installment_number: d.default_installment
-                ? String(d.default_installment)
-                : prev.installment_number,
-            }));
-          }
+          // Autocompletar sugerido (no bloquea edición)
+          setF(prev => ({
+            ...prev,
+            payer_name: d.driver_name || prev.payer_name,
+            amountStr: d.has_credit && d.default_amount ? fmtCOP.format(d.default_amount) : prev.amountStr,
+            installment_number: d.has_credit && d.default_installment
+              ? String(d.default_installment)
+              : prev.installment_number,
+          }));
         }
       } catch {
-        // ante error de red, no bloqueamos (si quieres ser estricto, pon setPlateExists(false))
+        // si hay error de red, no bloquees el envío por existencia
         setPlateExists(true);
       }
     }
 
     fetchDriver();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [f.plate, plateValid]);
-
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
