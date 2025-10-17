@@ -166,7 +166,7 @@ export default function App() {
                   setF({ ...f, plate: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })
                 }
                 maxLength={6}
-                inputMode="latin"
+                inputMode="text"
                 required
               />
               {!plateValid && f.plate ? (
