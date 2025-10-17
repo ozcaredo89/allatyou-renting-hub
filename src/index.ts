@@ -1,25 +1,46 @@
+// src/index.ts
 import "dotenv/config";
 import express, { Request, Response } from "express";
-import cors from "cors";
+import cors, { CorsOptionsDelegate } from "cors";
 import payments from "./routes/payments";
 
 const app = express();
 
-// Allows Vercel or custom domin and also localhost for dev.
-const ALLOWED_ORIGINS = [
-  process.env.WEB_ORIGIN,         // example https://allatyou-renting-hub.vercel.app  or  https://allatyou.com
-  "http://localhost:5173"
-].filter(Boolean) as string[];
+/** CORS: WEB_ORIGIN + localhost + *.vercel.app (previews) */
+const corsOptions: CorsOptionsDelegate = (req, cb) => {
+  const origin = req.header("Origin") || "";
+  const allowList = [
+    process.env.WEB_ORIGIN,       // ej: https://allatyou-renting-hub.vercel.app  (luego: https://allatyou.com)
+    "http://localhost:5173",
+  ].filter(Boolean) as string[];
 
-app.use(cors({ origin: ALLOWED_ORIGINS }));
+  let allowed = false;
+  try {
+    const host = origin ? new URL(origin).host : "";
+    allowed = allowList.includes(origin) || host.endsWith(".vercel.app");
+  } catch { /* origin vacío o inválido */ }
 
+  cb(null, { origin: allowed, optionsSuccessStatus: 200 });
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
+
+/** Logger temporal para depurar en Railway */
+app.use((req, _res, next) => {
+  console.log(`[REQ] ${req.method} ${req.path} origin=${req.headers.origin ?? "-"}`);
+  next();
+});
 
 app.get("/", (_req: Request, res: Response) => {
   res.send("AllAtYou Renting API ✅");
 });
 
-app.use("/payments", payments);  // <-- luego registras el router
+/** Healthcheck */
+app.get("/health", (_req: Request, res: Response) => res.json({ ok: true }));
+
+/** Rutas */
+app.use("/payments", payments);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
