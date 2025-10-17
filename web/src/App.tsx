@@ -41,7 +41,7 @@ export default function App() {
     status: "pending",
   });
   const [file, setFile] = useState<File | null>(null);   // comprobante
-
+  const [plateExists, setPlateExists] = useState(true);
   const plateValid = useMemo(() => PLATE_RE.test(f.plate), [f.plate]);
 
   async function load() {
@@ -74,6 +74,7 @@ export default function App() {
         if (cancelled) return;
 
         if (data.found && data.driver.has_credit) {
+          setPlateExists(true);
           const n = data.driver.default_amount || 0;
           setF(prev => ({
             ...prev,
@@ -83,9 +84,11 @@ export default function App() {
               ? String(data.driver.default_installment)
               : prev.installment_number,
           }));
+        } else {
+          setPlateExists(false);
         }
       } catch {
-        /* noop */
+        setPlateExists(true);
       }
     }
 
@@ -172,6 +175,9 @@ export default function App() {
               {!plateValid && f.plate ? (
                 <div className="mt-1 text-xs text-red-600">Formato válido: ABC123</div>
               ) : null}
+              {!plateExists && f.plate ? (
+                <div className="mt-1 text-xs text-red-600">Placa no registrada</div>
+              ) : null}
             </div>
 
             <div>
@@ -238,7 +244,7 @@ export default function App() {
 
             <div className="md:col-span-3 flex justify-end">
               <button
-                disabled={loading || !plateValid}
+                disabled={loading || !plateValid || !plateExists}
                 className="rounded-xl bg-black px-5 py-2.5 font-medium text-white shadow hover:opacity-90 disabled:opacity-50"
               >
                 {loading ? "Guardando..." : "Guardar pago"}
