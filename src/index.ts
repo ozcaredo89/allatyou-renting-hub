@@ -2,6 +2,7 @@ import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors, { CorsOptionsDelegate } from "cors";
 import payments from "./routes/payments";
+import uploads from "./routes/uploads"; 
 
 const app = express();
 
@@ -39,6 +40,7 @@ app.get("/", (_req: Request, res: Response) => {
 
 app.get("/health", (_req: Request, res: Response) => res.json({ ok: true }));
 
+app.use("/uploads", uploads);
 app.use("/payments", payments);
 
 const PORT = process.env.PORT || 3000;
