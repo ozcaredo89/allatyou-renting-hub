@@ -2,31 +2,57 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 
+const PLATE_RE = /^[A-Z]{3}\d{3}$/;
 const r = Router();
 
-// Crear pago
 r.post("/", async (req: Request, res: Response) => {
-  const { payer_name, plate, payment_date, amount, installment_number, proof_url, status } = req.body || {};
+  const {
+    payer_name,
+    plate,
+    payment_date,
+    amount,
+    installment_number,
+    proof_url,
+    status,
+  } = req.body || {};
 
-  if (typeof payer_name !== "string" || !payer_name.trim())
+  if (typeof payer_name !== "string" || !payer_name.trim()) {
     return res.status(400).json({ error: "payer_name required" });
-  if (typeof plate !== "string" || !plate.trim())
-    return res.status(400).json({ error: "plate required" });
-  if (typeof payment_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(payment_date))
+  }
+
+  if (typeof plate !== "string" || !PLATE_RE.test(plate.toUpperCase())) {
+    return res.status(400).json({ error: "plate must be ABC123 format" });
+  }
+
+  if (typeof payment_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(payment_date)) {
     return res.status(400).json({ error: "payment_date must be YYYY-MM-DD" });
-  if (typeof amount !== "number" || !isFinite(amount) || amount < 0)
+  }
+
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
     return res.status(400).json({ error: "amount must be a positive number" });
+  }
+
+  if (
+    installment_number != null &&
+    !(Number.isInteger(installment_number) && installment_number > 0)
+  ) {
+    return res.status(400).json({ error: "installment_number must be an integer > 0" });
+  }
+
+  // (Opcional) status whitelist
+  const allowedStatus = new Set(["pending", "confirmed", "rejected"]);
+  const safeStatus = allowedStatus.has(status) ? status : "pending";
 
   const { data, error } = await supabase
     .from("payments")
     .insert([{
-      payer_name,
-      plate,
+      payer_name: payer_name.trim(),
+      plate: plate.toUpperCase(),
       payment_date,
       amount,
       installment_number: installment_number ?? null,
       proof_url: proof_url ?? null,
-      status: status ?? "pending"
+      status: safeStatus
     }])
     .select()
     .single();
