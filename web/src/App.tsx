@@ -1,4 +1,4 @@
-import { BrowserRouter, Link, Route, Routes, NavLink } from "react-router-dom";
+import { BrowserRouter, Route, Routes, NavLink } from "react-router-dom";
 import Pay from "./pages/Pay";
 import Reports from "./pages/Reports";
 
