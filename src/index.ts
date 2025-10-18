@@ -3,7 +3,8 @@ import express, { Request, Response } from "express";
 import cors, { CorsOptionsDelegate } from "cors";
 import drivers from "./routes/drivers";
 import payments from "./routes/payments";
-import uploads from "./routes/uploads"; 
+import uploads from "./routes/uploads";
+import reports from "./routes/reports";
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.get("/health", (_req: Request, res: Response) => res.json({ ok: true }));
 app.use("/drivers", drivers);
 app.use("/uploads", uploads);
 app.use("/payments", payments);
+app.use("/reports", reports);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
