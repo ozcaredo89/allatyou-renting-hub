@@ -28,6 +28,31 @@ const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
 
+// Componente pequeño para armar el link de WhatsApp con texto precargado
+function SupportWhatsAppCard({ name, plate }: { name: string; plate: string }) {
+  const displayName = (name || "NOMBRE").trim();
+  const displayPlate = (plate || "PLACA").toUpperCase().trim();
+  const msg = `Hola necesito soporte soy: ${displayName} conductor del vehiculo ${displayPlate}`;
+  const wa = `https://wa.me/573113738912?text=${encodeURIComponent(msg)}`;
+
+  return (
+    <div className="rounded-xl border p-4">
+      <div className="mb-2 text-sm font-medium text-gray-700">Soporte en vía (WhatsApp):</div>
+      <a
+        className="inline-block rounded-xl bg-green-600 px-4 py-2 text-sm font-medium text-white shadow hover:opacity-90"
+        target="_blank"
+        rel="noreferrer"
+        href={wa}
+      >
+        Abrir WhatsApp
+      </a>
+      <div className="mt-2 text-xs text-gray-500">
+        Se enviará tu nombre y placa en el mensaje.
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [items, setItems] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -283,6 +308,37 @@ export default function App() {
               </button>
             </div>
           </form>
+        </div>
+
+        {/* Card: Soporte y emergencias */}
+        <div id="soporte" className="mt-8 rounded-2xl border bg-white p-5 shadow-sm">
+          <h2 className="mb-3 text-xl font-semibold">Soporte y emergencias</h2>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {/* Emergencias: hurto */}
+            <div className="rounded-xl border p-4">
+              <div className="mb-2 text-sm font-medium text-gray-700">En caso de hurto (llamar):</div>
+              <div className="space-y-1 text-sm">
+                <a className="underline" href="tel:+573234018471">323 401 8471</a><br />
+                <a className="underline" href="tel:+573023909022">302 390 9022</a>
+              </div>
+              <div className="mt-2 text-xs text-gray-500">
+                Reporta inmediatamente para activar el grupo de reacción.
+              </div>
+            </div>
+
+            {/* Soporte en vía (llamada) */}
+            <div className="rounded-xl border p-4">
+              <div className="mb-2 text-sm font-medium text-gray-700">Soporte en vía (llamar):</div>
+              <a className="underline text-sm" href="tel:+573113738912">311 373 8912</a>
+              <div className="mt-2 text-xs text-gray-500">
+                Asistencia operativa en carretera.
+              </div>
+            </div>
+
+            {/* Soporte en vía (WhatsApp) */}
+            <SupportWhatsAppCard name={f.payer_name} plate={f.plate} />
+          </div>
         </div>
 
         {/* Card: List */}
