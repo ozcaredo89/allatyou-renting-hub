@@ -33,7 +33,7 @@ function SupportWhatsAppCard({ name, plate }: { name: string; plate: string }) {
   const displayName = (name || "NOMBRE").trim();
   const displayPlate = (plate || "PLACA").toUpperCase().trim();
   const msg = `Hola necesito soporte soy: ${displayName} conductor del vehiculo ${displayPlate}`;
-  const wa = `https://wa.me/573113738912?text=${encodeURIComponent(msg)}`;
+  const wa = `https://wa.me/573238035356?text=${encodeURIComponent(msg)}`;
 
   return (
     <div className="rounded-xl border p-4">
@@ -330,7 +330,7 @@ export default function App() {
             {/* Soporte en vía (llamada) */}
             <div className="rounded-xl border p-4">
               <div className="mb-2 text-sm font-medium text-gray-700">Soporte en vía (llamar):</div>
-              <a className="underline text-sm" href="tel:+573113738912">311 373 8912</a>
+              <a className="underline text-sm" href="tel:+573238035356">323 8035356</a>
               <div className="mt-2 text-xs text-gray-500">
                 Asistencia operativa en carretera.
               </div>
