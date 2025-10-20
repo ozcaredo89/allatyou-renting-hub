@@ -4,6 +4,9 @@ const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
 
+// Para el preview/WhatsApp usaremos el número fijo:
+const SUPPORT_WA_NUMBER = "573113738912";
+
 type DriverFlat = {
   plate: string;
   driver_name: string;
@@ -13,17 +16,26 @@ type DriverFlat = {
 };
 type DriverResp = { found: false } | { found: true; driver: DriverFlat } | DriverFlat;
 
+type SavedExpensePreview = {
+  date: string;
+  item: string;
+  description: string;
+  total: number;         // en pesos (int)
+  plates: string[];
+  perVehicle: number;    // estimado: total / plates.length
+};
+
 export default function Expenses() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [item, setItem] = useState("");
   const [description, setDescription] = useState("");
-  const [amountStr, setAmountStr] = useState("");
+  const [amountStr, setAmountStr] = useState(""); // solo dígitos
   const [plates, setPlates] = useState<string[]>([]);
   const [plateInput, setPlateInput] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Validación de la placa que se está escribiendo
+  // === Validación placa que se está escribiendo ===
   const normalizedPlate = useMemo(
     () => plateInput.toUpperCase().replace(/[^A-Z0-9]/g, ""),
     [plateInput]
@@ -62,17 +74,14 @@ export default function Expenses() {
         setChecking(exists ? "ok" : "missing");
         setDriverName(d?.driver_name ?? null);
       } catch {
-        // En error de red no bloqueamos, pero tampoco marcamos ok
         setChecking("missing");
       }
     }
-    if (normalizedPlate.length >= 3) run();
-    else {
-      setChecking("idle");
-    }
+   (normalizedPlate.length >= 3) ? run() : setChecking("idle");
     return () => { cancel = true; };
   }, [normalizedPlate, plateFormatValid, API]);
 
+  // === Totales ===
   const total = useMemo(
     () => Number((amountStr || "").replace(/[^\d]/g, "")) || 0,
     [amountStr]
@@ -83,11 +92,12 @@ export default function Expenses() {
   );
 
   function addPlate() {
-    // Solo permite agregar si formato válido y existe
-    if (!plateFormatValid) return;
+    // uppercase + filtrado al teclear
+    const next = normalizedPlate;
+    if (!PLATE_RE.test(next)) return;
     if (checking !== "ok") return;
-    if (plates.includes(normalizedPlate)) return;
-    setPlates([...plates, normalizedPlate]);
+    if (plates.includes(next)) return;
+    setPlates([...plates, next]);
     setPlateInput("");
     setChecking("idle");
     setDriverName(null);
@@ -107,12 +117,18 @@ export default function Expenses() {
     return json.url as string;
   }
 
+  // === Nuevo: estado del último gasto guardado y modal de confirmación ===
+  const [saved, setSaved] = useState<SavedExpensePreview | null>(null);
+  const [showModal, setShowModal] = useState(false);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!item.trim()) return alert("Item requerido");
     if (!description.trim()) return alert("Descripción requerida");
     if (!plates.length) return alert("Agrega al menos una placa");
-    const total_amount = Number(total) / 100; // total en pesos
+
+    // total ya es entero en pesos
+    const total_amount = total / 100; // si tu API espera decimales, ajusta; si espera entero, usa `total` directamente
 
     setLoading(true);
     try {
@@ -131,8 +147,20 @@ export default function Expenses() {
         body: JSON.stringify(body),
       });
       if (!rs.ok) throw new Error(await rs.text());
-      alert("Gasto registrado ✅");
-      // reset mínimos
+
+      // Guardar un snapshot de lo enviado para el preview/WhatsApp
+      const preview: SavedExpensePreview = {
+        date,
+        item: item.trim(),
+        description: description.trim(),
+        total, // en pesos (int)
+        plates: [...plates],
+        perVehicle: plates.length ? Math.floor(total / plates.length) : 0,
+      };
+      setSaved(preview);
+      setShowModal(true);
+
+      // Reset de campos “transitorios”
       setAmountStr("");
       setFile(null);
       setPlates([]);
@@ -143,15 +171,29 @@ export default function Expenses() {
     }
   }
 
-  function openWhatsapp() {
-    if (!plates.length) return alert("Agrega placas");
-    const perVeh = plates.length ? Math.floor(total / plates.length) : 0;
-    const msg = `Gasto: ${item} - ${description}.
-Placas: ${plates.join(", ")}.
-Total: $${fmtCOP.format(total)}.
-Por vehículo: $${fmtCOP.format(perVeh)}.`;
-    const url = `https://wa.me/573113738912?text=${encodeURIComponent(msg)}`;
+  function buildMessage(s: SavedExpensePreview): string {
+    return `Gasto registrado:
+• Fecha: ${s.date}
+• Item: ${s.item}
+• Descripción: ${s.description}
+• Placas: ${s.plates.join(", ")}
+• Total: $${fmtCOP.format(s.total)}
+• Por vehículo: $${fmtCOP.format(s.perVehicle)}`;
+  }
+
+  function sendWhatsapp() {
+    if (!saved) return;
+    const msg = buildMessage(saved);
+    const url = `https://wa.me/${SUPPORT_WA_NUMBER}?text=${encodeURIComponent(msg)}`;
     window.open(url, "_blank");
+  }
+
+  function copyMessage() {
+    if (!saved) return;
+    const msg = buildMessage(saved);
+    navigator.clipboard.writeText(msg).then(() => {
+      alert("Mensaje copiado ✅");
+    });
   }
 
   return (
@@ -217,7 +259,9 @@ Por vehículo: $${fmtCOP.format(perVeh)}.`;
             <div className="flex gap-2">
               <input
                 className={`flex-1 rounded-xl border px-3 py-2 ${
-                  normalizedPlate && !plateFormatValid ? "border-red-500" : "border-gray-300"
+                  normalizedPlate && !plateFormatValid
+                    ? "border-red-500"
+                    : "border-gray-300"
                 }`}
                 placeholder="ABC123"
                 value={plateInput}
@@ -233,6 +277,7 @@ Por vehículo: $${fmtCOP.format(perVeh)}.`;
                 onClick={addPlate}
                 disabled={!plateFormatValid || checking !== "ok"}
                 className="rounded-xl border px-3 disabled:opacity-50"
+                title={!plateFormatValid ? "Formato inválido" : checking !== "ok" ? "Verificando placa..." : ""}
               >
                 {checking === "checking" ? "Verificando..." : "Agregar"}
               </button>
@@ -298,13 +343,17 @@ Por vehículo: $${fmtCOP.format(perVeh)}.`;
           </div>
 
           <div className="md:col-span-3 flex justify-end gap-2">
+            {/* Botón WhatsApp en pantalla principal: visible pero deshabilitado hasta guardar */}
             <button
               type="button"
-              onClick={openWhatsapp}
-              className="rounded-xl border px-4 py-2"
+              disabled={!saved}
+              onClick={() => setShowModal(true)}
+              className="rounded-xl border px-4 py-2 disabled:opacity-50"
+              title={!saved ? "Disponible después de guardar" : ""}
             >
               Enviar por WhatsApp
             </button>
+
             <button
               disabled={loading || !plates.length}
               className="rounded-xl bg-black px-5 py-2.5 text-white disabled:opacity-50"
@@ -314,6 +363,49 @@ Por vehículo: $${fmtCOP.format(perVeh)}.`;
           </div>
         </form>
       </div>
+
+      {/* Modal de confirmación post-guardado */}
+      {showModal && saved && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+            <h2 className="mb-3 text-xl font-semibold">Enviar notificación por WhatsApp</h2>
+
+            <div className="rounded-xl border bg-gray-50 p-3 text-sm">
+              <div><span className="font-medium">Fecha:</span> {saved.date}</div>
+              <div><span className="font-medium">Item:</span> {saved.item}</div>
+              <div><span className="font-medium">Descripción:</span> {saved.description}</div>
+              <div><span className="font-medium">Placas:</span> {saved.plates.join(", ")}</div>
+              <div><span className="font-medium">Total:</span> ${fmtCOP.format(saved.total)}</div>
+              <div><span className="font-medium">Por vehículo:</span> ${fmtCOP.format(saved.perVehicle)}</div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={copyMessage}
+                className="rounded-xl border px-4 py-2"
+              >
+                Copiar mensaje
+              </button>
+              <button
+                onClick={sendWhatsapp}
+                className="rounded-xl bg-green-600 px-4 py-2 text-white"
+              >
+                Abrir WhatsApp
+              </button>
+              <button
+                onClick={() => setShowModal(false)}
+                className="rounded-xl border px-4 py-2"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="mt-2 text-xs text-gray-500">
+              El mensaje se arma con los datos guardados. Si editas el gasto, guarda nuevamente para actualizar el resumen.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
