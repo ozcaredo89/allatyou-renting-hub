@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes, NavLink } from "react-router-dom";
 import Pay from "./pages/Pay";
 import Reports from "./pages/Reports";
+import Expenses from "./pages/Expenses";
 
 export default function App() {
   const link = "px-3 py-2 rounded-lg text-sm font-medium";
@@ -16,6 +17,7 @@ export default function App() {
             <nav className="flex gap-2">
               <NavLink to="/pay" className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Pagos</NavLink>
               <NavLink to="/reports" className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Reportes</NavLink>
+              <NavLink to="/expenses" className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Gastos</NavLink>
             </nav>
           </div>
         </header>
@@ -25,6 +27,7 @@ export default function App() {
             <Route path="/pay" element={<Pay />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="*" element={<div className="p-6 mx-auto max-w-5xl">404</div>} />
+            <Route path="/expenses" element={<Expenses />} />
           </Routes>
         </main>
       </div>
