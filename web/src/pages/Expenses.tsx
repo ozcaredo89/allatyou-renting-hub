@@ -217,13 +217,14 @@ Por vehículo: $${fmtCOP.format(perVeh)}.`;
             <div className="flex gap-2">
               <input
                 className={`flex-1 rounded-xl border px-3 py-2 ${
-                  normalizedPlate && !plateFormatValid
-                    ? "border-red-500"
-                    : "border-gray-300"
+                  normalizedPlate && !plateFormatValid ? "border-red-500" : "border-gray-300"
                 }`}
                 placeholder="ABC123"
                 value={plateInput}
-                onChange={(e) => setPlateInput(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+                  setPlateInput(next);
+                }}
                 maxLength={6}
               />
               <button
