@@ -226,6 +226,7 @@ Por vehículo: $${fmtCOP.format(perVeh)}.`;
                   setPlateInput(next);
                 }}
                 maxLength={6}
+                inputMode="text"
               />
               <button
                 type="button"
