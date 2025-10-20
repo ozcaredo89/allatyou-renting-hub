@@ -26,26 +26,26 @@ type SavedExpensePreview = {
 };
 
 type ExpenseRow = {
-  id: number;
-  date: string;
-  item: string;
-  description: string;
-  total_amount: number;
-  attachment_url: string | null;
-  expense_vehicles: { plate: string; share_amount: number }[];
-};
-
-const [recent, setRecent] = useState<ExpenseRow[]>([]);
-async function loadRecent() {
-  const rs = await fetch(`${API}/expenses?limit=10`);
-  if (!rs.ok) return;
-  const json = await rs.json();
-  setRecent(json);
-}
-useEffect(() => { loadRecent(); }, []);
-
+    id: number;
+    date: string;
+    item: string;
+    description: string;
+    total_amount: number;
+    attachment_url: string | null;
+    expense_vehicles: { plate: string; share_amount: number }[];
+  };
 
 export default function Expenses() {
+
+  const [recent, setRecent] = useState<ExpenseRow[]>([]);
+  async function loadRecent() {
+    const rs = await fetch(`${API}/expenses?limit=10`);
+    if (!rs.ok) return;
+    const json = await rs.json();
+    setRecent(json.items);
+  }
+  useEffect(() => { loadRecent(); }, []);
+
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [item, setItem] = useState("");
   const [description, setDescription] = useState("");
@@ -144,11 +144,7 @@ export default function Expenses() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!item.trim()) return alert("Item requerido");
-    if (!description.trim()) return alert("Descripción requerida");
     if (!plates.length) return alert("Agrega al menos una placa");
-
-    // total ya es entero en pesos
-    const total_amount = total / 100; // si tu API espera decimales, ajusta; si espera entero, usa `total` directamente
 
     setLoading(true);
     try {
@@ -156,8 +152,8 @@ export default function Expenses() {
       const body = {
         date,
         item: item.trim(),
-        description: description.trim(),
-        total_amount,
+        description: description.trim() || null,
+        total_amount:total,
         plates,
         attachment_url,
       };
@@ -255,7 +251,6 @@ export default function Expenses() {
               placeholder="Detalle corto del gasto"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              required
             />
           </div>
 

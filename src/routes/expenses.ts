@@ -26,8 +26,12 @@ r.post("/", async (req: Request, res: Response) => {
     if (typeof item !== "string" || !item.trim())
       return res.status(400).json({ error: "item required" });
 
-    if (typeof description !== "string" || !description.trim())
-      return res.status(400).json({ error: "description required" });
+    // description opcional
+    let desc: string | null = null;
+    if (typeof description === "string" && description.trim()) {
+      desc = description.trim();
+    }
+
 
     if (typeof total_amount !== "number" || !isFinite(total_amount) || total_amount <= 0)
       return res.status(400).json({ error: "total_amount must be > 0" });
@@ -64,7 +68,7 @@ r.post("/", async (req: Request, res: Response) => {
       .insert([{
         date,
         item: item.trim(),
-        description: description.trim(),
+        description: desc,
         total_amount: Number(total_amount.toFixed(2)),
         attachment_url: attachment_url ?? null
       }])
@@ -102,8 +106,10 @@ r.get("/", async (req: Request, res: Response) => {
   const from   = String(req.query.from || "");
   const to     = String(req.query.to   || "");
   const plate  = String(req.query.plate || "").toUpperCase().trim();
+  const today = new Date();
+  const last7 = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const last7Str = last7.toISOString().slice(0, 10); // YYYY-MM-DD
 
-  // LEFT join si no hay placa; INNER join si hay placa
   const selectStr = `
     id, date, item, description, total_amount, attachment_url, created_at, updated_at,
     ${plate
@@ -114,17 +120,26 @@ r.get("/", async (req: Request, res: Response) => {
 
   let q = supabase
     .from("expenses")
-    // El cast `as any` evita que TS trate de expandir a lo infinito los genéricos del select embebido
     .select(selectStr as any, { count: "exact" })
     .order("date", { ascending: false })
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (from) q = q.gte("date", from);
-  if (to)   q = q.lte("date", to);
-  if (plate) q = q.eq("expense_vehicles.plate", plate);
+  // rango por defecto o from/to (como ya tienes)
+  if (!from && !to) {
+    q = q.gte("date", last7Str);
+  } else {
+    if (from) q = q.gte("date", from);
+    if (to)   q = q.lte("date", to);
+  }
+
+  // Aplica el filtro por placa si viene:
+  if (plate) {
+    q = q.eq("expense_vehicles.plate", plate);
+  }
 
   const { data, error, count } = await q;
+
   if (error) return res.status(500).json({ error: error.message });
 
   res.json({ items: data ?? [], total: count ?? 0, limit, offset });
