@@ -25,6 +25,26 @@ type SavedExpensePreview = {
   perVehicle: number;    // estimado: total / plates.length
 };
 
+type ExpenseRow = {
+  id: number;
+  date: string;
+  item: string;
+  description: string;
+  total_amount: number;
+  attachment_url: string | null;
+  expense_vehicles: { plate: string; share_amount: number }[];
+};
+
+const [recent, setRecent] = useState<ExpenseRow[]>([]);
+async function loadRecent() {
+  const rs = await fetch(`${API}/expenses?limit=10`);
+  if (!rs.ok) return;
+  const json = await rs.json();
+  setRecent(json);
+}
+useEffect(() => { loadRecent(); }, []);
+
+
 export default function Expenses() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [item, setItem] = useState("");
@@ -159,6 +179,7 @@ export default function Expenses() {
       };
       setSaved(preview);
       setShowModal(true);
+      await loadRecent();
 
       // Reset de campos “transitorios”
       setAmountStr("");
@@ -363,6 +384,47 @@ export default function Expenses() {
           </div>
         </form>
       </div>
+
+      {/* Últimos gastos */}
+      <h2 className="mt-8 mb-3 text-xl font-semibold">Últimos gastos</h2>
+      <div className="space-y-3">
+        {recent.map((e) => {
+          const plates = e.expense_vehicles?.map(v => v.plate) ?? [];
+          return (
+            <div key={e.id} className="rounded-2xl border bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="font-semibold">{e.item} — {e.date}</div>
+                  <div className="text-sm text-gray-600">
+                    {e.description || "—"}
+                  </div>
+                  <div className="mt-1 text-sm">
+                    <span className="font-medium">Placas:</span> {plates.length ? plates.join(", ") : "—"}
+                  </div>
+                  {e.attachment_url ? (
+                    <a className="text-xs underline" href={e.attachment_url} target="_blank" rel="noreferrer">
+                      Ver soporte
+                    </a>
+                  ) : null}
+                </div>
+                <div className="text-right">
+                  <div className="text-sm text-gray-500">Total</div>
+                  <div className="text-base font-semibold">${fmtCOP.format(Number(e.total_amount))}</div>
+                  {plates.length > 0 ? (
+                    <div className="mt-1 text-xs text-gray-600">
+                      Por vehículo: ${fmtCOP.format(
+                        Math.floor(Number(e.total_amount) / plates.length)
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {recent.length === 0 && <div className="text-gray-500">Sin gastos aún.</div>}
+      </div>
+
 
       {/* Modal de confirmación post-guardado */}
       {showModal && saved && (

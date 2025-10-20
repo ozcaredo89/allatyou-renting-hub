@@ -95,9 +95,7 @@ r.post("/", async (req: Request, res: Response) => {
   }
 });
 
-/** GET /expenses?plate=&from=&to=&limit=&offset=
- * Devuelve gastos (maestro) + detalle cuando hay filtro plate.
- */
+// Listar gastos (siempre incluye detalle; con placa usa INNER)
 r.get("/", async (req: Request, res: Response) => {
   const limit  = Math.min(Math.max(parseInt(String(req.query.limit || 20), 10) || 20, 1), 100);
   const offset = Math.max(parseInt(String(req.query.offset || 0), 10) || 0, 0);
@@ -105,33 +103,33 @@ r.get("/", async (req: Request, res: Response) => {
   const to     = String(req.query.to   || "");
   const plate  = String(req.query.plate || "").toUpperCase().trim();
 
-  // base: expenses
-  let query = supabase
+  // LEFT join si no hay placa; INNER join si hay placa
+  const selectStr = `
+    id, date, item, description, total_amount, attachment_url, created_at, updated_at,
+    ${plate
+      ? "expense_vehicles!inner(plate, share_amount)"
+      : "expense_vehicles(plate, share_amount)"
+    }
+  `;
+
+  let q = supabase
     .from("expenses")
-    .select("*", { count: "exact" })
+    // El cast `as any` evita que TS trate de expandir a lo infinito los genéricos del select embebido
+    .select(selectStr as any, { count: "exact" })
     .order("date", { ascending: false })
+    .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (from) query = query.gte("date", from);
-  if (to)   query = query.lte("date", to);
+  if (from) q = q.gte("date", from);
+  if (to)   q = q.lte("date", to);
+  if (plate) q = q.eq("expense_vehicles.plate", plate);
 
-  // Si se filtra por placa, haz join con expense_vehicles
-  if (plate) {
-    query = supabase
-      .from("expenses")
-      .select("*, expense_vehicles!inner(plate, share_amount)", { count: "exact" })
-      .eq("expense_vehicles.plate", plate)
-      .order("date", { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (from) query = query.gte("date", from);
-    if (to)   query = query.lte("date", to);
-  }
-
-  const { data, error, count } = await query;
+  const { data, error, count } = await q;
   if (error) return res.status(500).json({ error: error.message });
+
   res.json({ items: data ?? [], total: count ?? 0, limit, offset });
 });
+
 
 /** PUT /expenses/:id/attachment  (opcional: agregar/actualizar soporte) */
 r.put("/:id/attachment", async (req: Request, res: Response) => {
