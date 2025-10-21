@@ -6,6 +6,7 @@ import expenses from "./routes/expenses";
 import payments from "./routes/payments";
 import uploads from "./routes/uploads";
 import reports from "./routes/reports";
+import profitRoutes from "./routes/profit";
 
 const app = express();
 
@@ -46,6 +47,7 @@ app.get("/health", (_req: Request, res: Response) => res.json({ ok: true }));
 app.use("/drivers", drivers);
 app.use("/uploads", uploads);
 app.use("/payments", payments);
+app.use("/reports", profitRoutes);
 app.use("/expenses", expenses);
 app.use("/reports", reports);
 

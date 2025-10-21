@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes, NavLink } from "react-router-dom";
 import Pay from "./pages/Pay";
 import Reports from "./pages/Reports";
 import Expenses from "./pages/Expenses";
+import AdminProfit from "./pages/AdminProfit";
 
 export default function App() {
   const link = "px-3 py-2 rounded-lg text-sm font-medium";
@@ -25,6 +26,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Pay />} />
             <Route path="/pay" element={<Pay />} />
+            <Route path="/admin/profit" element={<AdminProfit />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="*" element={<div className="p-6 mx-auto max-w-5xl">404</div>} />
             <Route path="/expenses" element={<Expenses />} />
