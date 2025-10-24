@@ -1,5 +1,5 @@
 // web/src/pages/AdminProfit.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
