@@ -140,9 +140,9 @@ export default function AdminProfit() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-left">
               <tr>
-                <th className="px-4 py-3 font-semibold">Plate</th>
-                <th className="px-4 py-3 font-semibold">Income</th>
-                <th className="px-4 py-3 font-semibold">Expense</th>
+                <th className="px-4 py-3 font-semibold">Placa</th>
+                <th className="px-4 py-3 font-semibold">Ingresos</th>
+                <th className="px-4 py-3 font-semibold">Gastos</th>
                 <th className="px-4 py-3 font-semibold">Adjustments</th>
                 <th className="px-4 py-3 font-semibold">Profit</th>
                 <th className="px-4 py-3 font-semibold">Cum. Profit</th>
@@ -154,41 +154,39 @@ export default function AdminProfit() {
             <tbody>
               {items.map((r) => (
                 <tr key={r.plate} className="border-t">
-                  <td className="px-4 py-3 font-medium">{r.plate}</td>
+                    <td className="px-4 py-3 font-medium">{r.plate}</td>
 
-                  {/* Income with detail link */}
-                  <td className="px-4 py-3">
-                    ${fmtCOP.format(r.income)}
-                    {r.income > 0 && (
-                      <>
-                        {" "}
+                    {/* Income clickable */}
+                    <td className="px-4 py-3">
+                    {r.income > 0 ? (
                         <button
-                          type="button"
-                          onClick={() => openDetail("income", r.plate)}
-                          className="text-xs underline"
+                        type="button"
+                        onClick={() => openDetail("income", r.plate)}
+                        className="underline hover:opacity-80 cursor-pointer"
+                        title="Ver detalle de ingresos"
                         >
-                          Ver
+                        ${fmtCOP.format(r.income)}
                         </button>
-                      </>
+                    ) : (
+                        <>${fmtCOP.format(r.income)}</>
                     )}
-                  </td>
+                    </td>
 
-                  {/* Expense with detail link */}
-                  <td className="px-4 py-3">
-                    ${fmtCOP.format(r.expense)}
-                    {r.expense > 0 && (
-                      <>
-                        {" "}
+                    {/* Expense clickable */}
+                    <td className="px-4 py-3">
+                    {r.expense > 0 ? (
                         <button
-                          type="button"
-                          onClick={() => openDetail("expense", r.plate)}
-                          className="text-xs underline"
+                        type="button"
+                        onClick={() => openDetail("expense", r.plate)}
+                        className="underline hover:opacity-80 cursor-pointer"
+                        title="Ver detalle de gastos"
                         >
-                          Ver
+                        ${fmtCOP.format(r.expense)}
                         </button>
-                      </>
+                    ) : (
+                        <>${fmtCOP.format(r.expense)}</>
                     )}
-                  </td>
+                    </td>
 
                   <td className="px-4 py-3">${fmtCOP.format(r.adjustments)}</td>
                   <td className="px-4 py-3 font-semibold">
