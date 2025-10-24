@@ -3,6 +3,8 @@ import express, { Request, Response } from "express";
 import cors, { CorsOptionsDelegate } from "cors";
 import drivers from "./routes/drivers";
 import expenses from "./routes/expenses";
+import investmentsRoutes from "./routes/investments";
+import ledgerRoutes from "./routes/ledger";
 import payments from "./routes/payments";
 import uploads from "./routes/uploads";
 import reports from "./routes/reports";
@@ -46,6 +48,8 @@ app.get("/health", (_req: Request, res: Response) => res.json({ ok: true }));
 
 app.use("/drivers", drivers);
 app.use("/uploads", uploads);
+app.use("/investments", investmentsRoutes);
+app.use("/ledger", ledgerRoutes);
 app.use("/payments", payments);
 app.use("/reports", profitRoutes);
 app.use("/expenses", expenses);
