@@ -17,8 +17,9 @@ export default function App() {
             <div className="font-bold">AllAtYou</div>
             <nav className="flex gap-2">
               <NavLink to="/pay" className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Pagos</NavLink>
-              <NavLink to="/reports" className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Reportes</NavLink>
-              <NavLink to="/expenses" className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Gastos</NavLink>
+              {/* Quitar estos accesos directos del menú */}
+              {/* <NavLink to="/reports"  className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Reportes</NavLink> */}
+              {/* <NavLink to="/expenses" className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Gastos</NavLink> */}
             </nav>
           </div>
         </header>
