@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -18,11 +19,13 @@ export default function Reports() {
   const [items, setItems] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const limit = 20;
 
   async function load(nextOffset = 0) {
     setLoading(true);
+    setErrorMsg(null);
     try {
       const params = new URLSearchParams();
       if (q) params.set("q", q);
@@ -30,12 +33,29 @@ export default function Reports() {
       params.set("limit", String(limit));
       params.set("offset", String(nextOffset));
 
-      const rs = await fetch(`${API}/reports/last-payments?` + params.toString());
+      // 1er intento con el token actual (o lo pide si no existe)
+      const auth = ensureBasicAuth();
+      let rs = await fetch(`${API}/reports/last-payments?` + params.toString(), {
+        headers: { Authorization: auth },
+      });
+
+      // Si el token guardado es inválido (401), lo limpiamos y reintentamos 1 vez
+      if (rs.status === 401) {
+        clearBasicAuth();
+        const fresh = ensureBasicAuth();
+        rs = await fetch(`${API}/reports/last-payments?` + params.toString(), {
+          headers: { Authorization: fresh },
+        });
+      }
+
       if (!rs.ok) throw new Error(await rs.text());
+
       const json = await rs.json();
       setItems(json.items);
       setTotal(json.total);
       setOffset(nextOffset);
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Error cargando reportes");
     } finally {
       setLoading(false);
     }
@@ -76,6 +96,13 @@ export default function Reports() {
             Mostrar solo en mora
           </label>
         </div>
+
+        {/* Errores */}
+        {errorMsg && (
+          <div className="mb-3 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+            {errorMsg}
+          </div>
+        )}
 
         {/* Tabla */}
         <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">

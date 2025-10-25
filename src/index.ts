@@ -10,6 +10,7 @@ import ledgerRoutes from "./routes/ledger";
 import noPayRoutes from "./routes/noPay";
 import payments from "./routes/payments";
 import uploads from "./routes/uploads";
+// Si tienes DOS routers distintos bajo /reports, déjalos; si no, elimina el que sobre.
 import reports from "./routes/reports";
 import profitRoutes from "./routes/profit";
 
@@ -20,7 +21,7 @@ const corsOptions: CorsOptionsDelegate = (req, cb) => {
   const origin = (req.headers?.origin as string) || "";
 
   const allowList = [
-    process.env.WEB_ORIGIN, // e.g. https://allatyou-renting-hub.vercel.app
+    process.env.WEB_ORIGIN, // ej: https://allatyou-renting-hub.vercel.app
     "http://localhost:5173",
   ].filter(Boolean) as string[];
 
@@ -30,7 +31,12 @@ const corsOptions: CorsOptionsDelegate = (req, cb) => {
     allowed = allowList.includes(origin) || host.endsWith(".vercel.app");
   } catch {}
 
-  cb(null, { origin: allowed, optionsSuccessStatus: 200 });
+  cb(null, {
+    origin: allowed,
+    optionsSuccessStatus: 200,
+    // 👇 Necesario para enviar Authorization: Basic ... desde el front
+    allowedHeaders: ["Content-Type", "Authorization"],
+  });
 };
 
 app.use(cors(corsOptions));
@@ -56,14 +62,10 @@ app.use("/expenses", expenses);
 app.use("/investments", investmentsRoutes);
 app.use("/no-pay", noPayRoutes);
 
-/** PROTEGER antes de montar routers sensibles */
-app.use("/reports", basicAuth);
-app.use("/ledger", basicAuth);
-
-/** Rutas protegidas (ordenado, pero pueden convivir bajo el mismo prefijo) */
-app.use("/reports", profitRoutes);
-app.use("/reports", reports);
-app.use("/ledger", ledgerRoutes);
+/** Rutas protegidas con Basic Auth (monta el middleware en la misma línea) */
+app.use("/reports", basicAuth, profitRoutes);
+app.use("/reports", basicAuth, reports);
+app.use("/ledger",  basicAuth, ledgerRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
