@@ -33,18 +33,18 @@ export default function Reports() {
       params.set("limit", String(limit));
       params.set("offset", String(nextOffset));
 
-      // 1er intento con el token actual (o lo pide si no existe)
-      const auth = ensureBasicAuth();
+      // 1) primer intento con token actual (lo pide si no hay)
+      let auth = ensureBasicAuth();
       let rs = await fetch(`${API}/reports/last-payments?` + params.toString(), {
         headers: { Authorization: auth },
       });
 
-      // Si el token guardado es inválido (401), lo limpiamos y reintentamos 1 vez
-      if (rs.status === 401) {
+      // 2) si expira / credencial incorrecta, limpiar y reintentar UNA vez
+      if (rs.status === 401 || rs.status === 403) {
         clearBasicAuth();
-        const fresh = ensureBasicAuth();
+        auth = ensureBasicAuth(); // re-pedir credenciales
         rs = await fetch(`${API}/reports/last-payments?` + params.toString(), {
-          headers: { Authorization: fresh },
+          headers: { Authorization: auth },
         });
       }
 
