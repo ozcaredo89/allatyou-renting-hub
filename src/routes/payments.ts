@@ -80,16 +80,37 @@ r.post("/", async (req: Request, res: Response) => {
   return res.status(201).json(data);
 });
 
-// Listar
-r.get("/", async (_req: Request, res: Response) => {
-  const { data, error } = await supabase
+// src/routes/payments.ts (solo el handler GET)
+import { Router, Request, Response } from "express";
+import { supabase } from "../lib/supabase";
+
+const r = Router();
+
+/** GET /payments?plate=ABC123&limit=10
+ * Lista pagos recientes; si llega plate, filtra por esa placa.
+ */
+r.get("/", async (req: Request, res: Response) => {
+  const rawLimit = parseInt(String(req.query.limit || "10"), 10);
+  const limit = Math.max(1, Math.min(isNaN(rawLimit) ? 10 : rawLimit, 100));
+
+  const plate = String(req.query.plate || "").toUpperCase().trim();
+
+  let q = supabase
     .from("payments")
     .select("*")
     .order("payment_date", { ascending: false })
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .range(0, limit - 1);
 
+  if (plate) {
+    q = q.eq("plate", plate);
+  }
+
+  const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  res.json(data ?? []);
 });
 
 export default r;
+
