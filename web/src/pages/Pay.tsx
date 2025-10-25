@@ -22,7 +22,7 @@ type DriverFlat = {
 type DriverResp =
   | { found: false }
   | { found: true; driver: DriverFlat }
-  | DriverFlat; // también soporta formato plano del backend
+  | DriverFlat;
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -46,20 +46,15 @@ function SupportWhatsAppCard({ name, plate }: { name: string; plate: string }) {
       >
         Abrir WhatsApp
       </a>
-      <div className="mt-2 text-xs text-gray-500">
-        Se enviará tu nombre y placa en el mensaje.
-      </div>
+      <div className="mt-2 text-xs text-gray-500">Se enviará tu nombre y placa en el mensaje.</div>
     </div>
   );
 }
 
 export default function App() {
-  // Listado de últimos pagos (filtrado por placa válida/existente)
   const [items, setItems] = useState<Payment[]>([]);
-  const [listLoading, setListLoading] = useState(false);
-
-  // Estado del formulario
   const [loading, setLoading] = useState(false);
+
   const [f, setF] = useState({
     payer_name: "",
     plate: "",
@@ -69,10 +64,8 @@ export default function App() {
     status: "pending",
   });
   const [file, setFile] = useState<File | null>(null); // comprobante
-
-  // Validación y existencia de placa
-  const plateValid = useMemo(() => PLATE_RE.test(f.plate), [f.plate]);
   const [plateExists, setPlateExists] = useState(true);
+  const plateValid = useMemo(() => PLATE_RE.test(f.plate), [f.plate]);
 
   // "65.000" | "65,000" | "65000" -> 65000
   const parseCOP = (s: string) => Number((s || "").replace(/[^\d]/g, "")) || 0;
@@ -92,12 +85,10 @@ export default function App() {
     let cancelled = false;
 
     async function fetchDriver() {
-      // si la placa no es válida, no bloquees por existencia (ya el botón se deshabilita por formato)
       if (!plateValid) {
         setPlateExists(true);
         return;
       }
-
       try {
         const rs = await fetch(`${API}/drivers/${f.plate}`);
         if (!rs.ok) {
@@ -126,12 +117,13 @@ export default function App() {
         setPlateExists(found);
 
         if (found && d) {
-          // Autocompletar sugerido (no bloquea edición)
           setF((prev) => ({
             ...prev,
             payer_name: d.driver_name || prev.payer_name,
             amountStr:
-              d.has_credit && d.default_amount ? fmtCOP.format(d.default_amount) : prev.amountStr,
+              d.has_credit && d.default_amount
+                ? fmtCOP.format(d.default_amount)
+                : prev.amountStr,
             installment_number:
               d.has_credit && d.default_installment
                 ? String(d.default_installment)
@@ -139,7 +131,6 @@ export default function App() {
           }));
         }
       } catch {
-        // si hay error de red, no bloquees el envío por existencia
         setPlateExists(true);
       }
     }
@@ -150,33 +141,38 @@ export default function App() {
     };
   }, [f.plate, plateValid]);
 
-  // Cargar últimos pagos SOLO cuando hay placa válida y existe
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadByPlate() {
-      if (!plateValid || !plateExists) {
-        setItems([]);
+  // === Nuevo: cargar “últimos pagos” SOLO cuando haya placa válida y existente, y filtrados por placa ===
+  async function loadRecentByPlate(plate: string) {
+    try {
+      const q = new URLSearchParams({
+        plate: plate.toUpperCase(),
+        limit: "10",
+      });
+      const rs = await fetch(`${API}/payments?` + q.toString());
+      if (!rs.ok) {
+        // Fallback: si el backend no soporta ?plate, traemos todos y filtramos aquí
+        const rsAll = await fetch(`${API}/payments`);
+        const all = (await rsAll.json()) as Payment[];
+        setItems(all.filter((p) => p.plate.toUpperCase() === plate.toUpperCase()).slice(0, 10));
         return;
       }
-      setListLoading(true);
-      try {
-        const params = new URLSearchParams({ plate: f.plate, limit: "10" });
-        const rs = await fetch(`${API}/payments?` + params.toString());
-        if (!rs.ok) throw new Error(await rs.text());
-        const list: Payment[] = await rs.json();
-        if (!cancelled) setItems(list);
-      } catch {
-        if (!cancelled) setItems([]);
-      } finally {
-        if (!cancelled) setListLoading(false);
-      }
+      const rows = (await rs.json()) as Payment[] | { items: Payment[] };
+      // Soporta ambas respuestas: array directo o {items:[]}
+      const list = Array.isArray(rows) ? rows : rows.items ?? [];
+      setItems(list);
+    } catch {
+      setItems([]);
     }
+  }
 
-    loadByPlate();
-    return () => {
-      cancelled = true;
-    };
+  // Cuando cambia la placa o su validez/existencia, decide si mostrar/ocultar y filtrar
+  useEffect(() => {
+    if (plateValid && plateExists && f.plate) {
+      loadRecentByPlate(f.plate);
+    } else {
+      setItems([]); // ocultar lista si no hay placa válida/existente
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [f.plate, plateValid, plateExists]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -185,7 +181,6 @@ export default function App() {
       alert("Placa inválida. Formato: ABC123");
       return;
     }
-
     if (!file) {
       alert("Adjunta la imagen del comprobante antes de guardar.");
       return;
@@ -212,22 +207,10 @@ export default function App() {
       });
       if (!rs.ok) throw new Error(await rs.text());
 
-      // limpiar campos variables y refrescar listado de esa placa
+      // Limpiar campos variables y recargar lista filtrada por la placa actual
       setF((prev) => ({ ...prev, amountStr: "", installment_number: "" }));
       setFile(null);
-
-      // refrescar últimos pagos de la placa actual
-      try {
-        setListLoading(true);
-        const params = new URLSearchParams({ plate: f.plate, limit: "10" });
-        const rs2 = await fetch(`${API}/payments?` + params.toString());
-        if (rs2.ok) {
-          const list: Payment[] = await rs2.json();
-          setItems(list);
-        }
-      } finally {
-        setListLoading(false);
-      }
+      await loadRecentByPlate(body.plate);
     } catch {
       alert("Error creando pago");
     } finally {
@@ -243,6 +226,8 @@ export default function App() {
       {...props}
     />
   );
+
+  const showRecent = plateValid && plateExists && !!f.plate;
 
   return (
     <div className="min-h-screen p-6">
@@ -381,9 +366,7 @@ export default function App() {
                   302 390 9022
                 </a>
               </div>
-              <div className="mt-2 text-xs text-gray-500">
-                Reporta inmediatamente para activar el grupo de reacción.
-              </div>
+              <div className="mt-2 text-xs text-gray-500">Reporta inmediatamente para activar el grupo de reacción.</div>
             </div>
 
             {/* Soporte en vía (llamada) */}
@@ -400,46 +383,36 @@ export default function App() {
           </div>
         </div>
 
-        {/* Card: List — solo cuando placa válida y existente */}
-        <h2 className="mt-8 mb-3 text-xl font-semibold">Últimos pagos</h2>
-        {!plateValid ? (
-          <div className="text-gray-500">Ingresa una placa válida para ver los pagos.</div>
-        ) : !plateExists ? (
-          <div className="text-gray-500">La placa no está registrada.</div>
-        ) : listLoading ? (
-          <div className="text-gray-500">Cargando…</div>
-        ) : items.length === 0 ? (
-          <div className="text-gray-500">Sin pagos para esta placa.</div>
-        ) : (
-          <div className="space-y-3">
-            {items.map((p) => (
-              <div
-                key={p.id}
-                className="flex items-center justify-between rounded-2xl border bg-white p-4 shadow-sm"
-              >
-                <div>
-                  <div className="font-semibold">
-                    {p.payer_name} — {p.plate}
+        {/* Card: List — solo si placa válida y existente */}
+        {showRecent && (
+          <>
+            <h2 className="mt-8 mb-3 text-xl font-semibold">Últimos pagos — {f.plate.toUpperCase()}</h2>
+            <div className="space-y-3">
+              {items.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between rounded-2xl border bg-white p-4 shadow-sm"
+                >
+                  <div>
+                    <div className="font-semibold">
+                      {p.payer_name} — {p.plate}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      {p.payment_date} · ${fmtCOP.format(p.amount)}
+                      {p.installment_number ? <> · Cuota {p.installment_number}</> : null}
+                    </div>
+                    {p.proof_url ? (
+                      <a className="text-xs underline" href={p.proof_url} target="_blank" rel="noreferrer">
+                        Ver comprobante
+                      </a>
+                    ) : null}
                   </div>
-                  <div className="text-sm text-gray-600">
-                    {p.payment_date} · ${fmtCOP.format(p.amount)}
-                    {p.installment_number ? <> · Cuota {p.installment_number}</> : null}
-                  </div>
-                  {p.proof_url ? (
-                    <a
-                      className="text-xs underline"
-                      href={p.proof_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Ver comprobante
-                    </a>
-                  ) : null}
+                  <span className="rounded-full border px-3 py-1 text-xs">{p.status}</span>
                 </div>
-                <span className="rounded-full border px-3 py-1 text-xs">{p.status}</span>
-              </div>
-            ))}
-          </div>
+              ))}
+              {items.length === 0 && <div className="text-gray-500">Sin pagos recientes para esta placa.</div>}
+            </div>
+          </>
         )}
       </div>
     </div>
