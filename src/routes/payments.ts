@@ -80,12 +80,6 @@ r.post("/", async (req: Request, res: Response) => {
   return res.status(201).json(data);
 });
 
-// src/routes/payments.ts (solo el handler GET)
-import { Router, Request, Response } from "express";
-import { supabase } from "../lib/supabase";
-
-const r = Router();
-
 /** GET /payments?plate=ABC123&limit=10
  * Lista pagos recientes; si llega plate, filtra por esa placa.
  */
