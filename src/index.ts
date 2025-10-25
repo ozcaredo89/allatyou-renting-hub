@@ -1,6 +1,8 @@
 import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors, { CorsOptionsDelegate } from "cors";
+import { basicAuth } from "./middleware/basicAuth";
+
 import drivers from "./routes/drivers";
 import expenses from "./routes/expenses";
 import investmentsRoutes from "./routes/investments";
@@ -15,11 +17,10 @@ const app = express();
 
 /** CORS: WEB_ORIGIN + localhost + *.vercel.app (previews) */
 const corsOptions: CorsOptionsDelegate = (req, cb) => {
-  // En CorsRequest no existe .header(), tomamos el header directamente
   const origin = (req.headers?.origin as string) || "";
 
   const allowList = [
-    process.env.WEB_ORIGIN,       // ej: https://allatyou-renting-hub.vercel.app  (luego: https://allatyou.com)
+    process.env.WEB_ORIGIN, // e.g. https://allatyou-renting-hub.vercel.app
     "http://localhost:5173",
   ].filter(Boolean) as string[];
 
@@ -27,7 +28,7 @@ const corsOptions: CorsOptionsDelegate = (req, cb) => {
   try {
     const host = origin ? new URL(origin).host : "";
     allowed = allowList.includes(origin) || host.endsWith(".vercel.app");
-  } catch { /* origin vacío o inválido */ }
+  } catch {}
 
   cb(null, { origin: allowed, optionsSuccessStatus: 200 });
 };
@@ -35,7 +36,7 @@ const corsOptions: CorsOptionsDelegate = (req, cb) => {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-/** Logger temporal para depurar en Railway */
+/** Logger simple */
 app.use((req, _res, next) => {
   console.log(`[REQ] ${req.method} ${req.path} origin=${req.headers.origin ?? "-"}`);
   next();
@@ -47,15 +48,22 @@ app.get("/", (_req: Request, res: Response) => {
 
 app.get("/health", (_req: Request, res: Response) => res.json({ ok: true }));
 
+/** Rutas públicas */
 app.use("/drivers", drivers);
 app.use("/uploads", uploads);
-app.use("/investments", investmentsRoutes);
-app.use("/ledger", ledgerRoutes);
-app.use("/no-pay", noPayRoutes);
 app.use("/payments", payments);
-app.use("/reports", profitRoutes);
 app.use("/expenses", expenses);
+app.use("/investments", investmentsRoutes);
+app.use("/no-pay", noPayRoutes);
+
+/** PROTEGER antes de montar routers sensibles */
+app.use("/reports", basicAuth);
+app.use("/ledger", basicAuth);
+
+/** Rutas protegidas (ordenado, pero pueden convivir bajo el mismo prefijo) */
+app.use("/reports", profitRoutes);
 app.use("/reports", reports);
+app.use("/ledger", ledgerRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
