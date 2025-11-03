@@ -54,7 +54,7 @@ function SupportWhatsAppCard({ name, plate }: { name: string; plate: string }) {
 export default function App() {
   const [items, setItems] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(false);
-
+  const [noPayHint, setNoPayHint] = useState<{ noPay: boolean; reason?: string; suggestedDate?: string } | null>(null);
   const [f, setF] = useState({
     payer_name: "",
     plate: "",
@@ -69,6 +69,32 @@ export default function App() {
 
   // "65.000" | "65,000" | "65000" -> 65000
   const parseCOP = (s: string) => Number((s || "").replace(/[^\d]/g, "")) || 0;
+
+  async function checkNoPay(plate: string, date: string) {
+    try {
+      const q = new URLSearchParams({ plate: plate.toUpperCase(), date });
+      const rs = await fetch(`${API}/no-pay/check?` + q.toString());
+      if (!rs.ok) return null;
+      return (await rs.json()) as { noPay: boolean; reason?: string; suggestedDate?: string };
+    } catch {
+      return null;
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(async function run() {
+      if (plateValid && plateExists && f.plate && f.payment_date) {
+        const ans = await checkNoPay(f.plate, f.payment_date);
+        if (!cancelled) setNoPayHint(ans);
+      } else {
+        setNoPayHint(null);
+      }
+    }, 250);
+    
+    return () => { cancelled = true; clearTimeout(t) };
+  }, [f.plate, f.payment_date, plateValid, plateExists]);
+
 
   async function uploadProofIfNeeded(): Promise<string | null> {
     if (!file) return null;
@@ -188,6 +214,18 @@ export default function App() {
 
     setLoading(true);
     try {
+
+      const check = await checkNoPay(f.plate, f.payment_date);
+      if (check?.noPay) {
+        const msg = [
+          `Atención: la placa ${f.plate.toUpperCase()} tiene pico y placa el ${f.payment_date}.`,
+          check.suggestedDate ? `Sugerido: ${check.suggestedDate}.` : "",
+          "¿Guardar de todas formas?"
+        ].filter(Boolean).join(" ");
+        const proceed = window.confirm(msg);
+        if (!proceed) { setLoading(false); return; }
+      }
+
       const proof_url = await uploadProofIfNeeded();
 
       const body = {
@@ -272,6 +310,15 @@ export default function App() {
             <div>
               <label className="mb-1 block text-sm font-medium">Fecha</label>
               {input("payment_date", { type: "date", required: true })}
+              {noPayHint?.noPay ? (
+                <div className="mt-1 text-xs text-amber-700">
+                  ⚠️ No paga hoy (pico y placa). {noPayHint.suggestedDate ? `Sugerido: ${noPayHint.suggestedDate}` : ""}
+                </div>
+              ) : (
+                f.payment_date && plateValid && plateExists && (
+                  <div className="mt-1 text-xs text-green-700">✔️ Fecha válida para registrar.</div>
+                )
+              )}
             </div>
 
             {/* Monto (COP) */}
