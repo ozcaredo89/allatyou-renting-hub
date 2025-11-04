@@ -52,6 +52,8 @@ r.post("/", async (req: Request, res: Response) => {
       notes,
     } = req.body || {};
 
+    const daily_installment = Number(req.body?.daily_installment);
+
     // Validaciones básicas
     if (!person_name || typeof person_name !== "string") {
       return res.status(400).json({ error: "person_name required" });
@@ -70,6 +72,9 @@ r.post("/", async (req: Request, res: Response) => {
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(start_date))) {
       return res.status(400).json({ error: "start_date must be YYYY-MM-DD" });
+    }
+    if (!(daily_installment > 0)) {
+    return res.status(400).json({ error: "daily_installment > 0 required" });
     }
 
     // Validar existencia de placa/driver si vienen
@@ -94,6 +99,7 @@ r.post("/", async (req: Request, res: Response) => {
         start_date: String(start_date),
         status: "active",
         notes: notes ?? null,
+        daily_installment: Math.round(daily_installment),
       })
       .select("*")
       .single();

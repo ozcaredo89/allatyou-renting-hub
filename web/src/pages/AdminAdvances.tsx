@@ -5,6 +5,8 @@ import PlateField from "../components/PlateField";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
+const parseCOP = (s: string) => Number((s || "").replace(/[^\d]/g, "")) || 0;
+const roundUpTo100 = (n: number) => Math.ceil((n || 0) / 100) * 100;
 
 type Advance = {
   id: number;
@@ -13,9 +15,9 @@ type Advance = {
   driver_id?: number | null;
   plate?: string | null;
   amount: number;
-  rate_percent: number;   // % mensual (MVP)
+  rate_percent: number;
   installments: number;
-  start_date: string;     // YYYY-MM-DD
+  start_date: string; // YYYY-MM-DD
   status: "active" | "closed" | "cancelled";
   notes?: string | null;
   created_at: string;
@@ -36,13 +38,20 @@ type ScheduleRow = {
 
 const badgeTone = (k: string) => {
   switch (k) {
-    case "active": return "bg-blue-100 text-blue-700";
-    case "closed": return "bg-green-100 text-green-700";
-    case "cancelled": return "bg-gray-200 text-gray-700";
-    case "pending": return "bg-amber-100 text-amber-700";
-    case "paid": return "bg-emerald-100 text-emerald-700";
-    case "overdue": return "bg-red-100 text-red-700";
-    default: return "bg-gray-100 text-gray-700";
+    case "active":
+      return "bg-blue-100 text-blue-700";
+    case "closed":
+      return "bg-green-100 text-green-700";
+    case "cancelled":
+      return "bg-gray-200 text-gray-700";
+    case "pending":
+      return "bg-amber-100 text-amber-700";
+    case "paid":
+      return "bg-emerald-100 text-emerald-700";
+    case "overdue":
+      return "bg-red-100 text-red-700";
+    default:
+      return "bg-gray-100 text-gray-700";
   }
 };
 
@@ -56,30 +65,47 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
     person_type: "driver" as "driver" | "collaborator",
     driver_id: "",
     plate: "",
-    amount: "",
+    amountStr: fmtCOP.format(300000),
     rate_percent: "15",
     installments: "21",
     start_date: today,
+    daily_installmentStr: "", // <- formateado (como amountStr)
     notes: "",
   });
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
+  // Cuota sugerida (redondeada HACIA ARRIBA a centenas)
+  const dailyQuotaSuggested = useMemo(() => {
+    const amount = parseCOP(f.amountStr);
+    const rate = Number(f.rate_percent) || 0; // tasa total del anticipo
+    const n = Math.max(1, Number(f.installments) || 1);
+    const totalToPay = amount * (1 + rate / 100);
+    const raw = Math.round(totalToPay / n) || 0;
+    return roundUpTo100(raw);
+  }, [f.amountStr, f.rate_percent, f.installments]);
+
   const onChange = (k: keyof typeof f, v: string) => setF((s) => ({ ...s, [k]: v }));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true); setErr(null); setOk(null);
+    setLoading(true);
+    setErr(null);
+    setOk(null);
     try {
       const auth = ensureBasicAuth();
       const payload: any = {
         person_name: f.person_name.trim(),
         person_type: f.person_type,
-        amount: Number(f.amount),
+        amount: parseCOP(f.amountStr),
         rate_percent: Number(f.rate_percent),
         installments: Number(f.installments),
         start_date: f.start_date,
+        // si viene valor manual, usarlo; si no, usar sugerida. En ambos casos redondear a 100
+        daily_installment: roundUpTo100(
+          f.daily_installmentStr ? parseCOP(f.daily_installmentStr) : dailyQuotaSuggested
+        ),
       };
       if (f.driver_id) payload.driver_id = Number(f.driver_id);
       if (f.plate) payload.plate = f.plate.toUpperCase();
@@ -100,7 +126,12 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
       if (!rs.ok) throw new Error(json?.error || "Error creando anticipo");
       setOk(`Creado anticipo #${json.advance.id}`);
       onCreated(json.advance);
-      setF((s) => ({ ...s, amount: "", notes: "" }));
+      setF((s) => ({
+        ...s,
+        amountStr: fmtCOP.format(300000),
+        daily_installmentStr: "",
+        notes: "",
+      }));
     } catch (e: any) {
       setErr(e?.message || "Error");
     } finally {
@@ -152,6 +183,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
               setF((prev) => ({
                 ...prev,
                 person_name: prev.person_name || d?.driver_name || prev.person_name,
+                person_type: d ? "driver" : prev.person_type,
               }));
             }}
           />
@@ -160,26 +192,38 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
           <label className="mb-1 block text-sm font-medium">Monto (COP)</label>
           <input
             className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
-            type="number" min={1} step={1}
-            value={f.amount}
-            onChange={(e) => onChange("amount", e.target.value)}
+            inputMode="numeric"
+            placeholder="300.000"
+            value={f.amountStr}
+            onChange={(e) => {
+              const onlyDigits = e.target.value.replace(/[^\d]/g, "");
+              const n = Number(onlyDigits || "0");
+              setF((prev) => ({ ...prev, amountStr: n ? fmtCOP.format(n) : "" }));
+            }}
             required
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium">% mensual</label>
+          <label className="mb-1 block text-sm font-medium">Tasa del anticipo (%)</label>
           <input
             className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
-            type="number" min={0} step={0.001}
+            type="number"
+            min={0}
+            step={0.001}
             value={f.rate_percent}
             onChange={(e) => onChange("rate_percent", e.target.value)}
           />
+          <div className="mt-1 text-xs text-gray-500">
+            Aplicada sobre el monto para repartir en {f.installments || "21"} cuotas.
+          </div>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium">Cuotas</label>
           <input
             className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
-            type="number" min={1} step={1}
+            type="number"
+            min={1}
+            step={1}
             value={f.installments}
             onChange={(e) => onChange("installments", e.target.value)}
           />
@@ -192,6 +236,27 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             value={f.start_date}
             onChange={(e) => onChange("start_date", e.target.value)}
           />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">Cuota diaria</label>
+          <input
+            className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
+            inputMode="numeric"
+            placeholder={fmtCOP.format(dailyQuotaSuggested)}
+            value={f.daily_installmentStr || fmtCOP.format(dailyQuotaSuggested)}
+            onChange={(e) => {
+              const onlyDigits = e.target.value.replace(/[^\d]/g, "");
+              const n = Number(onlyDigits || "0");
+              setF((prev) => ({
+                ...prev,
+                daily_installmentStr: n ? fmtCOP.format(n) : "",
+              }));
+            }}
+            required
+          />
+          <div className="mt-1 text-xs text-gray-500">
+            Sugerida: ${fmtCOP.format(dailyQuotaSuggested)} (puedes editarla).
+          </div>
         </div>
         <div className="md:col-span-3">
           <label className="mb-1 block text-sm font-medium">Notas</label>
@@ -221,8 +286,14 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
    Schedule Modal
    ========================= */
 function ScheduleModal({
-  advance, open, onClose,
-}: { advance: Advance | null; open: boolean; onClose: () => void }) {
+  advance,
+  open,
+  onClose,
+}: {
+  advance: Advance | null;
+  open: boolean;
+  onClose: () => void;
+}) {
   const [rows, setRows] = useState<ScheduleRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -231,7 +302,8 @@ function ScheduleModal({
   useEffect(() => {
     if (!open || !advance) return;
     (async () => {
-      setLoading(true); setErr(null);
+      setLoading(true);
+      setErr(null);
       try {
         const auth = ensureBasicAuth();
         const rs = await fetch(`${API}/advances/${advance.id}/schedule`, {
@@ -286,10 +358,15 @@ function ScheduleModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-4xl rounded-2xl border bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="w-full max-w-4xl rounded-2xl border bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-lg font-semibold">Cronograma — Anticipo #{advance.id}</h3>
-          <button className="h-8 w-8 rounded-xl hover:bg-gray-100" onClick={onClose}>✕</button>
+          <button className="h-8 w-8 rounded-xl hover:bg-gray-100" onClick={onClose}>
+            ✕
+          </button>
         </div>
 
         {loading ? (
@@ -338,7 +415,11 @@ function ScheduleModal({
                   );
                 })}
                 {rows.length === 0 && (
-                  <tr><td className="px-4 py-6 text-gray-500" colSpan={7}>Sin cronograma.</td></tr>
+                  <tr>
+                    <td className="px-4 py-6 text-gray-500" colSpan={7}>
+                      Sin cronograma.
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -395,7 +476,10 @@ function AdvancesList() {
     }
   }
 
-  useEffect(() => { load(0); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    load(0);
+    // eslint-disable-next-line
+  }, []);
 
   const canPrev = offset > 0;
   const canNext = offset + limit < total;
@@ -456,7 +540,7 @@ function AdvancesList() {
               <th className="px-4 py-3">Tipo</th>
               <th className="px-4 py-3">Placa</th>
               <th className="px-4 py-3">Monto</th>
-              <th className="px-4 py-3">% mensual</th>
+              <th className="px-4 py-3">Tasa (%)</th>
               <th className="px-4 py-3">Cuotas</th>
               <th className="px-4 py-3">Inicio</th>
               <th className="px-4 py-3">Estado</th>
@@ -465,18 +549,30 @@ function AdvancesList() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td className="px-4 py-6 text-center" colSpan={10}>Cargando…</td></tr>
+              <tr>
+                <td className="px-4 py-6 text-center" colSpan={10}>
+                  Cargando…
+                </td>
+              </tr>
             ) : items.length === 0 ? (
-              <tr><td className="px-4 py-6 text-center text-gray-500" colSpan={10}>Sin resultados.</td></tr>
+              <tr>
+                <td className="px-4 py-6 text-center text-gray-500" colSpan={10}>
+                  Sin resultados.
+                </td>
+              </tr>
             ) : (
               items.map((a) => (
                 <tr key={a.id} className="border-t">
                   <td className="px-4 py-3">{a.id}</td>
                   <td className="px-4 py-3">
                     <div className="font-medium">{a.person_name}</div>
-                    {a.notes && <div className="max-w-[260px] truncate text-xs text-gray-500">{a.notes}</div>}
+                    {a.notes && (
+                      <div className="max-w-[260px] truncate text-xs text-gray-500">{a.notes}</div>
+                    )}
                   </td>
-                  <td className="px-4 py-3 text-xs"><span className="rounded-full bg-gray-100 px-2 py-1">{a.person_type}</span></td>
+                  <td className="px-4 py-3 text-xs">
+                    <span className="rounded-full bg-gray-100 px-2 py-1">{a.person_type}</span>
+                  </td>
                   <td className="px-4 py-3">{a.plate || "—"}</td>
                   <td className="px-4 py-3">${fmtCOP.format(a.amount)}</td>
                   <td className="px-4 py-3">{a.rate_percent}%</td>
