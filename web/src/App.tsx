@@ -1,4 +1,5 @@
 import { BrowserRouter, Route, Routes, NavLink } from "react-router-dom";
+import AdminAdvances from "./pages/AdminAdvances";
 import Pay from "./pages/Pay";
 import Reports from "./pages/Reports";
 import Expenses from "./pages/Expenses";
@@ -27,6 +28,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Pay />} />
             <Route path="/pay" element={<Pay />} />
+            <Route path="/admin/advances" element={<AdminAdvances />} />
             <Route path="/admin/profit" element={<AdminProfit />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="*" element={<div className="p-6 mx-auto max-w-5xl">404</div>} />

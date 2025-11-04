@@ -3,6 +3,7 @@ import express, { Request, Response } from "express";
 import cors, { CorsOptionsDelegate } from "cors";
 import { basicAuth } from "./middleware/basicAuth";
 
+import advancesRoutes from "./routes/advances";
 import drivers from "./routes/drivers";
 import expenses from "./routes/expenses";
 import investmentsRoutes from "./routes/investments";
@@ -66,6 +67,7 @@ app.use("/no-pay", noPayRoutes);
 app.use("/reports", basicAuth, profitRoutes);
 app.use("/reports", basicAuth, reports);
 app.use("/ledger",  basicAuth, ledgerRoutes);
+app.use("/advances", basicAuth, advancesRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
