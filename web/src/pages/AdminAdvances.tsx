@@ -481,8 +481,8 @@ function AdvancesList() {
     // eslint-disable-next-line
   }, []);
 
-  const canPrev = offset > 0;
-  const canNext = offset + limit < total;
+  const canPrev = offset > 0 && !loading;
+  const canNext = offset + limit < total && !loading;
 
   function applyFilters(e: React.FormEvent) {
     e.preventDefault();
@@ -604,14 +604,14 @@ function AdvancesList() {
         </div>
         <div className="flex gap-2">
           <button
-            disabled={! (offset > 0) || loading}
+            disabled={!canPrev}
             onClick={() => load(Math.max(0, offset - limit))}
             className="rounded-xl border px-4 py-2 text-sm disabled:opacity-50"
           >
             Anterior
           </button>
           <button
-            disabled={! (offset + limit < total) || loading}
+            disabled={!canNext}
             onClick={() => load(offset + limit)}
             className="rounded-xl border px-4 py-2 text-sm disabled:opacity-50"
           >

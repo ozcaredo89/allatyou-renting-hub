@@ -1,5 +1,5 @@
 // web/src/components/PlateField.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 
 export type DriverFlat = {
