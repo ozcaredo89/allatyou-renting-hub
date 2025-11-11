@@ -283,7 +283,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
 }
 
 /* =========================
-   Schedule Modal
+   Schedule Modal (con scroll)
    ========================= */
 function ScheduleModal({
   advance,
@@ -357,74 +357,81 @@ function ScheduleModal({
   if (!open || !advance) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
       <div
-        className="w-full max-w-4xl rounded-2xl border bg-white p-5 shadow-xl"
+        className="w-full max-w-4xl max-h-[85vh] rounded-2xl border bg-white shadow-xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-center justify-between">
+        {/* Header */}
+        <div className="px-5 pt-5 pb-3 flex items-center justify-between shrink-0">
           <h3 className="text-lg font-semibold">Cronograma — Anticipo #{advance.id}</h3>
-          <button className="h-8 w-8 rounded-xl hover:bg-gray-100" onClick={onClose}>
-            ✕
-          </button>
+          <button className="h-8 w-8 rounded-xl hover:bg-gray-100" onClick={onClose}>✕</button>
         </div>
 
-        {loading ? (
-          <div className="py-10 text-center">Cargando…</div>
-        ) : err ? (
-          <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">{err}</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 text-left">
-                <tr>
-                  <th className="px-4 py-2">#</th>
-                  <th className="px-4 py-2">Vence</th>
-                  <th className="px-4 py-2">Cuota</th>
-                  <th className="px-4 py-2">Interés</th>
-                  <th className="px-4 py-2">Capital</th>
-                  <th className="px-4 py-2">Estado</th>
-                  <th className="px-4 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => {
-                  const state = r.overdue && r.status !== "paid" ? "overdue" : r.status;
-                  return (
-                    <tr key={r.id} className="border-t">
-                      <td className="px-4 py-2">{r.installment_no}</td>
-                      <td className="px-4 py-2">{r.due_date}</td>
-                      <td className="px-4 py-2 font-medium">${fmtCOP.format(r.installment_amount)}</td>
-                      <td className="px-4 py-2">${fmtCOP.format(r.interest_amount)}</td>
-                      <td className="px-4 py-2">${fmtCOP.format(r.principal_amount)}</td>
-                      <td className="px-4 py-2">
-                        <span className={`rounded-full px-3 py-1 text-xs ${badgeTone(state)}`}>{state}</span>
-                      </td>
-                      <td className="px-4 py-2">
-                        {r.status !== "paid" && (
-                          <button
-                            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
-                            onClick={() => markPaid(r)}
-                            disabled={payingId === r.id}
-                          >
-                            {payingId === r.id ? "Pagando…" : "Marcar pagada"}
-                          </button>
-                        )}
+        {/* Body scrollable */}
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 pb-5">
+          {loading ? (
+            <div className="py-10 text-center">Cargando…</div>
+          ) : err ? (
+            <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+              {err}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-left sticky top-0 z-10">
+                  <tr>
+                    <th className="px-4 py-2">#</th>
+                    <th className="px-4 py-2">Vence</th>
+                    <th className="px-4 py-2">Cuota</th>
+                    <th className="px-4 py-2">Interés</th>
+                    <th className="px-4 py-2">Capital</th>
+                    <th className="px-4 py-2">Estado</th>
+                    <th className="px-4 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => {
+                    const state = r.overdue && r.status !== "paid" ? "overdue" : r.status;
+                    return (
+                      <tr key={r.id} className="border-t">
+                        <td className="px-4 py-2">{r.installment_no}</td>
+                        <td className="px-4 py-2">{r.due_date}</td>
+                        <td className="px-4 py-2 font-medium">${fmtCOP.format(r.installment_amount)}</td>
+                        <td className="px-4 py-2">${fmtCOP.format(r.interest_amount)}</td>
+                        <td className="px-4 py-2">${fmtCOP.format(r.principal_amount)}</td>
+                        <td className="px-4 py-2">
+                          <span className={`rounded-full px-3 py-1 text-xs ${badgeTone(state)}`}>{state}</span>
+                        </td>
+                        <td className="px-4 py-2">
+                          {r.status !== "paid" && (
+                            <button
+                              className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+                              onClick={() => markPaid(r)}
+                              disabled={payingId === r.id}
+                            >
+                              {payingId === r.id ? "Pagando…" : "Marcar pagada"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {rows.length === 0 && (
+                    <tr>
+                      <td className="px-4 py-6 text-gray-500" colSpan={7}>
+                        Sin cronograma.
                       </td>
                     </tr>
-                  );
-                })}
-                {rows.length === 0 && (
-                  <tr>
-                    <td className="px-4 py-6 text-gray-500" colSpan={7}>
-                      Sin cronograma.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
