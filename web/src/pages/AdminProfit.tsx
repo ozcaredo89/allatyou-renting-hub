@@ -1,5 +1,6 @@
 // web/src/pages/AdminProfit.tsx
 import { useEffect, useState } from "react";
+import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -94,9 +95,19 @@ export default function AdminProfit() {
   async function load() {
     setLoading(true);
     try {
+      const auth = ensureBasicAuth();
       const params = new URLSearchParams({ month });
       if (plate) params.set("plate", plate.trim().toUpperCase());
-      const rs = await fetch(`${API}/reports/profit?` + params.toString());
+
+      const rs = await fetch(`${API}/reports/profit?` + params.toString(), {
+        headers: { Authorization: auth },
+      });
+
+      if (rs.status === 401 || rs.status === 403) {
+        clearBasicAuth();
+        throw new Error("Unauthorized");
+      }
+
       if (!rs.ok) throw new Error(await rs.text());
       const json: ProfitResp = await rs.json();
       setData(json);
@@ -104,7 +115,11 @@ export default function AdminProfit() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -118,9 +133,19 @@ export default function AdminProfit() {
     setDetailItems([]);
     setDetailLoading(true);
     try {
+      const auth = ensureBasicAuth();
       const params = new URLSearchParams({ plate: p, month });
       const endpoint = kind === "income" ? "income-detail" : "expense-detail";
-      const rs = await fetch(`${API}/reports/${endpoint}?` + params.toString());
+
+      const rs = await fetch(`${API}/reports/${endpoint}?` + params.toString(), {
+        headers: { Authorization: auth },
+      });
+
+      if (rs.status === 401 || rs.status === 403) {
+        clearBasicAuth();
+        throw new Error("Unauthorized");
+      }
+
       if (!rs.ok) throw new Error(await rs.text());
       const json = await rs.json();
       setDetailItems(json.items || []);
@@ -128,6 +153,7 @@ export default function AdminProfit() {
       setDetailLoading(false);
     }
   }
+
   function closeDetail() {
     setDetailType(null);
     setDetailPlate("");
@@ -147,8 +173,18 @@ export default function AdminProfit() {
   async function loadLedger(p: string) {
     setLedgerLoading(true);
     try {
+      const auth = ensureBasicAuth();
       const params = new URLSearchParams({ plate: p, month });
-      const rs = await fetch(`${API}/ledger?` + params.toString());
+
+      const rs = await fetch(`${API}/ledger?` + params.toString(), {
+        headers: { Authorization: auth },
+      });
+
+      if (rs.status === 401 || rs.status === 403) {
+        clearBasicAuth();
+        throw new Error("Unauthorized");
+      }
+
       if (!rs.ok) throw new Error(await rs.text());
       const json = await rs.json();
       setLedgerItems(json.items || []);
@@ -168,11 +204,22 @@ export default function AdminProfit() {
     };
     const isEdit = !!editingId;
 
+    const auth = ensureBasicAuth();
+
     const rs = await fetch(`${API}/ledger` + (isEdit ? `/${editingId}` : ""), {
       method: isEdit ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: auth,
+      },
       body: JSON.stringify(body),
     });
+
+    if (rs.status === 401 || rs.status === 403) {
+      clearBasicAuth();
+      throw new Error("Unauthorized");
+    }
+
     if (!rs.ok) throw new Error(await rs.text());
     await loadLedger(ledgerPlate);
     await load(); // refresca totales
@@ -182,7 +229,19 @@ export default function AdminProfit() {
 
   async function deleteLedger(id: number) {
     if (!confirm("¿Eliminar este ajuste?")) return;
-    const rs = await fetch(`${API}/ledger/${id}`, { method: "DELETE" });
+
+    const auth = ensureBasicAuth();
+
+    const rs = await fetch(`${API}/ledger/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: auth },
+    });
+
+    if (rs.status === 401 || rs.status === 403) {
+      clearBasicAuth();
+      throw new Error("Unauthorized");
+    }
+
     if (!rs.ok) throw new Error(await rs.text());
     await loadLedger(ledgerPlate);
     await load();
@@ -271,8 +330,12 @@ export default function AdminProfit() {
                   <td className="px-4 py-3">${fmtCOP.format(r.adjustments)}</td>
                   <td className="px-4 py-3 font-semibold">${fmtCOP.format(r.profit)}</td>
                   <td className="px-4 py-3">${fmtCOP.format(r.cum_profit)}</td>
-                  <td className="px-4 py-3">{r.investment_total != null ? `$${fmtCOP.format(r.investment_total)}` : "—"}</td>
-                  <td className="px-4 py-3">{r.remaining != null ? `$${fmtCOP.format(r.remaining)}` : "—"}</td>
+                  <td className="px-4 py-3">
+                    {r.investment_total != null ? `$${fmtCOP.format(r.investment_total)}` : "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    {r.remaining != null ? `$${fmtCOP.format(r.remaining)}` : "—"}
+                  </td>
                   <td className="px-4 py-3">
                     {r.is_released ? (
                       <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">Sí</span>
@@ -296,7 +359,9 @@ export default function AdminProfit() {
 
               {items.length === 0 && !loading && (
                 <tr>
-                  <td className="px-4 py-6 text-gray-500" colSpan={10}>Sin datos.</td>
+                  <td className="px-4 py-6 text-gray-500" colSpan={10}>
+                    Sin datos.
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -329,7 +394,9 @@ export default function AdminProfit() {
               <h2 className="text-xl font-semibold">
                 {detailType === "income" ? "Detalle de Ingresos" : "Detalle de Gastos"} — {detailPlate} — {month}
               </h2>
-              <button onClick={closeDetail} className="rounded-xl border px-3 py-1 text-sm">Cerrar</button>
+              <button onClick={closeDetail} className="rounded-xl border px-3 py-1 text-sm">
+                Cerrar
+              </button>
             </div>
 
             {detailLoading ? (
@@ -338,7 +405,7 @@ export default function AdminProfit() {
               <div className="text-sm text-gray-600">Sin items.</div>
             ) : detailType === "income" ? (
               <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-                {(detailItems as PaymentDetail[]).map(p => (
+                {(detailItems as PaymentDetail[]).map((p) => (
                   <div key={p.id} className="rounded-xl border p-3">
                     <div className="flex items-center justify-between">
                       <div className="font-medium">{p.payment_date}</div>
@@ -357,10 +424,12 @@ export default function AdminProfit() {
               </div>
             ) : (
               <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-                {(detailItems as ExpenseDetail[]).map(e => (
+                {(detailItems as ExpenseDetail[]).map((e) => (
                   <div key={e.id} className="rounded-xl border p-3">
                     <div className="flex items-center justify-between">
-                      <div className="font-medium">{e.date} — {e.item}</div>
+                      <div className="font-medium">
+                        {e.date} — {e.item}
+                      </div>
                       <div className="font-semibold">${fmtCOP.format(e.share_amount)}</div>
                     </div>
                     <div className="text-sm text-gray-600">{e.description || "—"}</div>
@@ -382,8 +451,15 @@ export default function AdminProfit() {
         <div className="fixed inset-0 z-50 flex justify-end bg-black/50">
           <div className="h-full w-full max-w-xl bg-white p-5 shadow-xl overflow-y-auto">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-xl font-semibold">Ajustes — {ledgerPlate} — {month}</h2>
-              <button onClick={() => setShowLedger(false)} className="rounded-xl border px-3 py-1 text-sm">Cerrar</button>
+              <h2 className="text-xl font-semibold">
+                Ajustes — {ledgerPlate} — {month}
+              </h2>
+              <button
+                onClick={() => setShowLedger(false)}
+                className="rounded-xl border px-3 py-1 text-sm"
+              >
+                Cerrar
+              </button>
             </div>
 
             {/* Formulario crear/editar */}
@@ -403,7 +479,9 @@ export default function AdminProfit() {
                   <select
                     className="w-full rounded-xl border px-3 py-2"
                     value={editRow.type || "extra_expense"}
-                    onChange={(e) => setEditRow({ ...editRow, type: e.target.value as LedgerRow["type"] })}
+                    onChange={(e) =>
+                      setEditRow({ ...editRow, type: e.target.value as LedgerRow["type"] })
+                    }
                   >
                     <option value="opening_balance">Saldo inicial</option>
                     <option value="extra_income">Ingreso extra</option>
@@ -418,7 +496,12 @@ export default function AdminProfit() {
                     inputMode="numeric"
                     placeholder="65.000"
                     value={editRow.amount ?? 0}
-                    onChange={(e) => setEditRow({ ...editRow, amount: Number((e.target.value || "0").replace(/[^\d-]/g, "")) })}
+                    onChange={(e) =>
+                      setEditRow({
+                        ...editRow,
+                        amount: Number((e.target.value || "0").replace(/[^\d-]/g, "")),
+                      })
+                    }
                   />
                 </div>
                 <div>
@@ -426,7 +509,9 @@ export default function AdminProfit() {
                   <input
                     className="w-full rounded-xl border px-3 py-2"
                     value={editRow.attachment_url || ""}
-                    onChange={(e) => setEditRow({ ...editRow, attachment_url: e.target.value })}
+                    onChange={(e) =>
+                      setEditRow({ ...editRow, attachment_url: e.target.value })
+                    }
                   />
                 </div>
               </div>
@@ -435,14 +520,22 @@ export default function AdminProfit() {
                 <input
                   className="w-full rounded-xl border px-3 py-2"
                   value={editRow.description || ""}
-                  onChange={(e) => setEditRow({ ...editRow, description: e.target.value })}
+                  onChange={(e) =>
+                    setEditRow({ ...editRow, description: e.target.value })
+                  }
                 />
               </div>
               <div className="mt-3 flex justify-end gap-2">
                 {editingId && (
                   <button
                     type="button"
-                    onClick={() => { setEditingId(null); setEditRow({ ...emptyLedger, date: new Date().toISOString().slice(0, 10) }); }}
+                    onClick={() => {
+                      setEditingId(null);
+                      setEditRow({
+                        ...emptyLedger,
+                        date: new Date().toISOString().slice(0, 10),
+                      });
+                    }}
                     className="rounded-xl border px-3 py-2 text-sm"
                   >
                     Cancelar edición
@@ -474,7 +567,10 @@ export default function AdminProfit() {
                       <div className="flex gap-2">
                         <button
                           className="text-xs underline"
-                          onClick={() => { setEditingId(l.id); setEditRow(l); }}
+                          onClick={() => {
+                            setEditingId(l.id);
+                            setEditRow(l);
+                          }}
                         >
                           Editar
                         </button>
@@ -491,7 +587,14 @@ export default function AdminProfit() {
                       {l.attachment_url && (
                         <>
                           {" · "}
-                          <a className="underline" href={l.attachment_url} target="_blank" rel="noreferrer">Ver adjunto</a>
+                          <a
+                            className="underline"
+                            href={l.attachment_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Ver adjunto
+                          </a>
                         </>
                       )}
                     </div>
@@ -508,10 +611,15 @@ export default function AdminProfit() {
 
 function labelType(t: LedgerRow["type"]) {
   switch (t) {
-    case "opening_balance": return "Saldo inicial";
-    case "extra_income": return "Ingreso extra";
-    case "extra_expense": return "Gasto extra";
-    case "correction": return "Corrección";
-    default: return t;
+    case "opening_balance":
+      return "Saldo inicial";
+    case "extra_income":
+      return "Ingreso extra";
+    case "extra_expense":
+      return "Gasto extra";
+    case "correction":
+      return "Corrección";
+    default:
+      return t;
   }
 }
