@@ -67,6 +67,12 @@ export default function App() {
   const [plateExists, setPlateExists] = useState(true);
   const plateValid = useMemo(() => PLATE_RE.test(f.plate), [f.plate]);
 
+  // Sugerencia de monto según último pago confirmado
+  const [expected, setExpected] = useState<{
+    amount: number;
+    date?: string | null;
+  } | null>(null);
+
   // "65.000" | "65,000" | "65000" -> 65000
   const parseCOP = (s: string) => Number((s || "").replace(/[^\d]/g, "")) || 0;
 
@@ -91,10 +97,9 @@ export default function App() {
         setNoPayHint(null);
       }
     }, 250);
-    
-    return () => { cancelled = true; clearTimeout(t) };
-  }, [f.plate, f.payment_date, plateValid, plateExists]);
 
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [f.plate, f.payment_date, plateValid, plateExists]);
 
   async function uploadProofIfNeeded(): Promise<string | null> {
     if (!file) return null;
@@ -147,7 +152,7 @@ export default function App() {
             ...prev,
             payer_name: d.driver_name || prev.payer_name,
             amountStr:
-              d.has_credit && d.default_amount
+              d.has_credit && d.default_amount && !prev.amountStr
                 ? fmtCOP.format(d.default_amount)
                 : prev.amountStr,
             installment_number:
@@ -167,7 +172,56 @@ export default function App() {
     };
   }, [f.plate, plateValid]);
 
-  // === Nuevo: cargar “últimos pagos” SOLO cuando haya placa válida y existente, y filtrados por placa ===
+  // Nuevo: obtener monto sugerido según último pago confirmado
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchExpectedAmount() {
+      if (!plateValid || !plateExists || !f.plate) {
+        setExpected(null);
+        return;
+      }
+
+      try {
+        const q = new URLSearchParams({ plate: f.plate.toUpperCase() });
+        const rs = await fetch(`${API}/payments/expected-amount?` + q.toString());
+        if (!rs.ok) {
+          setExpected(null);
+          return;
+        }
+        const json: {
+          plate: string;
+          last_payment_date: string | null;
+          last_amount: number | null;
+          status: "pending" | "confirmed" | "rejected" | null;
+        } = await rs.json();
+
+        if (cancelled) return;
+
+        if (json.last_amount && json.status === "confirmed") {
+          setExpected({ amount: json.last_amount, date: json.last_payment_date });
+
+          // Prefill solo si el usuario aún no ha escrito un monto
+          setF((prev) => {
+            if (!prev.plate || prev.plate.toUpperCase() !== json.plate.toUpperCase()) return prev;
+            if (prev.amountStr) return prev;
+            return { ...prev, amountStr: fmtCOP.format(json.last_amount as number) };
+          });
+        } else {
+          setExpected(null);
+        }
+      } catch {
+        if (!cancelled) setExpected(null);
+      }
+    }
+
+    fetchExpectedAmount();
+    return () => {
+      cancelled = true;
+    };
+  }, [f.plate, plateValid, plateExists]);
+
+  // === Cargar “últimos pagos” SOLO cuando haya placa válida y existente, y filtrados por placa ===
   async function loadRecentByPlate(plate: string) {
     try {
       const q = new URLSearchParams({
@@ -214,16 +268,20 @@ export default function App() {
 
     setLoading(true);
     try {
-
       const check = await checkNoPay(f.plate, f.payment_date);
       if (check?.noPay) {
         const msg = [
           `Atención: la placa ${f.plate.toUpperCase()} tiene pico y placa el ${f.payment_date}.`,
           check.suggestedDate ? `Sugerido: ${check.suggestedDate}.` : "",
-          "¿Guardar de todas formas?"
-        ].filter(Boolean).join(" ");
+          "¿Guardar de todas formas?",
+        ]
+          .filter(Boolean)
+          .join(" ");
         const proceed = window.confirm(msg);
-        if (!proceed) { setLoading(false); return; }
+        if (!proceed) {
+          setLoading(false);
+          return;
+        }
       }
 
       const proof_url = await uploadProofIfNeeded();
@@ -248,6 +306,7 @@ export default function App() {
       // Limpiar campos variables y recargar lista filtrada por la placa actual
       setF((prev) => ({ ...prev, amountStr: "", installment_number: "" }));
       setFile(null);
+      setExpected(null);
       await loadRecentByPlate(body.plate);
     } catch {
       alert("Error creando pago");
@@ -312,10 +371,13 @@ export default function App() {
               {input("payment_date", { type: "date", required: true })}
               {noPayHint?.noPay ? (
                 <div className="mt-1 text-xs text-amber-700">
-                  ⚠️ No paga hoy (pico y placa). {noPayHint.suggestedDate ? `Sugerido: ${noPayHint.suggestedDate}` : ""}
+                  ⚠️ No paga hoy (pico y placa).{" "}
+                  {noPayHint.suggestedDate ? `Sugerido: ${noPayHint.suggestedDate}` : ""}
                 </div>
               ) : (
-                f.payment_date && plateValid && plateExists && (
+                f.payment_date &&
+                plateValid &&
+                plateExists && (
                   <div className="mt-1 text-xs text-green-700">✔️ Fecha válida para registrar.</div>
                 )
               )}
@@ -336,6 +398,13 @@ export default function App() {
                 }}
                 required
               />
+              {expected && (
+                <div className="mt-1 text-xs text-gray-600">
+                  Sugerido según último pago
+                  {expected.date ? ` (${expected.date})` : ""}: $
+                  {fmtCOP.format(expected.amount)} (puedes editarlo).
+                </div>
+              )}
             </div>
 
             {/* Cuota */}
@@ -413,7 +482,9 @@ export default function App() {
                   302 390 9022
                 </a>
               </div>
-              <div className="mt-2 text-xs text-gray-500">Reporta inmediatamente para activar el grupo de reacción.</div>
+              <div className="mt-2 text-xs text-gray-500">
+                Reporta inmediatamente para activar el grupo de reacción.
+              </div>
             </div>
 
             {/* Soporte en vía (llamada) */}

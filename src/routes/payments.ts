@@ -64,20 +64,57 @@ r.post("/", async (req: Request, res: Response) => {
 
   const { data, error } = await supabase
     .from("payments")
-    .insert([{
-      payer_name: payer_name.trim(),
-      plate: upperPlate,
-      payment_date,
-      amount,
-      installment_number: installment_number ?? null,
-      proof_url: proof_url ?? null,
-      status: safeStatus
-    }])
+    .insert([
+      {
+        payer_name: payer_name.trim(),
+        plate: upperPlate,
+        payment_date,
+        amount,
+        installment_number: installment_number ?? null,
+        proof_url: proof_url ?? null,
+        status: safeStatus,
+      },
+    ])
     .select()
     .single();
 
   if (error) return res.status(500).json({ error: error.message });
   return res.status(201).json(data);
+});
+
+/**
+ * GET /payments/expected-amount?plate=ABC123
+ * Devuelve el último pago CONFIRMADO para la placa,
+ * para usar como "monto sugerido" en /pay.
+ */
+r.get("/expected-amount", async (req: Request, res: Response) => {
+  const plateRaw = String(req.query.plate || "").toUpperCase().trim();
+
+  if (!PLATE_RE.test(plateRaw)) {
+    return res.status(400).json({ error: "plate must be ABC123 format" });
+  }
+
+  const { data, error } = await supabase
+    .from("payments")
+    .select("plate,payment_date,amount,status,created_at")
+    .eq("plate", plateRaw)
+    .eq("status", "confirmed")
+    .order("payment_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  const row = data && data[0];
+
+  return res.json({
+    plate: plateRaw,
+    last_payment_date: row?.payment_date ?? null,
+    last_amount: row?.amount ?? null,
+    status: row?.status ?? null,
+  });
 });
 
 /** GET /payments?plate=ABC123&limit=10
@@ -107,4 +144,3 @@ r.get("/", async (req: Request, res: Response) => {
 });
 
 export default r;
-
