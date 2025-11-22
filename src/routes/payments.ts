@@ -82,41 +82,6 @@ r.post("/", async (req: Request, res: Response) => {
   return res.status(201).json(data);
 });
 
-/**
- * GET /payments/expected-amount?plate=ABC123
- * Devuelve el último pago CONFIRMADO para la placa,
- * para usar como "monto sugerido" en /pay.
- */
-r.get("/expected-amount", async (req: Request, res: Response) => {
-  const plateRaw = String(req.query.plate || "").toUpperCase().trim();
-
-  if (!PLATE_RE.test(plateRaw)) {
-    return res.status(400).json({ error: "plate must be ABC123 format" });
-  }
-
-  const { data, error } = await supabase
-    .from("payments")
-    .select("plate,payment_date,amount,status,created_at")
-    .eq("plate", plateRaw)
-    .eq("status", "confirmed")
-    .order("payment_date", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  if (error) {
-    return res.status(500).json({ error: error.message });
-  }
-
-  const row = data && data[0];
-
-  return res.json({
-    plate: plateRaw,
-    last_payment_date: row?.payment_date ?? null,
-    last_amount: row?.amount ?? null,
-    status: row?.status ?? null,
-  });
-});
-
 /** GET /payments?plate=ABC123&limit=10
  * Lista pagos recientes; si llega plate, filtra por esa placa.
  */
@@ -141,6 +106,43 @@ r.get("/", async (req: Request, res: Response) => {
   if (error) return res.status(500).json({ error: error.message });
 
   res.json(data ?? []);
+});
+
+/** GET /payments/last-amount?plate=ABC123
+ * Devuelve el último pago CONFIRMED para la placa, para sugerir monto y cuota siguiente.
+ */
+r.get("/last-amount", async (req: Request, res: Response) => {
+  const plate = String(req.query.plate || "").toUpperCase().trim();
+  if (!PLATE_RE.test(plate)) {
+    return res.status(400).json({ error: "invalid plate" });
+  }
+
+  const { data, error } = await supabase
+    .from("payments")
+    .select("plate, payment_date, amount, status, installment_number, created_at")
+    .eq("plate", plate)
+    .eq("status", "confirmed")
+    .order("payment_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // PGRST116 = no rows
+  // @ts-ignore (supabase error code type)
+  if (error && error.code !== "PGRST116") {
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) {
+    return res.status(404).json({ error: "no confirmed payments" });
+  }
+
+  return res.json({
+    plate: data.plate,
+    last_payment_date: data.payment_date,
+    last_amount: data.amount,
+    last_status: data.status,
+    last_installment_number: data.installment_number,
+  });
 });
 
 export default r;
