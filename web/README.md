@@ -1,73 +1,166 @@
-# React + TypeScript + Vite
+# AllAtYou Renting Hub
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Monorepo con **API (Express + TypeScript + Supabase)** y **Web (Vite + React + Tailwind v4)** para registrar **pagos, gastos y anticipos (préstamos operativos)**, subir comprobantes y generar reportes de **mora, utilidad mensual y ledger contable**.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 🚀 Tech Stack
 
-## React Compiler
+- **API**: Node.js (Express 5 + TypeScript + Supabase SDK)  
+- **DB**: Supabase (PostgreSQL + Storage)  
+- **Web**: Vite + React + TypeScript + Tailwind v4  
+- **Infraestructura**: Railway (API) + Vercel (Web)  
+- **Storage**: Supabase bucket `comprobantes/soportes`
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## 📦 Estructura
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+allatyou-renting-hub/
+├─ src/
+│ ├─ index.ts
+│ ├─ lib/supabase.ts
+│ └─ routes/
+│ ├─ payments.ts
+│ ├─ expenses.ts
+│ ├─ reports.ts
+│ ├─ profit.ts
+│ ├─ investments.ts
+│ ├─ ledger.ts
+│ ├─ noPay.ts
+│ └─ advances.ts
+├─ web/
+│ ├─ src/App.tsx
+│ └─ src/pages/
+│ ├─ Pay.tsx
+│ ├─ Expenses.tsx
+│ ├─ Reports.tsx
+│ ├─ AdminProfit.tsx
+│ └─ AdminAdvances.tsx
+└─ .env / web/.env
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+yaml
+Copy code
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+---
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## 🔐 Variables de entorno
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+**Backend (`.env`):**
+SUPABASE_URL=https://<ref>.supabase.co
+SUPABASE_SERVICE_ROLE=<service-role-key>
+PORT=3000
+WEB_ORIGIN=https://web.allatyou.com
+ADMIN_BASIC_USER=<usuario>
+ADMIN_BASIC_PASS=<contraseña>
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+ruby
+Copy code
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+**Frontend (`web/.env`):**
+VITE_API_URL=https://api.allatyou.com
+
+yaml
+Copy code
+
+---
+
+## 🧮 Base de datos (Supabase)
+
+### Pagos (`payments`)
+Registro de pagos por placa, con comprobante obligatorio y estado (`pending`,`confirmed`,`rejected`).
+
+### Gastos (`expenses`, `expense_vehicles`)
+Soporta múltiples placas, prorrateo exacto y adjuntos.
+
+### Ledger contable (`vehicle_ledger`)
+Ajustes manuales (+/-) visibles en `/admin/profit`.
+
+### Inversiones (`vehicle_investments`)
+Inversión base; usada para remaining y % recovered.
+
+### Anticipos operativos (`operational_advances`, `operational_advance_schedule`)
+- Préstamos operativos a conductores/colaboradores  
+- Cronograma automático (21 cuotas por defecto)  
+- `daily_installment` editable (redondeada a centenas)  
+- Integración en `/admin/advances`  
+
+---
+
+## 📡 Endpoints principales
+
+| Método | Ruta | Descripción |
+|--------|------|--------------|
+| POST | `/payments` | Crear pago |
+| GET  | `/reports/last-payments` | Último pago por vehículo |
+| POST | `/expenses` | Crear gasto con prorrateo |
+| GET  | `/reports/profit` | Utilidad mensual |
+| POST | `/ledger` | Registrar ajuste contable |
+| POST | `/advances` | Crear anticipo |
+| GET  | `/advances` | Listar anticipos |
+| GET  | `/advances/:id/schedule` | Cronograma |
+| POST | `/advances/:id/payments` | Marcar cuota pagada |
+
+---
+
+## 🖥️ Web (rutas)
+
+- `/pay` — pagos (autocompletar placa, validación, comprobante).  
+- `/expenses` — gastos multi-placa.  
+- `/reports` — últimos pagos + mora.  
+- `/admin/profit` — utilidad mensual con detalles por placa.  
+- `/admin/advances` — módulo completo de anticipos operativos.
+
+---
+
+## 🧭 Roadmap actual
+
+### ✔ Completo
+- Pagos (MVP)
+- Gastos multi-placa
+- Reportes (último pago, mora)
+- Profit mensual + ledger base
+- Anticipos operativos (back + UI)
+  
+### ⏳ En progreso
+- Ledger automático (outflow/repayment)
+- Toasters globales
+- Filtros y paginación para pagos/gastos
+- Auth por roles (reemplazar Basic Auth)
+
+---
+
+## ⚙️ Dev local
+
+**Backend**
+npm i
+npm run dev
+
+markdown
+Copy code
+
+**Frontend**
+cd web
+npm i
+npm run dev
+
+yaml
+Copy code
+
+Abrir: http://localhost:5173
+
+---
+
+## 🌐 Deploy
+
+- API → https://api.allatyou.com  
+- Web → https://web.allatyou.com  
+
+Dominios:
+- api.allatyou.com  
+- web.allatyou.com  
+
+---
+
+## 🧾 Licencia
+Privado © AllAtYou Renting S.A.S. — Uso interno.

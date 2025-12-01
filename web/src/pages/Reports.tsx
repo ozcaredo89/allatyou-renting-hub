@@ -13,7 +13,20 @@ type Row = {
   is_overdue: boolean;  // viene de la vista
 };
 
+type Payment = {
+  id: number;
+  payer_name: string;
+  plate: string;
+  payment_date: string;          // YYYY-MM-DD
+  amount: number;
+  installment_number: number | null;
+  proof_url: string | null;
+  status: "pending" | "confirmed" | "rejected";
+};
+
 export default function Reports() {
+  const todayYm = new Date().toISOString().slice(0, 7); // YYYY-MM
+  const [month, setMonth] = useState<string>(todayYm);
   const [q, setQ] = useState("");
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [items, setItems] = useState<Row[]>([]);
@@ -33,16 +46,14 @@ export default function Reports() {
       params.set("limit", String(limit));
       params.set("offset", String(nextOffset));
 
-      // 1) primer intento con token actual (lo pide si no hay)
       let auth = ensureBasicAuth();
       let rs = await fetch(`${API}/reports/last-payments?` + params.toString(), {
         headers: { Authorization: auth },
       });
 
-      // 2) si expira / credencial incorrecta, limpiar y reintentar UNA vez
       if (rs.status === 401 || rs.status === 403) {
         clearBasicAuth();
-        auth = ensureBasicAuth(); // re-pedir credenciales
+        auth = ensureBasicAuth();
         rs = await fetch(`${API}/reports/last-payments?` + params.toString(), {
           headers: { Authorization: auth },
         });
@@ -51,8 +62,8 @@ export default function Reports() {
       if (!rs.ok) throw new Error(await rs.text());
 
       const json = await rs.json();
-      setItems(json.items);
-      setTotal(json.total);
+      setItems(json.items || []);
+      setTotal(json.total ?? (json.items?.length ?? 0));
       setOffset(nextOffset);
     } catch (e: any) {
       setErrorMsg(e?.message || "Error cargando reportes");
@@ -61,40 +72,155 @@ export default function Reports() {
     }
   }
 
-  useEffect(() => { load(0); }, []);
+  useEffect(() => {
+    load(0);
+  }, []);
 
   const canPrev = offset > 0;
   const canNext = offset + limit < total;
 
+  // ===== Descargar CSV de TODOS los pagos de un mes =====
+  async function downloadCsv() {
+    setErrorMsg(null);
+
+    if (!month) {
+      alert("Selecciona un mes antes de descargar el CSV.");
+      return;
+    }
+
+    // month viene en formato YYYY-MM gracias al <input type="month" />
+    const monthRe = /^\d{4}-\d{2}$/;
+    if (!monthRe.test(month)) {
+      alert("Mes inválido. Usa un valor de mes válido (YYYY-MM).");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Traer muchos pagos de golpe (endpoint de pagos crudos)
+      const params = new URLSearchParams();
+      params.set("limit", "10000");
+
+      const rs = await fetch(`${API}/payments?` + params.toString());
+      if (!rs.ok) throw new Error(await rs.text());
+
+      const all: Payment[] = await rs.json();
+
+      // Filtrar por mes en payment_date (YYYY-MM-DD)
+      const rows = all.filter(
+        (p) => typeof p.payment_date === "string" && p.payment_date.startsWith(month)
+      );
+
+      // Construir CSV
+      const header = [
+        "Id",
+        "Conductor",
+        "Placa",
+        "FechaPago",
+        "Monto",
+        "CuotaNumero",
+        "Estado",
+        "ComprobanteURL",
+      ];
+
+      const lines = rows.map((p) => {
+        const cols = [
+          String(p.id),
+          p.payer_name ?? "",
+          p.plate ?? "",
+          p.payment_date ?? "",
+          p.amount != null ? String(p.amount) : "",
+          p.installment_number != null ? String(p.installment_number) : "",
+          p.status ?? "",
+          p.proof_url ?? "",
+        ];
+
+        return cols
+          .map((v) => {
+            const s = v ?? "";
+            return s.includes(",") || s.includes('"')
+              ? `"${s.replace(/"/g, '""')}"`
+              : s;
+          })
+          .join(",");
+      });
+
+      const csv = [header.join(","), ...lines].join("\n");
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pagos-mes-${month}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Error generando CSV");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen p-6">
       <div className="mx-auto max-w-5xl">
-        <h1 className="mb-6 text-3xl font-bold tracking-tight">Reportes — Último pago por vehículo</h1>
+        <h1 className="mb-6 text-3xl font-bold tracking-tight">
+          Reportes — Último pago por vehículo
+        </h1>
 
-        {/* Filtros */}
-        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center">
-          <div className="flex-1 flex gap-2">
-            <input
-              className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
-              placeholder="Buscar por placa o nombre…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
+        {/* Filtros + acciones */}
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex-1 flex flex-col gap-2 md:flex-row md:items-center">
+            <div className="flex-1 flex gap-2">
+              <input
+                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
+                placeholder="Buscar por placa o nombre…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
+              <button
+                onClick={() => load(0)}
+                className="rounded-xl bg-black px-5 py-2.5 font-medium text-white shadow hover:opacity-90 disabled:opacity-50"
+                disabled={loading}
+              >
+                Buscar
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-700 md:text-sm">Mes para exportar:</label>
+              <input
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+                className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black/60"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 md:flex-row md:items-center">
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={onlyOverdue}
+                onChange={(e) => {
+                  setOnlyOverdue(e.target.checked);
+                  load(0);
+                }}
+              />
+              Mostrar solo en mora
+            </label>
+
             <button
-              onClick={() => load(0)}
-              className="rounded-xl bg-black px-5 py-2.5 font-medium text-white shadow hover:opacity-90"
+              type="button"
+              onClick={downloadCsv}
+              disabled={loading}
+              className="mt-1 md:mt-0 rounded-xl border px-4 py-2 text-sm shadow-sm hover:bg-gray-50 disabled:opacity-50"
             >
-              Buscar
+              Descargar CSV por mes
             </button>
           </div>
-          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={onlyOverdue}
-              onChange={(e) => { setOnlyOverdue(e.target.checked); load(0); }}
-            />
-            Mostrar solo en mora
-          </label>
         </div>
 
         {/* Errores */}
@@ -104,7 +230,7 @@ export default function Reports() {
           </div>
         )}
 
-        {/* Tabla */}
+        {/* Tabla (sigue siendo “último pago por placa”) */}
         <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-left">
@@ -147,14 +273,16 @@ export default function Reports() {
               })}
               {items.length === 0 && !loading && (
                 <tr>
-                  <td className="px-4 py-6 text-gray-500" colSpan={5}>Sin resultados.</td>
+                  <td className="px-4 py-6 text-gray-500" colSpan={5}>
+                    Sin resultados.
+                  </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
 
-        {/* Paginación */}
+        {/* Paginación para la vista de últimos pagos */}
         <div className="mt-4 flex items-center justify-between">
           <div className="text-sm text-gray-600">
             {items.length > 0
