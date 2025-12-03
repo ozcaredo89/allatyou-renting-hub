@@ -4,6 +4,7 @@ import Pay from "./pages/Pay";
 import Reports from "./pages/Reports";
 import Expenses from "./pages/Expenses";
 import AdminProfit from "./pages/AdminProfit";
+import Landing from "./pages/Landing";
 
 export default function App() {
   const link = "px-3 py-2 rounded-lg text-sm font-medium";
@@ -17,22 +18,46 @@ export default function App() {
           <div className="mx-auto flex max-w-5xl items-center justify-between p-4">
             <div className="font-bold">AllAtYou</div>
             <nav className="flex gap-2">
-              <NavLink to="/pay" className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Pagos</NavLink>
-              {/* Quitar estos accesos directos del menú */}
+              <NavLink
+                to="/"
+                end
+                className={({ isActive }) =>
+                  `${link} ${isActive ? active : inactive}`
+                }
+              >
+                Inicio
+              </NavLink>
+              <NavLink
+                to="/pay"
+                className={({ isActive }) =>
+                  `${link} ${isActive ? active : inactive}`
+                }
+              >
+                Pagos
+              </NavLink>
+              {/* Más adelante puedes reactivar estas rutas en el menú */}
               {/* <NavLink to="/reports"  className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Reportes</NavLink> */}
               {/* <NavLink to="/expenses" className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Gastos</NavLink> */}
             </nav>
           </div>
         </header>
+
         <main>
           <Routes>
-            <Route path="/" element={<Pay />} />
+            <Route path="/" element={<Landing />} />
             <Route path="/pay" element={<Pay />} />
             <Route path="/admin/advances" element={<AdminAdvances />} />
             <Route path="/admin/profit" element={<AdminProfit />} />
             <Route path="/reports" element={<Reports />} />
-            <Route path="*" element={<div className="p-6 mx-auto max-w-5xl">404</div>} />
             <Route path="/expenses" element={<Expenses />} />
+            <Route
+              path="*"
+              element={
+                <div className="mx-auto max-w-5xl p-6 text-sm text-gray-800">
+                  404 — Ruta no encontrada
+                </div>
+              }
+            />
           </Routes>
         </main>
       </div>
