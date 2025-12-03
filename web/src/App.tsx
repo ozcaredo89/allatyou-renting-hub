@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes, NavLink } from "react-router-dom";
+import { BrowserRouter, Route, Routes, NavLink, Navigate } from "react-router-dom";
 import AdminAdvances from "./pages/AdminAdvances";
 import Pay from "./pages/Pay";
 import Reports from "./pages/Reports";
@@ -45,6 +45,7 @@ export default function App() {
         <main>
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/" element={<Navigate to="/pay" replace />} />
             <Route path="/pay" element={<Pay />} />
             <Route path="/admin/advances" element={<AdminAdvances />} />
             <Route path="/admin/profit" element={<AdminProfit />} />
