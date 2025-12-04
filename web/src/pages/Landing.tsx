@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import picoPlacaImg from "../assets/pico-placa.png"; // 👈 vas a crear este archivo
+import picoPlacaImg from "../assets/pico-placa.png";
+
+const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
 const WHATSAPP_URL =
   "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20quiero%20informaci%C3%B3n%20sobre%20el%20renting%20de%20veh%C3%ADculos.";
@@ -23,35 +25,74 @@ export default function Landing() {
   const [plateQuery, setPlateQuery] = useState("");
   const [picoPlacaResult, setPicoPlacaResult] = useState<string | null>(null);
 
-  function handleCheckPicoPlaca(e: FormEvent) {
-    e.preventDefault();
-    const clean = plateQuery.replace(/\s+/g, "").toUpperCase();
+  const [landingViews, setLandingViews] = useState<number | null>(null);
+  const [picoPlacaUses, setPicoPlacaUses] = useState<number | null>(null);
 
-    if (!clean) {
-      setPicoPlacaResult("Ingresa una placa válida (ej: ABC123).");
-      return;
+  useEffect(() => {
+    async function trackAndLoadMetrics() {
+      // 1) registrar visita
+      try {
+        await fetch(`${API}/metrics/landing-view`, {
+          method: "POST",
+        });
+      } catch {
+        // no bloqueamos nada si falla
+      }
+
+      // 2) traer resumen de contadores
+      try {
+        const rs = await fetch(`${API}/metrics/summary`);
+        if (!rs.ok) return;
+        const json = await rs.json();
+        setLandingViews(json.landing_views ?? null);
+        setPicoPlacaUses(json.pico_placa_uses ?? null);
+      } catch {
+        // tampoco bloqueamos nada
+      }
     }
 
-    const match = clean.match(/(\d)$/);
-    if (!match) {
-      setPicoPlacaResult(
-        "No encontramos un número al final de la placa. Verifica el formato (ej: ABC123)."
-      );
-      return;
+    trackAndLoadMetrics();
+    }, []);
+
+    function handleCheckPicoPlaca(e: FormEvent) {
+        e.preventDefault();
+        const clean = plateQuery.replace(/\s+/g, "").toUpperCase();
+
+        if (!clean) {
+        setPicoPlacaResult("Ingresa una placa válida (ej: ABC123).");
+        return;
+        }
+
+        const match = clean.match(/(\d)$/);
+        if (!match) {
+        setPicoPlacaResult(
+            "No encontramos un número al final de la placa. Verifica el formato (ej: ABC123)."
+        );
+        return;
+        }
+
+        const lastDigit = Number(match[1]);
+        const rule = PICO_PLACA_RULES[lastDigit];
+
+        if (!rule) {
+        setPicoPlacaResult(
+            `Para placas terminadas en ${lastDigit}, revisa el cuadro de pico y placa.`
+        );
+        } else {
+        setPicoPlacaResult(`Para placas terminadas en ${lastDigit}: ${rule}`);
+        }
+
+        // registrar uso del cuadrito
+        try {
+        fetch(`${API}/metrics/pico-placa-use`, { method: "POST" });
+        } catch {
+        // ignoramos error
+        }
+
+        // actualizar contador en UI si ya tenemos algo cargado
+        setPicoPlacaUses((prev) => (prev == null ? prev : prev + 1));
     }
 
-    const lastDigit = Number(match[1]);
-    const rule = PICO_PLACA_RULES[lastDigit];
-
-    if (!rule) {
-      setPicoPlacaResult(
-        `Para placas terminadas en ${lastDigit}, revisa el cuadro de pico y placa.`
-      );
-      return;
-    }
-
-    setPicoPlacaResult(`Para placas terminadas en ${lastDigit}: ${rule}`);
-  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">
@@ -258,6 +299,23 @@ export default function Landing() {
                 <li>• Recordatorios de tecnomecánico y otros vencimientos.</li>
                 <li>• Acompañamiento operativo para mantener tu carro al día.</li>
               </ul>
+
+              {(landingViews != null || picoPlacaUses != null) && (
+                <p className="mt-3 text-[11px] text-slate-500">
+                  {landingViews != null && (
+                    <>
+                      Esta landing ha sido visitada{" "}
+                      <span className="font-semibold">{landingViews}</span> veces.{" "}
+                    </>
+                  )}
+                  {picoPlacaUses != null && (
+                    <>
+                      Consultas de pico y placa realizadas:{" "}
+                      <span className="font-semibold">{picoPlacaUses}</span>.
+                    </>
+                  )}
+                </p>
+              )}
             </div>
 
             {/* Imagen con el cuadro oficial de pico y placa */}

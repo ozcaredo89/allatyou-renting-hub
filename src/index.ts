@@ -8,6 +8,7 @@ import drivers from "./routes/drivers";
 import expenses from "./routes/expenses";
 import investmentsRoutes from "./routes/investments";
 import ledgerRoutes from "./routes/ledger";
+import metricsRouter from "./routes/metrics";
 import noPayRoutes from "./routes/noPay";
 import payments from "./routes/payments";
 import uploads from "./routes/uploads";
@@ -61,6 +62,7 @@ app.use("/uploads", uploads);
 app.use("/payments", payments);
 app.use("/expenses", expenses);
 app.use("/investments", investmentsRoutes);
+app.use("/metrics", metricsRouter);
 app.use("/no-pay", noPayRoutes);
 
 /** Rutas protegidas con Basic Auth (monta el middleware en la misma línea) */
