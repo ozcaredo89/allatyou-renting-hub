@@ -9,9 +9,11 @@ type Row = {
   owner_name: string | null;
   payment_date: string | null;
   amount: number | null;
-  days_since: number;   // viene de la vista
-  is_overdue: boolean;  // viene de la vista
+  days_since: number;
+  is_overdue: boolean;
+  installment_number: number | null;
 };
+
 
 type Payment = {
   id: number;
@@ -239,6 +241,7 @@ export default function Reports() {
                 <th className="px-4 py-3 font-semibold">Placa</th>
                 <th className="px-4 py-3 font-semibold">Fecha último pago</th>
                 <th className="px-4 py-3 font-semibold">Monto último pago</th>
+                <th className="px-4 py-3 font-semibold">Cuota #</th> 
                 <th className="px-4 py-3 font-semibold">Estado</th>
               </tr>
             </thead>
@@ -257,6 +260,9 @@ export default function Reports() {
                     <td className={`px-4 py-3 ${color}`}>
                       {r.amount != null ? "$" + fmtCOP.format(r.amount) : "—"}
                     </td>
+                    <td className={`px-4 py-3 ${color}`}>
+                      {r.installment_number != null ? `#${r.installment_number}` : "—"}
+                    </td>
                     <td className="px-4 py-3">
                       {overdue ? (
                         <span className="rounded-full bg-red-100 text-red-700 px-3 py-1 text-xs">
@@ -273,7 +279,7 @@ export default function Reports() {
               })}
               {items.length === 0 && !loading && (
                 <tr>
-                  <td className="px-4 py-6 text-gray-500" colSpan={5}>
+                  <td className="px-4 py-6 text-gray-500" colSpan={6}>
                     Sin resultados.
                   </td>
                 </tr>
