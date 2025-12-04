@@ -11,6 +11,13 @@ export default function App() {
   const active = "bg-black text-white";
   const inactive = "text-gray-700 hover:bg-gray-100";
 
+  const hostname = window.location.hostname;
+  const isWebSubdomain = hostname === "web.allatyou.com";
+  const isPublicDomain = hostname === "www.allatyou.com";
+
+  // En el dominio comercial (www) NO mostramos el link de Pagos en el header
+  const showPagosLink = !isPublicDomain;
+
   return (
     <BrowserRouter>
       <div className="min-h-screen">
@@ -27,14 +34,18 @@ export default function App() {
               >
                 Inicio
               </NavLink>
-              <NavLink
-                to="/pay"
-                className={({ isActive }) =>
-                  `${link} ${isActive ? active : inactive}`
-                }
-              >
-                Pagos
-              </NavLink>
+
+              {showPagosLink && (
+                <NavLink
+                  to="/pay"
+                  className={({ isActive }) =>
+                    `${link} ${isActive ? active : inactive}`
+                  }
+                >
+                  Pagos
+                </NavLink>
+              )}
+
               {/* Más adelante puedes reactivar estas rutas en el menú */}
               {/* <NavLink to="/reports"  className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Reportes</NavLink> */}
               {/* <NavLink to="/expenses" className={({isActive}) => `${link} ${isActive ? active : inactive}`}>Gastos</NavLink> */}
@@ -44,8 +55,18 @@ export default function App() {
 
         <main>
           <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/" element={<Navigate to="/pay" replace />} />
+            {/* En web.allatyou.com: "/" -> /pay.
+                En los demás dominios (www, localhost, etc.): "/" -> Landing */}
+            <Route
+              path="/"
+              element={
+                isWebSubdomain ? (
+                  <Navigate to="/pay" replace />
+                ) : (
+                  <Landing />
+                )
+              }
+            />
             <Route path="/pay" element={<Pay />} />
             <Route path="/admin/advances" element={<AdminAdvances />} />
             <Route path="/admin/profit" element={<AdminProfit />} />

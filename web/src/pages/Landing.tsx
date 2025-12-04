@@ -66,12 +66,6 @@ export default function Landing() {
             >
               Quiero un carro en renting
             </a>
-            <a
-              href="/pay"
-              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-6 py-2.5 text-sm font-semibold text-slate-50 hover:bg-white/10"
-            >
-              Ingresar a la app de pagos
-            </a>
           </div>
 
           <ul className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-slate-400">
