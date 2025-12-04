@@ -18,25 +18,32 @@ import profitRoutes from "./routes/profit";
 
 const app = express();
 
-/** CORS: WEB_ORIGIN + localhost + *.vercel.app (previews) */
+/** CORS: WEB_ORIGIN (puede ser lista separada por comas) + localhost + *.vercel.app */
 const corsOptions: CorsOptionsDelegate = (req, cb) => {
   const origin = (req.headers?.origin as string) || "";
 
+  // Soportar varios orígenes en WEB_ORIGIN separados por coma
+  const envOrigins = (process.env.WEB_ORIGIN || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   const allowList = [
-    process.env.WEB_ORIGIN, // ej: https://allatyou-renting-hub.vercel.app
+    ...envOrigins,
     "http://localhost:5173",
-  ].filter(Boolean) as string[];
+  ];
 
   let allowed = false;
   try {
     const host = origin ? new URL(origin).host : "";
     allowed = allowList.includes(origin) || host.endsWith(".vercel.app");
-  } catch {}
+  } catch {
+    // si new URL falla, dejamos allowed = false
+  }
 
   cb(null, {
     origin: allowed,
     optionsSuccessStatus: 200,
-    // 👇 Necesario para enviar Authorization: Basic ... desde el front
     allowedHeaders: ["Content-Type", "Authorization"],
   });
 };
