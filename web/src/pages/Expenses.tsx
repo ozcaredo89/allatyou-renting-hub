@@ -25,15 +25,22 @@ type SavedExpensePreview = {
   perVehicle: number;    // estimado: total / plates.length
 };
 
+type ExpenseAttachment = {
+  kind: "evidence" | "invoice" | "legacy";
+  url: string;
+};
+
 type ExpenseRow = {
-    id: number;
-    date: string;
-    item: string;
-    description: string;
-    total_amount: number;
-    attachment_url: string | null;
-    expense_vehicles: { plate: string; share_amount: number }[];
-  };
+  id: number;
+  date: string;
+  item: string;
+  description: string;
+  total_amount: number;
+  attachment_url: string | null; // legacy
+  expense_attachments?: { kind: "evidence" | "invoice"; url: string }[];
+  expense_vehicles: { plate: string; share_amount: number }[];
+};
+
 
 export default function Expenses() {
 
@@ -52,7 +59,9 @@ export default function Expenses() {
   const [amountStr, setAmountStr] = useState(""); // solo dígitos
   const [plates, setPlates] = useState<string[]>([]);
   const [plateInput, setPlateInput] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  //const [file, setFile] = useState<File | null>(null);
+  const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
+  const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
 
   // === Validación placa que se está escribiendo ===
@@ -127,15 +136,19 @@ export default function Expenses() {
     setPlates(plates.filter((x) => x !== p));
   }
 
-  async function uploadIfAny(): Promise<string | null> {
-    if (!file) return null;
-    const fd = new FormData();
-    fd.append("file", file);
-    const rs = await fetch(`${API}/uploads`, { method: "POST", body: fd });
-    if (!rs.ok) throw new Error("upload failed");
-    const json = await rs.json();
-    return json.url as string;
+  async function uploadMany(files: File[]): Promise<string[]> {
+    const urls: string[] = [];
+    for (const f of files) {
+      const fd = new FormData();
+      fd.append("file", f);
+      const rs = await fetch(`${API}/uploads`, { method: "POST", body: fd });
+      if (!rs.ok) throw new Error("upload failed");
+      const json = await rs.json();
+      urls.push(json.url as string);
+    }
+    return urls;
   }
+
 
   // === Nuevo: estado del último gasto guardado y modal de confirmación ===
   const [saved, setSaved] = useState<SavedExpensePreview | null>(null);
@@ -148,15 +161,23 @@ export default function Expenses() {
 
     setLoading(true);
     try {
-      const attachment_url = await uploadIfAny();
+      const evidenceUrls = await uploadMany(evidenceFiles);
+      const invoiceUrls  = await uploadMany(invoiceFiles);
+
+      const attachments = [
+        ...evidenceUrls.map((url) => ({ kind: "evidence" as const, url })),
+        ...invoiceUrls.map((url) => ({ kind: "invoice" as const, url })),
+      ];
+
       const body = {
         date,
         item: item.trim(),
         description: description.trim() || null,
         total_amount:total,
         plates,
-        attachment_url,
+        attachments,
       };
+
       const rs = await fetch(`${API}/expenses`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -164,7 +185,6 @@ export default function Expenses() {
       });
       if (!rs.ok) throw new Error(await rs.text());
 
-      // Guardar un snapshot de lo enviado para el preview/WhatsApp
       const preview: SavedExpensePreview = {
         date,
         item: item.trim(),
@@ -177,10 +197,11 @@ export default function Expenses() {
       setShowModal(true);
       await loadRecent();
 
-      // Reset de campos “transitorios”
+      // Reset
       setAmountStr("");
-      setFile(null);
       setPlates([]);
+      setEvidenceFiles([]);
+      setInvoiceFiles([]);
     } catch {
       alert("Error creando gasto");
     } finally {
@@ -330,15 +351,120 @@ export default function Expenses() {
             </div>
           </div>
 
-          <div className="md:col-span-3">
-            <label className="mb-1 block text-sm font-medium">Soporte (imagen, opcional)</label>
-            <input
-              className="w-full rounded-xl border px-3 py-2"
-              type="file"
-              accept="image/*"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-            />
-            {file && <div className="mt-1 text-xs text-gray-600">{file.name}</div>}
+          {/* Evidencias y facturas */}
+          <div className="md:col-span-3 space-y-3">
+            {/* Evidencias */}
+            <div>
+              <label className="mb-1 block text-sm font-medium">
+                Evidencias (fotos, opcional)
+              </label>
+              <input
+                className="w-full rounded-xl border px-3 py-2"
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) => {
+                  const selected = Array.from(e.target.files ?? []);
+                  if (!selected.length) return;
+
+                  setEvidenceFiles((prev) => {
+                    const existing = new Set(prev.map((f) => f.name + "::" + f.size));
+                    const merged = [...prev];
+
+                    for (const f of selected) {
+                      const key = f.name + "::" + f.size;
+                      // Respetar máximo 5 archivos entre evidencias + facturas
+                      if (merged.length + invoiceFiles.length >= 5) break;
+                      if (!existing.has(key)) merged.push(f);
+                    }
+
+                    return merged;
+                  });
+
+                  // Permitir volver a seleccionar los mismos archivos si hace falta
+                  e.target.value = "";
+                }}
+              />
+              <div className="mt-1 text-xs text-gray-500">
+                Puedes subir varias imágenes en varias tandas (máx. 5 entre evidencias y
+                facturas).
+              </div>
+              {evidenceFiles.length > 0 && (
+                <ul className="mt-2 space-y-1 text-xs text-gray-700">
+                  {evidenceFiles.map((f, idx) => (
+                    <li
+                      key={f.name + idx}
+                      className="flex items-center justify-between rounded-lg border px-3 py-1"
+                    >
+                      <span className="truncate">{f.name}</span>
+                      <button
+                        type="button"
+                        className="text-red-500"
+                        onClick={() =>
+                          setEvidenceFiles((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                      >
+                        Quitar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Facturas */}
+            <div>
+              <label className="mb-1 block text-sm font-medium">
+                Facturas (imágenes, opcional)
+              </label>
+              <input
+                className="w-full rounded-xl border px-3 py-2"
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) => {
+                  const selected = Array.from(e.target.files ?? []);
+                  if (!selected.length) return;
+
+                  setInvoiceFiles((prev) => {
+                    const existing = new Set(prev.map((f) => f.name + "::" + f.size));
+                    const merged = [...prev];
+
+                    for (const f of selected) {
+                      const key = f.name + "::" + f.size;
+                      // Respetar máximo 5 archivos entre evidencias + facturas
+                      if (merged.length + evidenceFiles.length >= 5) break;
+                      if (!existing.has(key)) merged.push(f);
+                    }
+
+                    return merged;
+                  });
+
+                  e.target.value = "";
+                }}
+              />
+              {invoiceFiles.length > 0 && (
+                <ul className="mt-2 space-y-1 text-xs text-gray-700">
+                  {invoiceFiles.map((f, idx) => (
+                    <li
+                      key={f.name + idx}
+                      className="flex items-center justify-between rounded-lg border px-3 py-1"
+                    >
+                      <span className="truncate">{f.name}</span>
+                      <button
+                        type="button"
+                        className="text-red-500"
+                        onClick={() =>
+                          setInvoiceFiles((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                      >
+                        Quitar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
 
           {/* Resumen prorrateo */}
@@ -384,7 +510,14 @@ export default function Expenses() {
       <h2 className="mt-8 mb-3 text-xl font-semibold">Últimos gastos</h2>
       <div className="space-y-3">
         {recent.map((e) => {
-          const plates = e.expense_vehicles?.map(v => v.plate) ?? [];
+          const plates = e.expense_vehicles?.map((v) => v.plate) ?? [];
+
+          const attachments: ExpenseAttachment[] =
+            e.expense_attachments && e.expense_attachments.length
+              ? e.expense_attachments.map((a) => ({ ...a }))
+              : e.attachment_url
+              ? [{ kind: "legacy", url: e.attachment_url }]
+              : [];
           return (
             <div key={e.id} className="rounded-2xl border bg-white p-4 shadow-sm">
               <div className="flex items-start justify-between gap-4">
@@ -396,11 +529,25 @@ export default function Expenses() {
                   <div className="mt-1 text-sm">
                     <span className="font-medium">Placas:</span> {plates.length ? plates.join(", ") : "—"}
                   </div>
-                  {e.attachment_url ? (
-                    <a className="text-xs underline" href={e.attachment_url} target="_blank" rel="noreferrer">
-                      Ver soporte
-                    </a>
-                  ) : null}
+                  {attachments.length > 0 && (
+                  <div className="mt-2 space-y-1 text-xs">
+                    {attachments.map((a, idx) => (
+                      <a
+                        key={idx}
+                        className="block underline text-blue-600"
+                        href={a.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {a.kind === "invoice"
+                          ? `Factura ${idx + 1}`
+                          : a.kind === "evidence"
+                          ? `Evidencia ${idx + 1}`
+                          : `Soporte ${idx + 1}`}
+                      </a>
+                    ))}
+                  </div>
+                )}
                 </div>
                 <div className="text-right">
                   <div className="text-sm text-gray-500">Total</div>
