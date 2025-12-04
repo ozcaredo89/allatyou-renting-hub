@@ -7,16 +7,16 @@ const WHATSAPP_URL =
 
 // Ajusta estos textos según el pico y placa real de tu ciudad
 const PICO_PLACA_RULES: Record<number, string> = {
-  0: "Ejemplo: Lunes (mañana y tarde) para placas terminadas en 0.",
-  1: "Ejemplo: Lunes para placas terminadas en 1.",
-  2: "Ejemplo: Martes para placas terminadas en 2.",
-  3: "Ejemplo: Martes para placas terminadas en 3.",
-  4: "Ejemplo: Miércoles para placas terminadas en 4.",
-  5: "Ejemplo: Miércoles para placas terminadas en 5.",
-  6: "Ejemplo: Jueves para placas terminadas en 6.",
-  7: "Ejemplo: Jueves para placas terminadas en 7.",
-  8: "Ejemplo: Viernes para placas terminadas en 8.",
-  9: "Ejemplo: Viernes para placas terminadas en 9.",
+  0: "El pico y placa es el día Jueves (mañana y tarde) para placas terminadas en 0.",
+  1: "El pico y placa es el día Viernes (mañana y tarde) para placas terminadas en 1.",
+  2: "El pico y placa es el día Viernes (mañana y tarde) para placas terminadas en 2.",
+  3: "El pico y placa es el día Lunes (mañana y tarde) para placas terminadas en 3.",
+  4: "El pico y placa es el día Lunes (mañana y tarde) para placas terminadas en 4.",
+  5: "El pico y placa es el día Martes (mañana y tarde) para placas terminadas en 5.",
+  6: "El pico y placa es el día Martes (mañana y tarde) para placas terminadas en 6.",
+  7: "El pico y placa es el día Miercoles (mañana y tarde) para placas terminadas en 7.",
+  8: "El pico y placa es el día Miercoles (mañana y tarde) para placas terminadas en 8.",
+  9: "El pico y placa es el día Jueves (mañana y tarde) para placas terminadas en 9.",
 };
 
 export default function Landing() {
