@@ -1,8 +1,58 @@
-// web/src/pages/Landing.tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import picoPlacaImg from "../assets/pico-placa.png"; // 👈 vas a crear este archivo
+
 const WHATSAPP_URL =
-  "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20quiero%20informaci%C3%B3n%20sobre%20el%20renting%20de%20veh%C3%ADculos."; 
+  "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20quiero%20informaci%C3%B3n%20sobre%20el%20renting%20de%20veh%C3%ADculos.";
+
+// Ajusta estos textos según el pico y placa real de tu ciudad
+const PICO_PLACA_RULES: Record<number, string> = {
+  0: "Ejemplo: Lunes (mañana y tarde) para placas terminadas en 0.",
+  1: "Ejemplo: Lunes para placas terminadas en 1.",
+  2: "Ejemplo: Martes para placas terminadas en 2.",
+  3: "Ejemplo: Martes para placas terminadas en 3.",
+  4: "Ejemplo: Miércoles para placas terminadas en 4.",
+  5: "Ejemplo: Miércoles para placas terminadas en 5.",
+  6: "Ejemplo: Jueves para placas terminadas en 6.",
+  7: "Ejemplo: Jueves para placas terminadas en 7.",
+  8: "Ejemplo: Viernes para placas terminadas en 8.",
+  9: "Ejemplo: Viernes para placas terminadas en 9.",
+};
 
 export default function Landing() {
+  const [plateQuery, setPlateQuery] = useState("");
+  const [picoPlacaResult, setPicoPlacaResult] = useState<string | null>(null);
+
+  function handleCheckPicoPlaca(e: FormEvent) {
+    e.preventDefault();
+    const clean = plateQuery.replace(/\s+/g, "").toUpperCase();
+
+    if (!clean) {
+      setPicoPlacaResult("Ingresa una placa válida (ej: ABC123).");
+      return;
+    }
+
+    const match = clean.match(/(\d)$/);
+    if (!match) {
+      setPicoPlacaResult(
+        "No encontramos un número al final de la placa. Verifica el formato (ej: ABC123)."
+      );
+      return;
+    }
+
+    const lastDigit = Number(match[1]);
+    const rule = PICO_PLACA_RULES[lastDigit];
+
+    if (!rule) {
+      setPicoPlacaResult(
+        `Para placas terminadas en ${lastDigit}, revisa el cuadro de pico y placa.`
+      );
+      return;
+    }
+
+    setPicoPlacaResult(`Para placas terminadas en ${lastDigit}: ${rule}`);
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">
       <div className="border-b border-white/10 bg-slate-950/80">
@@ -22,11 +72,11 @@ export default function Landing() {
           </div>
 
           <div className="hidden gap-3 text-xs md:flex">
-            <a
-              href="#servicios"
-              className="text-slate-300 hover:text-white"
-            >
+            <a href="#servicios" className="text-slate-300 hover:text-white">
               Servicios
+            </a>
+            <a href="#pico-placa" className="text-slate-300 hover:text-white">
+              Pico y placa
             </a>
             <a href="#por-que" className="text-slate-300 hover:text-white">
               ¿Por qué AllAtYou?
@@ -143,6 +193,89 @@ export default function Landing() {
                 Último pago por vehículo, días de mora y reportes descargables
                 en CSV para revisar la operación.
               </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Pico y Placa + Asistencias */}
+      <section
+        id="pico-placa"
+        className="border-t border-white/5 bg-slate-950 py-10"
+      >
+        <div className="mx-auto max-w-5xl px-4">
+          <h2 className="text-center text-xl font-semibold text-white sm:text-2xl">
+            Pico y placa y asistencias para tu carro
+          </h2>
+          <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-slate-300">
+            Te ayudamos a recordar cuándo tienes pico y placa, cuándo se vence
+            tu tecnomecánico, y te acompañamos con asistencia para tu vehículo
+            en el día a día.
+          </p>
+
+          <div className="mt-7 grid gap-6 md:grid-cols-2">
+            {/* Cuadro de consulta por placa */}
+            <div className="rounded-2xl border border-emerald-500/20 bg-slate-900/80 p-4 text-left">
+              <p className="text-sm font-semibold text-white">
+                Consulta rápida por placa
+              </p>
+              <p className="mt-2 text-xs text-slate-300">
+                Escribe la placa de tu vehículo y te mostramos el día que aplica
+                pico y placa según el número final. Ajusta las reglas según tu ciudad.
+              </p>
+
+              <form onSubmit={handleCheckPicoPlaca} className="mt-4 space-y-3">
+                <input
+                value={plateQuery}
+                onChange={(e) =>
+                    setPlateQuery(
+                    e.target.value
+                        .toUpperCase()           // siempre en mayúsculas
+                        .replace(/[^A-Z0-9]/g, "") // solo letras y números
+                    )
+                }
+                placeholder="Ejemplo: ABC123"
+                maxLength={6}
+                inputMode="text"
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 text-sm text-slate-50 outline-none focus:ring-2 focus:ring-emerald-400"
+                />
+                <button
+                  type="submit"
+                  className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
+                >
+                  Consultar pico y placa
+                </button>
+              </form>
+
+              {picoPlacaResult && (
+                <div className="mt-3 rounded-xl bg-slate-950/70 px-3 py-2 text-xs text-slate-200">
+                  {picoPlacaResult}
+                </div>
+              )}
+
+              <ul className="mt-4 space-y-1 text-xs text-slate-400">
+                <li>• Recordatorios de pico y placa para tu vehículo.</li>
+                <li>• Recordatorios de tecnomecánico y otros vencimientos.</li>
+                <li>• Acompañamiento operativo para mantener tu carro al día.</li>
+              </ul>
+            </div>
+
+            {/* Imagen con el cuadro oficial de pico y placa */}
+            <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+              <p className="text-sm font-semibold text-white">
+                Calendario de pico y placa
+              </p>
+              <p className="mt-2 text-xs text-slate-300">
+                Usamos el cuadro oficial de pico y placa para ayudarte a planear
+                mejor tus turnos y tus recorridos.
+              </p>
+              <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-slate-950">
+                <img
+                  src={picoPlacaImg}
+                  alt="Calendario de pico y placa"
+                  className="w-full object-contain"
+                />
+              </div>
             </div>
           </div>
         </div>
