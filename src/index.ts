@@ -15,6 +15,7 @@ import uploads from "./routes/uploads";
 // Si tienes DOS routers distintos bajo /reports, déjalos; si no, elimina el que sobre.
 import reports from "./routes/reports";
 import profitRoutes from "./routes/profit";
+import remindersRoutes from "./routes/reminders";
 
 const app = express();
 
@@ -71,6 +72,7 @@ app.use("/expenses", expenses);
 app.use("/investments", investmentsRoutes);
 app.use("/metrics", metricsRouter);
 app.use("/no-pay", noPayRoutes);
+app.use("/reminders", remindersRoutes);
 
 /** Rutas protegidas con Basic Auth (monta el middleware en la misma línea) */
 app.use("/reports", basicAuth, profitRoutes);

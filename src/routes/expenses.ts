@@ -254,4 +254,79 @@ r.put("/:id/attachment", async (req: Request, res: Response) => {
   res.json(data);
 });
 
+/** POST /expenses/:id/attachments
+ * body: { attachments: { kind: "evidence" | "invoice"; url: string }[] }
+ * Agrega ADJUNTOS adicionales a un gasto ya existente.
+ */
+r.post("/:id/attachments", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+
+  if (!id || !Number.isFinite(id)) {
+    return res.status(400).json({ error: "invalid id" });
+  }
+
+  const incoming = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
+
+  if (!incoming.length) {
+    return res.status(400).json({ error: "attachments must be non-empty" });
+  }
+
+  // Normalizar adjuntos
+  const normalized: NormalizedAttachment[] = [];
+  for (const raw of incoming) {
+    if (!raw) continue;
+    const kind = String(raw.kind || "").toLowerCase();
+    const url = String(raw.url || "").trim();
+    if (!url) continue;
+    if (kind !== "evidence" && kind !== "invoice") continue;
+    normalized.push({ kind, url });
+  }
+
+  if (!normalized.length) {
+    return res.status(400).json({ error: "valid attachments required" });
+  }
+
+  // Obtener cuántos adjuntos tiene hoy el gasto
+  const { data: current, error: curErr } = await supabase
+    .from("expense_attachments")
+    .select("id")
+    .eq("expense_id", id);
+
+  if (curErr) return res.status(500).json({ error: curErr.message });
+
+  const existingCount = (current ?? []).length;
+
+  if (existingCount + normalized.length > 5) {
+    return res.status(400).json({
+      error: `max 5 attachments allowed (current: ${existingCount}, new: ${normalized.length})`
+    });
+  }
+
+  // Insertar nuevos adjuntos
+  const rows = normalized.map(a => ({
+    expense_id: id,
+    kind: a.kind,
+    url: a.url
+  }));
+
+  const { data: inserted, error: insErr } = await supabase
+    .from("expense_attachments")
+    .insert(rows)
+    .select();
+
+  if (insErr) return res.status(500).json({ error: insErr.message });
+
+  // Audit log
+  await supabase.from("expense_audit_log").insert([
+    {
+      expense_id: id,
+      action: "attachments_added",
+      changed_fields: { added: normalized.map(a => a.url) },
+      actor: null
+    }
+  ]);
+
+  res.status(201).json({ attachments: inserted });
+});
+
 export default r;

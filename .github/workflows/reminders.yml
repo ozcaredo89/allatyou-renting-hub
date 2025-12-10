@@ -1,0 +1,22 @@
+name: Reminders
+
+on:
+  schedule:
+    # Ajustar horarios según tu necesidad (en UTC)
+    - cron: "0 10 * * *"
+    - cron: "0 15 * * *"
+    - cron: "0 23 * * *"
+
+jobs:
+  run-reminders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call reminders run endpoint
+        run: |
+          curl -X POST "${REMINDERS_URL}" \
+            -H "X-Internal-Secret: ${REMINDERS_INTERNAL_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d '{}'
+        env:
+          REMINDERS_URL: https://api.allatyou.com/reminders/run
+          REMINDERS_INTERNAL_SECRET: ${{ secrets.REMINDERS_INTERNAL_SECRET }}

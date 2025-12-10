@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import picoPlacaImg from "../assets/pico-placa.png";
+import { ReminderSubscriptionCard } from "../components/ReminderSubscriptionCard";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -336,6 +337,7 @@ export default function Landing() {
               </div>
             </div>
           </div>
+          <ReminderSubscriptionCard />
         </div>
       </section>
 

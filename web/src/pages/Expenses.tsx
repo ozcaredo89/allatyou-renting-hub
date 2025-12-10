@@ -62,6 +62,11 @@ export default function Expenses() {
   //const [file, setFile] = useState<File | null>(null);
   const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
   const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
+  // Modal para agregar adjuntos a un gasto existente
+  const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null);
+  const [editEvidenceFiles, setEditEvidenceFiles] = useState<File[]>([]);
+  const [editInvoiceFiles, setEditInvoiceFiles] = useState<File[]>([]);
+
   const [loading, setLoading] = useState(false);
 
   // === Validación placa que se está escribiendo ===
@@ -232,6 +237,47 @@ export default function Expenses() {
     navigator.clipboard.writeText(msg).then(() => {
       alert("Mensaje copiado ✅");
     });
+  }
+
+  async function submitEditAttachments(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingExpenseId) return;
+
+    const hasFiles = editEvidenceFiles.length || editInvoiceFiles.length;
+    if (!hasFiles) {
+      alert("Selecciona al menos un archivo.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const evidenceUrls = await uploadMany(editEvidenceFiles);
+      const invoiceUrls  = await uploadMany(editInvoiceFiles);
+
+      const attachments = [
+        ...evidenceUrls.map((url) => ({ kind: "evidence" as const, url })),
+        ...invoiceUrls.map((url) => ({ kind: "invoice" as const, url })),
+      ];
+
+      const rs = await fetch(`${API}/expenses/${editingExpenseId}/attachments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attachments }),
+      });
+
+      if (!rs.ok) throw new Error(await rs.text());
+
+      await loadRecent();
+
+      setEditingExpenseId(null);
+      setEditEvidenceFiles([]);
+      setEditInvoiceFiles([]);
+    } catch (err) {
+      console.error(err);
+      alert("Error agregando soportes.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -561,6 +607,17 @@ export default function Expenses() {
                   ) : null}
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingExpenseId(e.id);
+                  setEditEvidenceFiles([]);
+                  setEditInvoiceFiles([]);
+                }}
+                className="mt-2 inline-flex items-center rounded-lg border px-3 py-1 text-xs hover:bg-gray-50"
+              >
+                Agregar evidencias / facturas
+              </button>
             </div>
           );
         })}
@@ -610,6 +667,77 @@ export default function Expenses() {
           </div>
         </div>
       )}
+    {editingExpenseId && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl text-sm">
+        <h2 className="text-lg font-semibold">
+          Agregar soportes al gasto #{editingExpenseId}
+        </h2>
+
+        <form onSubmit={submitEditAttachments} className="mt-4 space-y-4">
+
+          {/* Evidencias */}
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Evidencias (fotos)
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              className="w-full rounded-xl border px-3 py-2"
+              onChange={(e) => {
+                const selected = Array.from(e.target.files ?? []);
+                setEditEvidenceFiles(selected);
+                e.target.value = "";
+              }}
+            />
+          </div>
+
+          {/* Facturas */}
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Facturas (imágenes)
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              className="w-full rounded-xl border px-3 py-2"
+              onChange={(e) => {
+                const selected = Array.from(e.target.files ?? []);
+                setEditInvoiceFiles(selected);
+                e.target.value = "";
+              }}
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 mt-4">
+            <button
+              type="button"
+              onClick={() => {
+                setEditingExpenseId(null);
+                setEditEvidenceFiles([]);
+                setEditInvoiceFiles([]);
+              }}
+              className="rounded-xl border px-4 py-2"
+            >
+              Cancelar
+            </button>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-xl bg-black px-5 py-2 text-white disabled:opacity-50"
+            >
+              {loading ? "Guardando..." : "Guardar soportes"}
+            </button>
+          </div>
+
+        </form>
+      </div>
+    </div>
+  )}
     </div>
   );
 }
