@@ -25,8 +25,8 @@ if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS || !SMTP_FROM) {
 
 const transporter = nodemailer.createTransport({
   host: SMTP_HOST,
-  port: Number(SMTP_PORT || 587),
-  secure: false, // si usas 465, pon true
+  port: Number(SMTP_PORT || 465), // Se cambio de 587 a 465 a ver si me deja pasar el firewall
+  secure: true, // si puso true ahora que se cambio a de 587 a 465
   auth: {
     user: SMTP_USER,
     pass: SMTP_PASS,
@@ -44,7 +44,7 @@ export async function sendEmail(opts: SendEmailOptions): Promise<void> {
     user: SMTP_USER,
     from: SMTP_FROM,
   });
-  
+
   await transporter.sendMail({
     from: SMTP_FROM,
     to: opts.to,
