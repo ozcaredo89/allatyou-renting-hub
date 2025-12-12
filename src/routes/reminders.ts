@@ -387,9 +387,11 @@ r.post("/run", async (req: Request, res: Response) => {
         });
         sentCount++;
       } catch (e: any) {
+        console.error("sendEmail error for plate", sub.plate, e);
+        console.error("sendEmail FULL ERROR:", e);
         errors.push({
           plate: sub.plate,
-          error: e?.message || "sendEmail failed",
+          error: `${e?.name || "Error"} ${e?.code || ""} ${e?.message || ""}`.trim(),
         });
       }
     }

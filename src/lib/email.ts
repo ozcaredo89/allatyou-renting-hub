@@ -38,6 +38,13 @@ export async function sendEmail(opts: SendEmailOptions): Promise<void> {
     throw new Error("SMTP is not configured");
   }
 
+  console.log("[sendEmail] Using SMTP config:", {
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    user: SMTP_USER,
+    from: SMTP_FROM,
+  });
+  
   await transporter.sendMail({
     from: SMTP_FROM,
     to: opts.to,
