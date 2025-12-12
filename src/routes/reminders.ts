@@ -272,12 +272,16 @@ r.post("/", async (req: Request, res: Response) => {
 /**
  * POST /reminders/run
  *
- * Endpoint interno (para GitHub Actions / cron) que:
- * - Calcula qué recordatorios deben dispararse "ahora".
- * - Envía correos electrónicos reales usando sendEmail.
+ * Ejecutado por GitHub Actions (cron).
+ * Envia recordatorios DIARIOS por correo electrónico a todas las
+ * suscripciones activas que coincidan con la hora actual y tengan email.
+ *
+ * Se detiene automáticamente cuando:
+ *  - el usuario desactiva el flag correspondiente (notify_* = false), o
+ *  - se marca la suscripción como inactive (active = false).
  *
  * Seguridad:
- *   Requiere header X-Internal-Secret == REMINDERS_INTERNAL_SECRET (env).
+ *   Requiere header x-internal-secret == REMINDERS_INTERNAL_SECRET (env).
  */
 r.post("/run", async (req: Request, res: Response) => {
   const secretHeader = (req.headers["x-internal-secret"] || "") as string;
@@ -288,18 +292,22 @@ r.post("/run", async (req: Request, res: Response) => {
   }
 
   try {
-    // "Ahora" (el cron lo vas a programar en las horas que tú quieras)
     const now = new Date();
-    const currentHour = now.getHours(); // asume server en tu zona o ajustas el cron
+    const currentHour = now.getHours(); // 0–23, el cron se programa según esto
+    const todayStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
 
-    const today = startOfDay(now);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    // Traemos solo suscripciones activas que "aplican" en esta hora
+    const orParts = [
+      `and(notify_soat.eq.true,soat_notify_hour.eq.${currentHour})`,
+      `and(notify_tecno.eq.true,tecno_notify_hour.eq.${currentHour})`,
+      `and(notify_pico.eq.true,pico_notify_hour.eq.${currentHour})`,
+    ];
 
     const { data, error } = await supabase
       .from("reminder_subscriptions")
       .select("*")
-      .eq("active", true);
+      .eq("active", true)
+      .or(orParts.join(","));
 
     if (error) {
       return res.status(500).json({ error: error.message });
@@ -307,111 +315,90 @@ r.post("/run", async (req: Request, res: Response) => {
 
     const rows = (data || []) as ReminderRow[];
 
-    const sent = { soat: 0, tecno: 0, pico: 0 };
+    let sentCount = 0;
     const skippedNoEmail: string[] = [];
-    const errors: { plate: string; kind: string; error: string }[] = [];
+    const errors: { plate: string; error: string }[] = [];
 
     for (const sub of rows) {
       const to = (sub.notification_email || "").trim();
       if (!to) {
-        // No hay correo configurado → lo saltamos (en futuro WhatsApp)
         skippedNoEmail.push(sub.plate);
         continue;
       }
 
-      const plate = sub.plate;
-      const lastDigit = Number(plate.slice(-1));
-      const soatDate = sub.soat_expires_at ? new Date(sub.soat_expires_at) : null;
-      const tecnoDate = sub.tecno_expires_at ? new Date(sub.tecno_expires_at) : null;
+      const reasons: string[] = [];
 
-      // SOAT
-      if (sub.notify_soat && soatDate && sub.soat_notify_hour === currentHour) {
-        const diff = diffInDays(soatDate, today);
-        if (diff === sub.days_before_soat) {
-          const subject = `Recordatorio: SOAT para ${plate} vence el ${soatDate.toLocaleDateString(
-            "es-CO"
-          )}`;
-          const text =
-            `Hola,\n\n` +
-            `Te recordamos que el SOAT del vehículo con placa ${plate} vence el ` +
-            `${soatDate.toLocaleDateString("es-CO")}.\n\n` +
-            `Te recomendamos renovarlo con anticipación para evitar comparendos o inmovilización.\n\n` +
-            `— AllAtYou Renting`;
-
-          try {
-            await sendEmail({ to, subject, text });
-            sent.soat++;
-          } catch (e: any) {
-            errors.push({
-              plate,
-              kind: "soat",
-              error: e?.message || "sendEmail failed",
-            });
-          }
+      if (sub.notify_soat && sub.soat_notify_hour === currentHour) {
+        if (sub.soat_expires_at) {
+          const d = new Date(sub.soat_expires_at);
+          reasons.push(
+            `SOAT (vence el ${d.toLocaleDateString("es-CO")})`
+          );
+        } else {
+          reasons.push("SOAT");
         }
       }
 
-      // TECNOMECÁNICO
-      if (sub.notify_tecno && tecnoDate && sub.tecno_notify_hour === currentHour) {
-        const diff = diffInDays(tecnoDate, today);
-        if (diff === sub.days_before_tecno) {
-          const subject = `Recordatorio: tecnomecánico para ${plate} vence el ${tecnoDate.toLocaleDateString(
-            "es-CO"
-          )}`;
-          const text =
-            `Hola,\n\n` +
-            `Te recordamos que el tecnomecánico del vehículo con placa ${plate} vence el ` +
-            `${tecnoDate.toLocaleDateString("es-CO")}.\n\n` +
-            `Mantenerlo al día te ayuda a evitar comparendos y problemas mecánicos.\n\n` +
-            `— AllAtYou Renting`;
-
-          try {
-            await sendEmail({ to, subject, text });
-            sent.tecno++;
-          } catch (e: any) {
-            errors.push({
-              plate,
-              kind: "tecno",
-              error: e?.message || "sendEmail failed",
-            });
-          }
+      if (sub.notify_tecno && sub.tecno_notify_hour === currentHour) {
+        if (sub.tecno_expires_at) {
+          const d = new Date(sub.tecno_expires_at);
+          reasons.push(
+            `Tecnomecánico (vence el ${d.toLocaleDateString("es-CO")})`
+          );
+        } else {
+          reasons.push("Tecnomecánico");
         }
       }
 
-      // PICO Y PLACA (recordatorio el día anterior)
-      if (
-        sub.notify_pico &&
-        !Number.isNaN(lastDigit) &&
-        sub.pico_notify_hour === currentHour
-      ) {
-        const picoDay = PICO_PDAY[lastDigit];
-        if (picoDay != null && picoDay === tomorrow.getDay()) {
-          const subject = `Recordatorio: mañana tienes pico y placa (${plate})`;
-          const text =
-            `Hola,\n\n` +
-            `Te recordamos que mañana aplica pico y placa para el vehículo con placa ${plate}.\n` +
-            `Tenlo en cuenta para planear tus recorridos y evitar comparendos.\n\n` +
-            `— AllAtYou Renting`;
+      if (sub.notify_pico && sub.pico_notify_hour === currentHour) {
+        // Para v0: recordatorio diario genérico de pico y placa
+        reasons.push("Pico y Placa");
+      }
 
-          try {
-            await sendEmail({ to, subject, text });
-            sent.pico++;
-          } catch (e: any) {
-            errors.push({
-              plate,
-              kind: "pico",
-              error: e?.message || "sendEmail failed",
-            });
-          }
-        }
+      if (!reasons.length) {
+        // Por seguridad, aunque en teoría siempre habrá alguna razón
+        continue;
+      }
+
+      const subject = `Recordatorio diario – placa ${sub.plate}`;
+      const textLines: string[] = [
+        `Hola,`,
+        ``,
+        `Este es tu recordatorio diario de AllAtYou Renting para la placa ${sub.plate}.`,
+        ``,
+        `Tienes activos recordatorios para:`,
+        `• ${reasons.join("\n• ")}`,
+        ``,
+        `Recibirás este correo una vez al día a esta hora mientras los recordatorios estén activos.`,
+        `Si ya no quieres recibirlos, puedes actualizar tus preferencias desde la sección de`,
+        `pico y placa / recordatorios en la página:`,
+        `https://www.allatyou.com#pico-placa`,
+        ``,
+        `Fecha de envío: ${todayStr}.`,
+        ``,
+        `— AllAtYou Renting`,
+      ];
+
+      try {
+        await sendEmail({
+          to,
+          subject,
+          text: textLines.join("\n"),
+        });
+        sentCount++;
+      } catch (e: any) {
+        errors.push({
+          plate: sub.plate,
+          error: e?.message || "sendEmail failed",
+        });
       }
     }
 
     return res.json({
       now: now.toISOString(),
       currentHour,
-      totalSubscriptions: rows.length,
-      sent,
+      totalMatched: rows.length,
+      sentCount,
       skippedNoEmailCount: skippedNoEmail.length,
       errors,
     });

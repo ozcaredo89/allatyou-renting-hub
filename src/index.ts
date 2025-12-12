@@ -5,6 +5,7 @@ import { basicAuth } from "./middleware/basicAuth";
 
 import advancesRoutes from "./routes/advances";
 import drivers from "./routes/drivers";
+import emailTestRouter from "./routes/emailTest";
 import expenses from "./routes/expenses";
 import investmentsRoutes from "./routes/investments";
 import ledgerRoutes from "./routes/ledger";
@@ -68,6 +69,7 @@ app.get("/health", (_req: Request, res: Response) => res.json({ ok: true }));
 app.use("/drivers", drivers);
 app.use("/uploads", uploads);
 app.use("/payments", payments);
+app.use("/internal", emailTestRouter);
 app.use("/expenses", expenses);
 app.use("/investments", investmentsRoutes);
 app.use("/metrics", metricsRouter);

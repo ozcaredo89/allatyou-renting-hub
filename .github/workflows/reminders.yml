@@ -10,6 +10,9 @@ on:
 jobs:
   run-reminders:
     runs-on: ubuntu-latest
+    env:
+          REMINDERS_URL: ${{ secrets.REMINDERS_URL }}
+          REMINDERS_INTERNAL_SECRET: ${{ secrets.REMINDERS_INTERNAL_SECRET }}
     steps:
       - name: Call reminders run endpoint
         run: |
@@ -17,6 +20,3 @@ jobs:
             -H "X-Internal-Secret: ${REMINDERS_INTERNAL_SECRET}" \
             -H "Content-Type: application/json" \
             -d '{}'
-        env:
-          REMINDERS_URL: https://api.allatyou.com/reminders/run
-          REMINDERS_INTERNAL_SECRET: ${{ secrets.REMINDERS_INTERNAL_SECRET }}
