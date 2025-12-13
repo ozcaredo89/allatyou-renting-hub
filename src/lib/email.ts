@@ -9,8 +9,8 @@ type SendEmailOptions = {
 };
 
 // Variables desde Railway
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const RESEND_FROM = process.env.RESEND_FROM; // Ej: "AllAtYou Renting <contacto@allatyou.com>"
+const RESEND_API_KEY = process.env.ALLATYOU_RESEND_API_KEY;
+const RESEND_FROM = process.env.ALLATYOU_RESEND_FROM;
 
 // Validación básica al iniciar el servidor
 if (!RESEND_API_KEY || !RESEND_FROM) {
