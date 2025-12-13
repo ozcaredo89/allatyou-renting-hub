@@ -292,9 +292,13 @@ r.post("/run", async (req: Request, res: Response) => {
   }
 
   try {
-    const now = new Date();
-    const currentHour = now.getHours(); // 0–23, el cron se programa según esto
-    const todayStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
+    // Hora local fija para Colombia (UTC-5)
+    // Railway y Node usan UTC internamente, así que ajustamos manualmente.
+    const nowUtc = new Date();
+    const nowLocal = new Date(nowUtc.getTime() - 5 * 60 * 60 * 1000); // UTC-5
+
+    const currentHour = nowLocal.getHours(); // 0–23, hora de Colombia
+    const todayStr = nowLocal.toISOString().slice(0, 10); // YYYY-MM-DD según día local
 
     // Traemos solo suscripciones activas que "aplican" en esta hora
     const orParts = [
@@ -397,7 +401,7 @@ r.post("/run", async (req: Request, res: Response) => {
     }
 
     return res.json({
-      now: now.toISOString(),
+      now: nowLocal.toISOString(),
       currentHour,
       totalMatched: rows.length,
       sentCount,
