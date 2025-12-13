@@ -7,7 +7,7 @@ const r = Router();
 /**
  * POST /internal/email-test
  * Header: x-internal-secret: <REMINDERS_INTERNAL_SECRET>
- * Body opcional: { "to": "tu_correo@ejemplo.com" }
+ * Body opcional: { "to": "correo@ejemplo.com" }
  */
 r.post("/email-test", async (req: Request, res: Response) => {
   try {
@@ -18,26 +18,20 @@ r.post("/email-test", async (req: Request, res: Response) => {
 
     const body = (req.body || {}) as { to?: string };
 
-    const to =
-      (body.to && String(body.to).trim()) ||
-      (process.env.SMTP_TEST_TO && process.env.SMTP_TEST_TO.trim()) ||
-      (process.env.SMTP_FROM && process.env.SMTP_FROM.trim()) ||
-      "";
-
+    // Dirección de prueba: debe venir del body o fallar explícitamente.
+    const to = body.to && String(body.to).trim();
     if (!to) {
-      return res.status(400).json({
-        error:
-          "missing 'to' address. Send it in body.to or configure SMTP_TEST_TO / SMTP_FROM",
-      });
+      return res
+        .status(400)
+        .json({ error: "missing 'to' address. Send it in body.to" });
     }
 
     await sendEmail({
       to,
-      subject: "[AllAtYou] Prueba de recordatorios",
-      text:
-        "Este es un correo de prueba enviado desde AllAtYou Renting Hub para validar la configuración SMTP.",
+      subject: "[AllAtYou] Prueba de correo (Resend)",
+      text: "Este es un correo de prueba enviado vía Resend.",
       html:
-        "<p>Este es un correo de <strong>prueba</strong> enviado desde AllAtYou Renting Hub para validar la configuración SMTP.</p>",
+        "<p>Este es un correo de <strong>prueba</strong> enviado desde AllAtYou Renting Hub vía Resend.</p>",
     });
 
     return res.json({ ok: true, to });

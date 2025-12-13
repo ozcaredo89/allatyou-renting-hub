@@ -1,5 +1,5 @@
 // src/lib/email.ts
-import nodemailer from "nodemailer";
+import fetch from "node-fetch";
 
 type SendEmailOptions = {
   to: string;
@@ -8,48 +8,42 @@ type SendEmailOptions = {
   html?: string;
 };
 
-const {
-  SMTP_HOST,
-  SMTP_PORT,
-  SMTP_USER,
-  SMTP_PASS,
-  SMTP_FROM,
-} = process.env;
+// Variables desde Railway
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM = process.env.RESEND_FROM; // Ej: "AllAtYou Renting <contacto@allatyou.com>"
 
-if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS || !SMTP_FROM) {
-  // Importante: log pero no romper el server
-  console.warn(
-    "[email] SMTP env vars not fully configured. Emails will fail until you set them."
-  );
+// Validación básica al iniciar el servidor
+if (!RESEND_API_KEY || !RESEND_FROM) {
+  console.warn("[email] RESEND_API_KEY o RESEND_FROM no están configurados.");
 }
 
-const transporter = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: Number(SMTP_PORT || 465), // Se cambio de 587 a 465 a ver si me deja pasar el firewall
-  secure: true, // si puso true ahora que se cambio a de 587 a 465
-  auth: {
-    user: SMTP_USER,
-    pass: SMTP_PASS,
-  },
-});
-
 export async function sendEmail(opts: SendEmailOptions): Promise<void> {
-  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS || !SMTP_FROM) {
-    throw new Error("SMTP is not configured");
+  if (!RESEND_API_KEY || !RESEND_FROM) {
+    throw new Error("Resend no está configurado correctamente.");
   }
 
-  console.log("[sendEmail] Using SMTP config:", {
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    user: SMTP_USER,
-    from: SMTP_FROM,
-  });
-
-  await transporter.sendMail({
-    from: SMTP_FROM,
+  const body = {
+    from: RESEND_FROM,
     to: opts.to,
     subject: opts.subject,
     text: opts.text,
     html: opts.html ?? `<pre>${opts.text}</pre>`,
+  };
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
   });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error("[Resend] Email failed:", errorBody);
+    throw new Error(`Resend error: ${response.status} – ${errorBody}`);
+  }
+
+  console.log("[Resend] Email sent OK:", { to: opts.to, subject: opts.subject });
 }
