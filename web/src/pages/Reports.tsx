@@ -101,17 +101,15 @@ export default function Reports() {
     try {
       // Traer muchos pagos de golpe (endpoint de pagos crudos)
       const params = new URLSearchParams();
+      params.set("month", month);
       params.set("limit", "10000");
+      params.set("offset", "0");
 
       const rs = await fetch(`${API}/payments?` + params.toString());
       if (!rs.ok) throw new Error(await rs.text());
 
-      const all: Payment[] = await rs.json();
-
-      // Filtrar por mes en payment_date (YYYY-MM-DD)
-      const rows = all.filter(
-        (p) => typeof p.payment_date === "string" && p.payment_date.startsWith(month)
-      );
+      const json = await rs.json();
+      const rows: Payment[] = json.items ?? [];
 
       // Construir CSV
       const header = [

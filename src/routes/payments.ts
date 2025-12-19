@@ -82,30 +82,74 @@ r.post("/", async (req: Request, res: Response) => {
   return res.status(201).json(data);
 });
 
-/** GET /payments?plate=ABC123&limit=10
- * Lista pagos recientes; si llega plate, filtra por esa placa.
+/** GET /payments
+ * Query:
+ *  - plate=ABC123 (opcional)
+ *  - month=YYYY-MM (opcional)  -> filtra payment_date en ese mes
+ *  - limit=1..1000 (default 10)
+ *  - offset>=0 (default 0)
+ *
+ * Nota: para export CSV por mes, usar month + limit alto.
  */
 r.get("/", async (req: Request, res: Response) => {
   const rawLimit = parseInt(String(req.query.limit || "10"), 10);
-  const limit = Math.max(1, Math.min(isNaN(rawLimit) ? 10 : rawLimit, 100));
+  const limit = Math.max(1, Math.min(isNaN(rawLimit) ? 10 : rawLimit, 1000));
+
+  const rawOffset = parseInt(String(req.query.offset || "0"), 10);
+  const offset = Math.max(isNaN(rawOffset) ? 0 : rawOffset, 0);
 
   const plate = String(req.query.plate || "").toUpperCase().trim();
+  const month = String(req.query.month || "").trim(); // YYYY-MM
+
+  // Validaciones suaves
+  if (plate && !PLATE_RE.test(plate)) {
+    return res.status(400).json({ error: "invalid plate (expected ABC123)" });
+  }
+
+  if (month && !/^\d{4}-\d{2}$/.test(month)) {
+    return res.status(400).json({ error: "invalid month (expected YYYY-MM)" });
+  }
 
   let q = supabase
     .from("payments")
-    .select("*")
+    .select("*", { count: "exact" })
     .order("payment_date", { ascending: false })
     .order("created_at", { ascending: false })
-    .range(0, limit - 1);
+    .range(offset, offset + limit - 1);
 
   if (plate) {
     q = q.eq("plate", plate);
   }
 
-  const { data, error } = await q;
+  if (month) {
+    // month = YYYY-MM
+    const parts = month.split("-");
+    const y = Number(parts[0]);
+    const m = Number(parts[1]);
+
+    if (!Number.isInteger(y) || !Number.isInteger(m) || m < 1 || m > 12) {
+      return res.status(400).json({ error: "invalid month (expected YYYY-MM)" });
+    }
+
+    const from = `${month}-01`;
+
+    const nextYear = m === 12 ? y + 1 : y;
+    const nextMonthNum = m === 12 ? 1 : m + 1;
+    const nextMonth = `${nextYear}-${String(nextMonthNum).padStart(2, "0")}`;
+    const to = `${nextMonth}-01`;
+
+    q = q.gte("payment_date", from).lt("payment_date", to);
+  }
+
+  const { data, error, count } = await q;
   if (error) return res.status(500).json({ error: error.message });
 
-  res.json(data ?? []);
+  return res.json({
+    items: data ?? [],
+    total: count ?? 0,
+    limit,
+    offset,
+  });
 });
 
 /** GET /payments/last-amount?plate=ABC123
