@@ -3,29 +3,29 @@ import { supabase } from "../lib/supabase";
 
 const r = Router();
 
-/**
- * GET /reports/last-payments
- * Query params:
- *  - q: string (filtra por placa o nombre parcial)
- *  - limit: number (default 20)
- *  - offset: number (default 0)
- *  - overdue_only: "true" | "false" (solo en mora)
- */
+const MAX_LIMIT = 1000;
+
 r.get("/last-payments", async (req: Request, res: Response) => {
   const q = String(req.query.q || "").trim();
-  const limit = Math.min(Math.max(parseInt(String(req.query.limit || 20), 10) || 20, 1), 100);
-  const offset = Math.max(parseInt(String(req.query.offset || 0), 10) || 0, 0);
+
+  const rawLimit = parseInt(String(req.query.limit ?? 20), 10);
+  const rawOffset = parseInt(String(req.query.offset ?? 0), 10);
+
+  const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 20, 1), MAX_LIMIT);
+  const offset = Math.max(Number.isFinite(rawOffset) ? rawOffset : 0, 0);
+
   const overdueOnly = String(req.query.overdue_only || "false") === "true";
 
   let query = supabase
     .from("vehicle_last_payment")
     .select("*", { count: "exact" })
-    .order("is_overdue", { ascending: false })                // morosos primero
+    .order("is_overdue", { ascending: false })
     .order("owner_name", { ascending: true, nullsFirst: true })
     .range(offset, offset + limit - 1);
 
   if (q) {
-    query = query.or(`plate.ilike.%${q}%,owner_name.ilike.%${q}%`);
+    const safeQ = q.replace(/[%_,]/g, "\\$&"); // opcional: evita comodines accidentales
+    query = query.or(`plate.ilike.%${safeQ}%,owner_name.ilike.%${safeQ}%`);
   }
 
   if (overdueOnly) {
@@ -39,7 +39,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
     items: data ?? [],
     total: count ?? 0,
     limit,
-    offset
+    offset,
   });
 });
 
