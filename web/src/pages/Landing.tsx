@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import picoPlacaImg from "../assets/pico-placa.png";
 import { ReminderSubscriptionCard } from "../components/ReminderSubscriptionCard";
@@ -29,6 +29,11 @@ export default function Landing() {
   const [landingViews, setLandingViews] = useState<number | null>(null);
   const [picoPlacaUses, setPicoPlacaUses] = useState<number | null>(null);
 
+  // Estado para inicializar la tarjeta de recordatorios desde la URL
+  const [initialReminderPlate, setInitialReminderPlate] = useState<string | undefined>(undefined);
+  const [autoLoadReminders, setAutoLoadReminders] = useState(false);
+  const remindersRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     async function trackAndLoadMetrics() {
       // 1) registrar visita
@@ -53,46 +58,80 @@ export default function Landing() {
     }
 
     trackAndLoadMetrics();
-    }, []);
 
-    function handleCheckPicoPlaca(e: FormEvent) {
-        e.preventDefault();
-        const clean = plateQuery.replace(/\s+/g, "").toUpperCase();
+    // 3) leer parámetros de la URL (para flujos desde el correo)
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const rawPlate = params.get("plate");
+      const focus = params.get("focus");
 
-        if (!clean) {
-        setPicoPlacaResult("Ingresa una placa válida (ej: ABC123).");
-        return;
+      if (rawPlate) {
+        const normalized = rawPlate
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "")
+          .slice(0, 6);
+
+        if (normalized) {
+          setInitialReminderPlate(normalized);
+          // Si viene de un correo con placa, queremos que cargue automáticamente
+          setAutoLoadReminders(true);
         }
+      }
 
-        const match = clean.match(/(\d)$/);
-        if (!match) {
-        setPicoPlacaResult(
-            "No encontramos un número al final de la placa. Verifica el formato (ej: ABC123)."
-        );
-        return;
-        }
-
-        const lastDigit = Number(match[1]);
-        const rule = PICO_PLACA_RULES[lastDigit];
-
-        if (!rule) {
-        setPicoPlacaResult(
-            `Para placas terminadas en ${lastDigit}, revisa el cuadro de pico y placa.`
-        );
-        } else {
-        setPicoPlacaResult(`Para placas terminadas en ${lastDigit}: ${rule}`);
-        }
-
-        // registrar uso del cuadrito
-        try {
-        fetch(`${API}/metrics/pico-placa-use`, { method: "POST" });
-        } catch {
-        // ignoramos error
-        }
-
-        // actualizar contador en UI si ya tenemos algo cargado
-        setPicoPlacaUses((prev) => (prev == null ? prev : prev + 1));
+      if (focus === "reminders") {
+        // Esperamos un poco para que se renderice la tarjeta antes de hacer scroll
+        setTimeout(() => {
+          if (remindersRef.current) {
+            remindersRef.current.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            });
+          }
+        }, 300);
+      }
+    } catch {
+      // si algo falla leyendo la URL, no rompemos la landing
     }
+  }, []);
+
+  function handleCheckPicoPlaca(e: FormEvent) {
+      e.preventDefault();
+      const clean = plateQuery.replace(/\s+/g, "").toUpperCase();
+
+      if (!clean) {
+      setPicoPlacaResult("Ingresa una placa válida (ej: ABC123).");
+      return;
+      }
+
+      const match = clean.match(/(\d)$/);
+      if (!match) {
+      setPicoPlacaResult(
+          "No encontramos un número al final de la placa. Verifica el formato (ej: ABC123)."
+      );
+      return;
+      }
+
+      const lastDigit = Number(match[1]);
+      const rule = PICO_PLACA_RULES[lastDigit];
+
+      if (!rule) {
+      setPicoPlacaResult(
+          `Para placas terminadas en ${lastDigit}, revisa el cuadro de pico y placa.`
+      );
+      } else {
+      setPicoPlacaResult(`Para placas terminadas en ${lastDigit}: ${rule}`);
+      }
+
+      // registrar uso del cuadrito
+      try {
+      fetch(`${API}/metrics/pico-placa-use`, { method: "POST" });
+      } catch {
+      // ignoramos error
+      }
+
+      // actualizar contador en UI si ya tenemos algo cargado
+      setPicoPlacaUses((prev) => (prev == null ? prev : prev + 1));
+  }
 
 
   return (
@@ -337,7 +376,12 @@ export default function Landing() {
               </div>
             </div>
           </div>
-          <ReminderSubscriptionCard />
+          <div ref={remindersRef}>
+            <ReminderSubscriptionCard
+              initialPlate={initialReminderPlate}
+              autoLoadOnMount={autoLoadReminders}
+            />
+          </div>
         </div>
       </section>
 

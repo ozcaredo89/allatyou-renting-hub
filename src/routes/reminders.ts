@@ -364,6 +364,11 @@ r.post("/run", async (req: Request, res: Response) => {
         continue;
       }
 
+      const landingUrl = new URL("https://www.allatyou.com/");
+      landingUrl.searchParams.set("plate", sub.plate);
+      landingUrl.searchParams.set("focus", "reminders");
+      landingUrl.hash = "pico-placa";
+      const manageUrl = landingUrl.toString();
       const subject = `Recordatorio diario – placa ${sub.plate}`;
       const textLines: string[] = [
         `Hola,`,
@@ -374,9 +379,13 @@ r.post("/run", async (req: Request, res: Response) => {
         `• ${reasons.join("\n• ")}`,
         ``,
         `Recibirás este correo una vez al día a esta hora mientras los recordatorios estén activos.`,
-        `Si ya no quieres recibirlos, puedes actualizar tus preferencias desde la sección de`,
-        `pico y placa / recordatorios en la página:`,
-        `https://www.allatyou.com#pico-placa`,
+        ``,
+        `Si ya no quieres recibir estos correos, puedes actualizar o desactivar tus recordatorios aquí:`,
+        manageUrl,
+        ``,
+        `En la página encontrarás la sección de "Pico y placa y asistencias",`,
+        `con un formulario donde puedes desmarcar las opciones de SOAT, Tecnomecánico y/o Pico y Placa,`,
+        `y guardar los cambios para dejar de recibir recordatorios de esa placa.`,
         ``,
         `Fecha de envío: ${todayStr}.`,
         ``,

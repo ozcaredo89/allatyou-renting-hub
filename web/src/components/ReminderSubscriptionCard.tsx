@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
@@ -21,14 +21,24 @@ type ReminderSubscription = {
   city: string | null;
 };
 
+type Props = {
+  initialPlate?: string;
+  autoLoadOnMount?: boolean;
+};
+
 const HOUR_OPTIONS = [
   { value: 5, label: "05:00 AM" },
   { value: 10, label: "10:00 AM" },
   { value: 18, label: "06:00 PM" },
 ];
 
-export function ReminderSubscriptionCard() {
-  const [plate, setPlate] = useState("");
+export function ReminderSubscriptionCard({ initialPlate, autoLoadOnMount }: Props) {
+    const [plate, setPlate] = useState(() =>
+    (initialPlate || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 6)
+  );
   const [notifySoat, setNotifySoat] = useState(true);
   const [notifyTecno, setNotifyTecno] = useState(true);
   const [notifyPico, setNotifyPico] = useState(false);
@@ -68,12 +78,13 @@ export function ReminderSubscriptionCard() {
     setCity(sub.city ?? "");
   }
 
-  async function handleLoad() {
-    if (!plateFormatValid) return;
+  async function fetchAndHydrate(plateToLoad: string, fromAutoLoad = false) {
     setLoading(true);
-    setStatusMsg(null);
+    if (!fromAutoLoad) {
+      setStatusMsg(null);
+    }
     try {
-      const rs = await fetch(`${API}/reminders/${plate}`);
+      const rs = await fetch(`${API}/reminders/${plateToLoad}`);
       if (rs.status === 404) {
         setStatusMsg(
           "No encontramos recordatorios para esta placa. Puedes crearlos y guardarlos a continuación."
@@ -87,13 +98,39 @@ export function ReminderSubscriptionCard() {
       if (!rs.ok) throw new Error(await rs.text());
       const json: ReminderSubscription = await rs.json();
       hydrateFrom(json);
-      setStatusMsg("Configuración cargada. Puedes ajustar y guardar los cambios.");
+      setStatusMsg(
+        fromAutoLoad
+          ? "Cargamos tus recordatorios desde el enlace. Puedes ajustarlos o desactivarlos y guardar los cambios."
+          : "Configuración cargada. Puedes ajustar y guardar los cambios."
+      );
     } catch {
       setStatusMsg("Error consultando la placa. Inténtalo de nuevo más tarde.");
     } finally {
       setLoading(false);
     }
   }
+
+  async function handleLoad() {
+    if (!plateFormatValid) return;
+    await fetchAndHydrate(plate, false);
+  }
+
+  useEffect(() => {
+    if (!initialPlate) return;
+
+    const normalized = initialPlate
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 6);
+
+    if (!normalized) return;
+
+    setPlate(normalized);
+
+    if (autoLoadOnMount && PLATE_RE.test(normalized)) {
+      fetchAndHydrate(normalized, true);
+    }
+  }, [initialPlate, autoLoadOnMount]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -116,7 +153,6 @@ export function ReminderSubscriptionCard() {
         pico_notify_hour: picoHour,
         notification_email: email.trim() || null,
         notification_whatsapp: whatsapp.trim() || null,
-        // nuevos campos: si están vacíos se mandan como null
         soat_expires_at: soatDate || null,
         tecno_expires_at: tecnoDate || null,
         city: city.trim() || null,
