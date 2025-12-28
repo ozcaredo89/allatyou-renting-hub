@@ -1,7 +1,8 @@
-// src/routes/reminders.ts 
+// src/routes/reminders.ts
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
-import { sendEmail } from "../lib/email"; 
+import { sendEmail } from "../lib/email";
+import { sendWhatsApp } from "../lib/whatsapp";
 
 const r = Router();
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
@@ -57,7 +58,7 @@ function diffInDays(a: Date, b: Date): number {
   const da = startOfDay(a).getTime();
   const db = startOfDay(b).getTime();
   const MS_PER_DAY = 1000 * 60 * 60 * 24;
-  return Math.round((a.getTime() - b.getTime()) / MS_PER_DAY);
+  return Math.round((da - db) / MS_PER_DAY);
 }
 
 /**
@@ -75,6 +76,49 @@ function normalizeDateOrNull(value: unknown, fieldName: string): string | null {
     throw new Error(`invalid date format for ${fieldName}, expected YYYY-MM-DD`);
   }
   return s;
+}
+
+function parseYmdLocalDate(ymd: string): Date {
+  const parts = ymd.split("-");
+  if (parts.length !== 3) {
+    throw new Error(`Invalid YYYY-MM-DD date: ${ymd}`);
+  }
+
+  const yy = Number(parts[0]);
+  const mm = Number(parts[1]);
+  const dd = Number(parts[2]);
+
+  if (!Number.isInteger(yy) || !Number.isInteger(mm) || !Number.isInteger(dd)) {
+    throw new Error(`Invalid YYYY-MM-DD date: ${ymd}`);
+  }
+
+  return new Date(yy, mm - 1, dd);
+}
+
+function addDays(d: Date, days: number): Date {
+  const copy = new Date(d.getTime());
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function isWithinReminderWindow(
+  todayLocal: Date,
+  expiresYmd: string,
+  daysBefore: number
+): boolean {
+  const expires = startOfDay(parseYmdLocalDate(expiresYmd));
+  const today = startOfDay(todayLocal);
+  const start = addDays(expires, -Math.max(0, daysBefore));
+
+  // Ventana inclusiva: desde (vence - díasPrevios) hasta (vence)
+  return (
+    today.getTime() >= start.getTime() && today.getTime() <= expires.getTime()
+  );
+}
+
+function truncate(s: string, max = 300): string {
+  const str = String(s || "");
+  return str.length > max ? str.slice(0, max - 1) + "…" : str;
 }
 
 /**
@@ -108,6 +152,33 @@ r.get("/:plate", async (req: Request, res: Response) => {
     }
 
     return res.json(row);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "internal error" });
+  }
+});
+
+/**
+ * GET /reminders/log?plate=ABC123&limit=100
+ * Seguridad: opcionalmente pon x-internal-secret o un token admin.
+ */
+r.get("/log", async (req: Request, res: Response) => {
+  try {
+    const plateRaw = String(req.query.plate || "").trim();
+    const plate = plateRaw ? normalizePlate(plateRaw) : "";
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit || 1000)));
+
+    let q = supabase
+      .from("reminder_delivery_log")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (plate) q = q.eq("plate", plate);
+
+    const { data, error } = await q;
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ items: data || [] });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || "internal error" });
   }
@@ -216,9 +287,7 @@ r.post("/", async (req: Request, res: Response) => {
     }
 
     if (daysBeforeSoat < 0 || daysBeforeTecno < 0) {
-      return res
-        .status(400)
-        .json({ error: "days_before_* must be >= 0" });
+      return res.status(400).json({ error: "days_before_* must be >= 0" });
     }
 
     const row = {
@@ -239,13 +308,11 @@ r.post("/", async (req: Request, res: Response) => {
       city: cityNorm,
 
       notification_email:
-        typeof notification_email === "string" &&
-        notification_email.trim()
+        typeof notification_email === "string" && notification_email.trim()
           ? notification_email.trim()
           : null,
       notification_whatsapp:
-        typeof notification_whatsapp === "string" &&
-        notification_whatsapp.trim()
+        typeof notification_whatsapp === "string" && notification_whatsapp.trim()
           ? notification_whatsapp.trim()
           : null,
 
@@ -273,12 +340,13 @@ r.post("/", async (req: Request, res: Response) => {
  * POST /reminders/run
  *
  * Ejecutado por GitHub Actions (cron).
- * Envia recordatorios DIARIOS por correo electrónico a todas las
- * suscripciones activas que coincidan con la hora actual y tengan email.
+ * Envía recordatorios a todas las suscripciones activas que coincidan
+ * con la hora actual, y tengan al menos un canal (email o whatsapp).
  *
- * Se detiene automáticamente cuando:
- *  - el usuario desactiva el flag correspondiente (notify_* = false), o
- *  - se marca la suscripción como inactive (active = false).
+ * Reglas:
+ *  - SOAT/Tecno solo envían si hoy está en la ventana:
+ *    today ∈ [expires_at - days_before, expires_at]
+ *  - Pico y Placa: diario (cuando coincide la hora).
  *
  * Seguridad:
  *   Requiere header x-internal-secret == REMINDERS_INTERNAL_SECRET (env).
@@ -319,58 +387,87 @@ r.post("/run", async (req: Request, res: Response) => {
 
     const rows = (data || []) as ReminderRow[];
 
-    let sentCount = 0;
-    const skippedNoEmail: string[] = [];
-    const errors: { plate: string; error: string }[] = [];
+    let sentEmailCount = 0;
+    let sentWhatsAppCount = 0;
+
+    const skippedNoContact: string[] = [];
+    const errorsOut: {
+      plate: string;
+      channel: "email" | "whatsapp";
+      error: string;
+    }[] = [];
 
     for (const sub of rows) {
-      const to = (sub.notification_email || "").trim();
-      if (!to) {
-        skippedNoEmail.push(sub.plate);
+      const emailTo = (sub.notification_email || "").trim();
+      const waTo = (sub.notification_whatsapp || "").trim();
+
+      if (!emailTo && !waTo) {
+        skippedNoContact.push(sub.plate);
         continue;
       }
 
       const reasons: string[] = [];
 
+      // SOAT
       if (sub.notify_soat && sub.soat_notify_hour === currentHour) {
         if (sub.soat_expires_at) {
-          const d = new Date(sub.soat_expires_at);
-          reasons.push(
-            `SOAT (vence el ${d.toLocaleDateString("es-CO")})`
+          const ok = isWithinReminderWindow(
+            nowLocal,
+            sub.soat_expires_at,
+            sub.days_before_soat ?? 0
           );
+          if (ok) {
+            const d = parseYmdLocalDate(sub.soat_expires_at);
+            reasons.push(`SOAT (vence el ${d.toLocaleDateString("es-CO")})`);
+          }
         } else {
+          // Si no hay fecha, este reason podría spamear.
+          // Mantengo tu comportamiento previo (sí envía), pero si prefieres, cámbialo a "no enviar".
           reasons.push("SOAT");
         }
       }
 
+      // Tecno
       if (sub.notify_tecno && sub.tecno_notify_hour === currentHour) {
         if (sub.tecno_expires_at) {
-          const d = new Date(sub.tecno_expires_at);
-          reasons.push(
-            `Tecnomecánico (vence el ${d.toLocaleDateString("es-CO")})`
+          const ok = isWithinReminderWindow(
+            nowLocal,
+            sub.tecno_expires_at,
+            sub.days_before_tecno ?? 0
           );
+          if (ok) {
+            const d = parseYmdLocalDate(sub.tecno_expires_at);
+            reasons.push(
+              `Tecnomecánico (vence el ${d.toLocaleDateString("es-CO")})`
+            );
+          }
         } else {
           reasons.push("Tecnomecánico");
         }
       }
 
+      // Pico y Placa (v0: diario)
       if (sub.notify_pico && sub.pico_notify_hour === currentHour) {
-        // Para v0: recordatorio diario genérico de pico y placa
         reasons.push("Pico y Placa");
       }
 
-      if (!reasons.length) {
-        // Por seguridad, aunque en teoría siempre habrá alguna razón
-        continue;
-      }
+      if (!reasons.length) continue;
+
+      const reasonTypes: string[] = [];
+      if (reasons.some((r) => r.startsWith("SOAT"))) reasonTypes.push("soat");
+      if (reasons.some((r) => r.startsWith("Tecnomecánico"))) reasonTypes.push("tecno");
+      if (reasons.some((r) => r.startsWith("Pico"))) reasonTypes.push("pico");
 
       const landingUrl = new URL("https://www.allatyou.com/");
       landingUrl.searchParams.set("plate", sub.plate);
       landingUrl.searchParams.set("focus", "reminders");
       landingUrl.hash = "pico-placa";
       const manageUrl = landingUrl.toString();
+
       const subject = `Recordatorio diario – placa ${sub.plate}`;
-      const textLines: string[] = [
+
+      // Email body
+      const emailTextLines: string[] = [
         `Hola,`,
         ``,
         `Este es tu recordatorio diario de AllAtYou Renting para la placa ${sub.plate}.`,
@@ -383,29 +480,87 @@ r.post("/run", async (req: Request, res: Response) => {
         `Si ya no quieres recibir estos correos, puedes actualizar o desactivar tus recordatorios aquí:`,
         manageUrl,
         ``,
-        `En la página encontrarás la sección de "Pico y placa y asistencias",`,
-        `con un formulario donde puedes desmarcar las opciones de SOAT, Tecnomecánico y/o Pico y Placa,`,
-        `y guardar los cambios para dejar de recibir recordatorios de esa placa.`,
-        ``,
         `Fecha de envío: ${todayStr}.`,
         ``,
         `— AllAtYou Renting`,
       ];
 
-      try {
-        await sendEmail({
-          to,
-          subject,
-          text: textLines.join("\n"),
-        });
-        sentCount++;
-      } catch (e: any) {
-        console.error("sendEmail error for plate", sub.plate, e);
-        console.error("sendEmail FULL ERROR:", e);
-        errors.push({
-          plate: sub.plate,
-          error: `${e?.name || "Error"} ${e?.code || ""} ${e?.message || ""}`.trim(),
-        });
+      // WhatsApp body
+      const waBody =
+        `AllAtYou Renting – placa ${sub.plate}\n` +
+        `Recordatorio:\n• ${reasons.join("\n• ")}\n\n` +
+        `Gestiona tus recordatorios aquí:\n${manageUrl}\n\n` +
+        `Enviado: ${todayStr}\n\n` +
+        `— Responde "Gracias" para seguir recibiendo estos mensajes.`;
+
+      // Enviar Email (si existe)
+      if (emailTo) {
+        try {
+          await sendEmail({
+            to: emailTo,
+            subject,
+            text: emailTextLines.join("\n"),
+          });
+
+          await supabase.from("reminder_delivery_log").insert({
+            plate: sub.plate,
+            subscription_id: sub.id,
+            channel: "email",
+            to_value: emailTo,
+            reason_types: reasonTypes,
+            subject,
+            body_preview: truncate(emailTextLines.join("\n")),
+            status: "sent",
+            run_id: `${todayStr}-${currentHour}`,
+            run_hour: currentHour,
+            run_date: todayStr,
+          });
+
+          sentEmailCount++;
+        } catch (e: any) {
+
+          const errMsg = `${e?.name || "Error"} ${e?.code || ""} ${e?.message || ""}`.trim();
+
+          await supabase.from("reminder_delivery_log").insert({
+            plate: sub.plate,
+            subscription_id: sub.id,
+            channel: "email",
+            to_value: emailTo,
+            reason_types: reasonTypes,
+            subject,
+            body_preview: truncate(emailTextLines.join("\n")),
+            status: "error",
+            error_message: truncate(errMsg, 500),
+            run_id: `${todayStr}-${currentHour}`,
+            run_hour: currentHour,
+            run_date: todayStr,
+          });
+
+          console.error("sendEmail error for plate", sub.plate, e);
+          errorsOut.push({
+            plate: sub.plate,
+            channel: "email",
+            error: errMsg,
+          });
+        }
+      }
+
+      // Enviar WhatsApp (si existe)
+      if (waTo) {
+        try {
+          await sendWhatsApp({
+            to: waTo,
+            body: waBody,
+          });
+          sentWhatsAppCount++;
+        } catch (e: any) {
+          console.error("sendWhatsApp error for plate", sub.plate, e);
+          errorsOut.push({
+            plate: sub.plate,
+            channel: "whatsapp",
+            error: `${e?.name || "Error"} ${e?.code || ""} ${e?.message || ""}`.trim(),
+          });
+        }
       }
     }
 
@@ -413,9 +568,10 @@ r.post("/run", async (req: Request, res: Response) => {
       now: nowLocal.toISOString(),
       currentHour,
       totalMatched: rows.length,
-      sentCount,
-      skippedNoEmailCount: skippedNoEmail.length,
-      errors,
+      sentEmailCount,
+      sentWhatsAppCount,
+      skippedNoContactCount: skippedNoContact.length,
+      errors: errorsOut,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || "internal error" });

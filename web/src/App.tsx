@@ -4,6 +4,7 @@ import Pay from "./pages/Pay";
 import Reports from "./pages/Reports";
 import Expenses from "./pages/Expenses";
 import AdminProfit from "./pages/AdminProfit";
+import RemindersLog from "./pages/RemindersLog";
 import Landing from "./pages/Landing";
 
 export default function App() {
@@ -70,6 +71,8 @@ export default function App() {
             <Route path="/pay" element={<Pay />} />
             <Route path="/admin/advances" element={<AdminAdvances />} />
             <Route path="/admin/profit" element={<AdminProfit />} />
+            <Route path="/admin/reminders-log" element={<RemindersLog />} />
+
             <Route path="/reports" element={<Reports />} />
             <Route path="/expenses" element={<Expenses />} />
             <Route
