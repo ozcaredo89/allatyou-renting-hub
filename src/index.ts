@@ -6,7 +6,7 @@ import { basicAuth } from "./middleware/basicAuth";
 import advancesRoutes from "./routes/advances";
 import drivers from "./routes/drivers";
 import emailTestRouter from "./routes/emailTest";
-import whatsappTestRouter from "./routes/whatsapptest";
+import whatsappTestRouter from "./routes/whatsappTest";
 import expenses from "./routes/expenses";
 import investmentsRoutes from "./routes/investments";
 import ledgerRoutes from "./routes/ledger";
