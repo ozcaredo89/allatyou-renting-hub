@@ -108,13 +108,24 @@ r.post("/", async (req: Request, res: Response) => {
       return res.status(500).json({ error: advErr?.message || "insert advance failed" });
     }
 
-    // 2) Generar cronograma francés (tasa mensual rate_percent)
-    const schedule = buildFixedSchedule(
-      advIns.amount,
-      advIns.installments,
-      advIns.start_date,
-      { rateType: 'total', totalRatePercent: advIns.rate_percent, firstDueAtStart: false }
+    // 2) Generar cronograma DIARIO (cuotas diarias)
+    const schedule = Array.from(
+      { length: advIns.installments },
+      (_, i) => {
+        const installmentNo = i + 1;
+        const dueDate = new Date(advIns.start_date);
+        dueDate.setDate(dueDate.getDate() + i);
+
+        return {
+          installment_no: installmentNo,
+          due_date: dueDate.toISOString().slice(0, 10),
+          installment_amount: advIns.daily_installment,
+          interest_amount: 0,
+          principal_amount: advIns.daily_installment,
+        };
+      }
     );
+
 
     const schRows = schedule.map(s => ({
       advance_id: advIns.id,
