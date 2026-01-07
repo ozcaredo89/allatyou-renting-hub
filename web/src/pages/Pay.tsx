@@ -1,4 +1,7 @@
+// web/src/pages/Pay.tsx
 import { useEffect, useMemo, useState } from "react";
+
+type InstallmentStatus = "paid" | "pending" | null;
 
 type Payment = {
   id: number;
@@ -9,6 +12,13 @@ type Payment = {
   installment_number?: number | null;
   proof_url?: string | null;
   status: "pending" | "confirmed" | "rejected";
+
+  // NUEVO (Fase 2)
+  insurance_amount?: number | null;
+  delivery_amount?: number | null;
+  credit_installment_amount?: number | null;
+  installment_status?: InstallmentStatus;
+  installment_shortfall?: number | null;
 };
 
 type DriverFlat = {
@@ -35,8 +45,12 @@ type LastAmountResp = {
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
+const INSTALLMENT_STATUS_LABEL: Record<Exclude<InstallmentStatus, null>, string> = {
+  paid: "Pagada",
+  pending: "Pendiente",
+};
 
-// Componente pequeño para armar el link de WhatsApp con texto precargado
+
 function SupportWhatsAppCard({ name, plate }: { name: string; plate: string }) {
   const displayName = (name || "NOMBRE").trim();
   const displayPlate = (plate || "PLACA").toUpperCase().trim();
@@ -59,6 +73,73 @@ function SupportWhatsAppCard({ name, plate }: { name: string; plate: string }) {
   );
 }
 
+// ---------- Helpers (split / parse) ----------
+function parseCOP(s: string) {
+  return Number((s || "").replace(/[^\d]/g, "")) || 0;
+}
+
+function clampNonNeg(n: number) {
+  return Math.max(0, Math.round(Number(n) || 0));
+}
+
+function computeBaseSplit(amount: number) {
+  const a = clampNonNeg(amount);
+  const insurance = a >= 5000 ? 5000 : 0;
+  const delivery = a > insurance ? Math.min(65000, a - insurance) : 0;
+  const credit = Math.max(0, a - insurance - delivery);
+  return { insurance, delivery, credit };
+}
+
+function computeInstallmentSplit(amount: number) {
+  const a = clampNonNeg(amount);
+
+  if (a < 70000) {
+    if (a > 5000) {
+      const insurance = 5000;
+      const delivery = a - 5000;
+      return { insurance, delivery, credit: 0, shortfall: 70000 - a, installmentStatus: "pending" as const };
+    }
+    return { insurance: 0, delivery: 0, credit: 0, shortfall: 70000 - a, installmentStatus: "pending" as const };
+  }
+
+  const base = computeBaseSplit(a);
+  const installmentStatus = base.credit > 0 ? ("paid" as const) : ("pending" as const);
+  return { ...base, shortfall: 0, installmentStatus };
+}
+
+// Tooltip simple sin librerías
+function InfoTooltip({
+  lines,
+  className = "",
+}: {
+  lines: string[];
+  className?: string;
+}) {
+  return (
+    <div className={`relative inline-block ${className}`}>
+      <span className="group inline-flex items-center">
+        <span
+          className="ml-2 inline-flex h-6 w-6 cursor-default select-none items-center justify-center rounded-full border text-xs font-semibold text-gray-700"
+          aria-label="info"
+          title="" // evitamos tooltip nativo
+        >
+          i
+        </span>
+
+        <div className="pointer-events-none absolute left-0 top-7 z-20 hidden w-[260px] rounded-xl border bg-white p-3 text-xs text-gray-700 shadow-lg group-hover:block">
+          <div className="space-y-1">
+            {lines.map((t, idx) => (
+              <div key={idx} className="leading-snug">
+                {t}
+              </div>
+            ))}
+          </div>
+        </div>
+      </span>
+    </div>
+  );
+}
+
 export default function App() {
   const [items, setItems] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -73,12 +154,24 @@ export default function App() {
     installment_number: "",
     status: "pending",
   });
-  const [file, setFile] = useState<File | null>(null); // comprobante
+
+  // Fase 2: override
+  const [editSplit, setEditSplit] = useState(false);
+  const [split, setSplit] = useState({
+    insurance_amount: "",
+    delivery_amount: "",
+    credit_installment_amount: "",
+  });
+
+  const [file, setFile] = useState<File | null>(null);
   const [plateExists, setPlateExists] = useState(true);
   const plateValid = useMemo(() => PLATE_RE.test(f.plate), [f.plate]);
 
-  // "65.000" | "65,000" | "65000" -> 65000
-  const parseCOP = (s: string) => Number((s || "").replace(/[^\d]/g, "")) || 0;
+  const amountN = useMemo(() => parseCOP(f.amountStr), [f.amountStr]);
+  const installmentN = useMemo(() => {
+    const x = Number(f.installment_number);
+    return Number.isFinite(x) && x > 0 ? x : null;
+  }, [f.installment_number]);
 
   async function checkNoPay(plate: string, date: string) {
     try {
@@ -91,7 +184,6 @@ export default function App() {
     }
   }
 
-  // === Pico y placa / no-pay hint ===
   useEffect(() => {
     let cancelled = false;
     const t = setTimeout(async function run() {
@@ -116,7 +208,22 @@ export default function App() {
     return url as string;
   }
 
-  // Autocompletar / validación de existencia de placa (acepta ambos formatos de respuesta del backend)
+  // ---------- Auto-split: recalcular por defecto cuando cambia amount o installment_number, si NO está editando ----------
+  useEffect(() => {
+    if (editSplit) return;
+
+    // Regla: siempre desglosa incluso sin installment_number
+    const auto =
+      installmentN != null ? computeInstallmentSplit(amountN) : { ...computeBaseSplit(amountN), shortfall: 0, installmentStatus: null as any };
+
+    setSplit({
+      insurance_amount: auto.insurance ? String(auto.insurance) : "",
+      delivery_amount: auto.delivery ? String(auto.delivery) : "",
+      credit_installment_amount: auto.credit ? String(auto.credit) : "",
+    });
+  }, [amountN, installmentN, editSplit]);
+
+  // ---------- Autocompletar / validar placa ----------
   useEffect(() => {
     let cancelled = false;
 
@@ -134,7 +241,6 @@ export default function App() {
         const raw: DriverResp = await rs.json();
         if (cancelled) return;
 
-        // Normalizar
         let found = false;
         let d: DriverFlat | null = null;
 
@@ -177,7 +283,6 @@ export default function App() {
     };
   }, [f.plate, plateValid]);
 
-  // === Nuevo: endpoint de sugerencia (último pago confirmado) ===
   async function fetchLastSuggestion(plate: string) {
     try {
       const q = new URLSearchParams({ plate: plate.toUpperCase() });
@@ -193,7 +298,6 @@ export default function App() {
     }
   }
 
-  // Cargar pagos recientes filtrados por placa
   async function loadRecentByPlate(plate: string) {
     try {
       const q = new URLSearchParams({
@@ -202,14 +306,13 @@ export default function App() {
       });
       const rs = await fetch(`${API}/payments?` + q.toString());
       if (!rs.ok) {
-        // Fallback: si el backend no soporta ?plate, traemos todos y filtramos aquí
         const rsAll = await fetch(`${API}/payments`);
-        const all = (await rsAll.json()) as Payment[];
-        setItems(all.filter((p) => p.plate.toUpperCase() === plate.toUpperCase()).slice(0, 10));
+        const all = (await rsAll.json()) as any;
+        const list = Array.isArray(all) ? all : all.items ?? [];
+        setItems(list.filter((p: Payment) => p.plate.toUpperCase() === plate.toUpperCase()).slice(0, 10));
         return;
       }
       const rows = (await rs.json()) as Payment[] | { items: Payment[] };
-      // Soporta ambas respuestas: array directo o {items:[]}
       const list = Array.isArray(rows) ? rows : rows.items ?? [];
       setItems(list);
     } catch {
@@ -217,7 +320,6 @@ export default function App() {
     }
   }
 
-  // Cuando cambia la placa (y es válida/existente), cargamos últimos pagos y sugerencia
   useEffect(() => {
     if (plateValid && plateExists && f.plate) {
       loadRecentByPlate(f.plate);
@@ -229,7 +331,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [f.plate, plateValid, plateExists]);
 
-  // Cuando llega la sugerencia, si los campos están vacíos, prellenar monto y cuota
   useEffect(() => {
     if (!lastSuggestion) return;
     setF((prev) => {
@@ -252,6 +353,54 @@ export default function App() {
       return changed ? next : prev;
     });
   }, [lastSuggestion]);
+
+  // ---------- UI warnings ----------
+  const splitN = useMemo(() => {
+    const i = clampNonNeg(parseCOP(split.insurance_amount));
+    const d = clampNonNeg(parseCOP(split.delivery_amount));
+    const c = clampNonNeg(parseCOP(split.credit_installment_amount));
+    return { i, d, c, sum: i + d + c };
+  }, [split]);
+
+  const installmentAutoInfo = useMemo(() => {
+    if (installmentN == null) return null;
+    const auto = computeInstallmentSplit(amountN);
+    return auto;
+  }, [installmentN, amountN]);
+
+  const showInstallmentLt70kNotice = installmentN != null && amountN > 0 && amountN < 70000;
+
+  const mismatch = useMemo(() => {
+    if (!editSplit) return false;
+    if (!amountN) return false;
+    return splitN.sum !== amountN;
+  }, [editSplit, splitN.sum, amountN]);
+
+  const tooltipLinesForCurrent = useMemo(() => {
+    const auto =
+      installmentN != null
+        ? computeInstallmentSplit(amountN)
+        : { ...computeBaseSplit(amountN), shortfall: 0, installmentStatus: null as any };
+
+    // Si editSplit, mostramos lo que el usuario puso; si no, mostramos auto
+    const insurance = editSplit ? splitN.i : auto.insurance;
+    const delivery = editSplit ? splitN.d : auto.delivery;
+    const credit = editSplit ? splitN.c : auto.credit;
+    const shortfall = installmentN != null ? (editSplit ? Math.max(0, 70000 - amountN) : auto.shortfall) : 0;
+
+    const lines = [
+      `Anticipo/seguro: $${fmtCOP.format(insurance)}`,
+      `Entrega: $${fmtCOP.format(delivery)}`,
+      `Cuota crédito: $${fmtCOP.format(credit)}`,
+    ];
+
+    if (installmentN != null && shortfall > 0) {
+      lines.push(`Diferencia/pendiente: $${fmtCOP.format(shortfall)}`);
+    }
+
+    lines.push(`Fórmula: total = seguro + entrega + cuota`);
+    return lines;
+  }, [amountN, installmentN, editSplit, splitN.i, splitN.d, splitN.c]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -281,15 +430,23 @@ export default function App() {
 
       const proof_url = await uploadProofIfNeeded();
 
-      const body = {
+      const body: any = {
         payer_name: f.payer_name.trim(),
         plate: f.plate.trim().toUpperCase(),
         payment_date: f.payment_date,
-        amount: parseCOP(f.amountStr),
+        amount: amountN,
         installment_number: f.installment_number ? Number(f.installment_number) : null,
         proof_url,
         status: f.status as Payment["status"],
       };
+
+      // Fase 2: enviamos override si el usuario lo activó
+      if (editSplit) {
+        body.force_override = true;
+        body.insurance_amount = splitN.i;
+        body.delivery_amount = splitN.d;
+        body.credit_installment_amount = splitN.c;
+      }
 
       const rs = await fetch(`${API}/payments`, {
         method: "POST",
@@ -298,13 +455,18 @@ export default function App() {
       });
       if (!rs.ok) throw new Error(await rs.text());
 
-      // Limpiar campos variables y recargar lista filtrada por la placa actual
+      // Limpiar campos variables y recargar lista
       setF((prev) => ({ ...prev, amountStr: "", installment_number: "" }));
       setFile(null);
+      setEditSplit(false);
+      setSplit({ insurance_amount: "", delivery_amount: "", credit_installment_amount: "" });
+
       await loadRecentByPlate(body.plate);
       await fetchLastSuggestion(body.plate);
-    } catch {
-      alert("Error creando pago");
+    } catch (err: any) {
+      // Si el backend rechaza por múltiples advances, mostrará tu mensaje
+      const msg = String(err?.message || "Error creando pago");
+      alert(msg.includes("No puede haber más de un préstamo activo") ? msg : "Error creando pago");
     } finally {
       setLoading(false);
     }
@@ -378,13 +540,17 @@ export default function App() {
               )}
             </div>
 
-            {/* Monto (COP) */}
+            {/* Monto (COP) + tooltip */}
             <div>
-              <label className="mb-1 block text-sm font-medium">Monto (COP)</label>
+              <label className="mb-1 block text-sm font-medium">
+                Monto (COP)
+                <InfoTooltip lines={tooltipLinesForCurrent} />
+              </label>
+
               <input
                 className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
                 inputMode="numeric"
-                placeholder="65.000"
+                placeholder="70.000"
                 value={f.amountStr}
                 onChange={(e) => {
                   const onlyDigits = e.target.value.replace(/[^\d]/g, "");
@@ -393,9 +559,16 @@ export default function App() {
                 }}
                 required
               />
+
               {lastSuggestion && lastSuggestion.last_amount > 0 && (
                 <div className="mt-1 text-xs text-gray-500">
                   Sugerido según último pago: ${fmtCOP.format(lastSuggestion.last_amount)} (puedes editarlo).
+                </div>
+              )}
+
+              {showInstallmentLt70kNotice && (
+                <div className="mt-1 text-xs text-amber-700">
+                  ⚠️ Monto &lt; 70.000: la cuota quedará <b>pendiente</b>.
                 </div>
               )}
             </div>
@@ -419,9 +592,78 @@ export default function App() {
                   {lastSuggestion.last_installment_number + 1} (puedes editarla).
                 </div>
               )}
+              {installmentAutoInfo && (
+                <div className="mt-1 text-xs text-gray-500">
+                  Estado esperado:{" "}
+                  <span className="font-medium">
+                    {INSTALLMENT_STATUS_LABEL[installmentAutoInfo.installmentStatus] ?? installmentAutoInfo.installmentStatus}
+                  </span>
+                  {installmentAutoInfo.shortfall > 0 ? (
+                    <> · Diferencia: ${fmtCOP.format(installmentAutoInfo.shortfall)}</>
+                  ) : null}
+                </div>
+              )}
             </div>
 
-            {/* Comprobante (archivo) */}
+            {/* Checkbox Editar desglose */}
+            <div className="md:col-span-3">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={editSplit}
+                  onChange={(e) => setEditSplit(e.target.checked)}
+                />
+                Editar desglose
+              </label>
+
+              {editSplit && mismatch && (
+                <div className="mt-1 text-xs text-amber-700">
+                  ⚠️ La suma no coincide con el total; el backend recalculará / ajustará y guardará log si aplica.
+                </div>
+              )}
+            </div>
+
+            {/* Inputs override */}
+            {editSplit && (
+              <>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Anticipo/seguro (COP)</label>
+                  <input
+                    className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
+                    inputMode="numeric"
+                    placeholder="5000"
+                    value={split.insurance_amount}
+                    onChange={(e) => setSplit({ ...split, insurance_amount: e.target.value.replace(/[^\d]/g, "") })}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Entrega (COP)</label>
+                  <input
+                    className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
+                    inputMode="numeric"
+                    placeholder="65000"
+                    value={split.delivery_amount}
+                    onChange={(e) => setSplit({ ...split, delivery_amount: e.target.value.replace(/[^\d]/g, "") })}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Cuota crédito (COP)</label>
+                  <input
+                    className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
+                    inputMode="numeric"
+                    placeholder="0"
+                    value={split.credit_installment_amount}
+                    onChange={(e) => setSplit({ ...split, credit_installment_amount: e.target.value.replace(/[^\d]/g, "") })}
+                  />
+                </div>
+
+                <div className="md:col-span-3 text-xs text-gray-500">
+                  Total: ${fmtCOP.format(amountN)} · Suma desglose: ${fmtCOP.format(splitN.sum)}
+                </div>
+              </>
+            )}
+
+            {/* Comprobante */}
             <div className="md:col-span-2">
               <label className="mb-1 block text-sm font-medium">Comprobante (imagen)</label>
               <input
@@ -469,7 +711,6 @@ export default function App() {
           <h2 className="mb-3 text-xl font-semibold">Soporte y emergencias</h2>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {/* Emergencias: hurto */}
             <div className="rounded-xl border p-4">
               <div className="mb-2 text-sm font-medium text-gray-700">En caso de hurto (llamar):</div>
               <div className="space-y-1 text-sm">
@@ -484,7 +725,6 @@ export default function App() {
               <div className="mt-2 text-xs text-gray-500">Reporta inmediatamente para activar el grupo de reacción.</div>
             </div>
 
-            {/* Soporte en vía (llamada) */}
             <div className="rounded-xl border p-4">
               <div className="mb-2 text-sm font-medium text-gray-700">Soporte en vía (llamar):</div>
               <a className="underline text-sm" href="tel:+573238035356">
@@ -493,38 +733,73 @@ export default function App() {
               <div className="mt-2 text-xs text-gray-500">Asistencia operativa en carretera.</div>
             </div>
 
-            {/* Soporte en vía (WhatsApp) */}
             <SupportWhatsAppCard name={f.payer_name} plate={f.plate} />
           </div>
         </div>
 
-        {/* Card: List — solo si placa válida y existente */}
+        {/* Card: List */}
         {showRecent && (
           <>
             <h2 className="mt-8 mb-3 text-xl font-semibold">Últimos pagos — {f.plate.toUpperCase()}</h2>
             <div className="space-y-3">
-              {items.map((p) => (
-                <div
-                  key={p.id}
-                  className="flex items-center justify-between rounded-2xl border bg-white p-4 shadow-sm"
-                >
-                  <div>
-                    <div className="font-semibold">
-                      {p.payer_name} — {p.plate}
+              {items.map((p) => {
+                const hasInst = p.installment_number != null;
+                const ins = p.insurance_amount ?? null;
+                const del = p.delivery_amount ?? null;
+                const cre = p.credit_installment_amount ?? null;
+                const short = p.installment_shortfall ?? null;
+
+                const lines = [
+                  `Anticipo/seguro: $${fmtCOP.format(Number(ins || 0))}`,
+                  `Entrega: $${fmtCOP.format(Number(del || 0))}`,
+                  `Cuota crédito: $${fmtCOP.format(Number(cre || 0))}`,
+                  ...(short && Number(short) > 0 ? [`Diferencia/pendiente: $${fmtCOP.format(Number(short))}`] : []),
+                  `Fórmula: total = seguro + entrega + cuota`,
+                ];
+
+                return (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between rounded-2xl border bg-white p-4 shadow-sm"
+                  >
+                    <div>
+                      <div className="font-semibold">
+                        {p.payer_name} — {p.plate}
+                      </div>
+
+                      <div className="text-sm text-gray-600 flex items-center gap-2">
+                        <span>
+                          {p.payment_date} · ${fmtCOP.format(p.amount)}
+                          {hasInst ? <> · Cuota {p.installment_number}</> : null}
+                        </span>
+
+                        <InfoTooltip lines={lines} />
+                      </div>
+
+                      {hasInst && (
+                        <div className="mt-1 text-xs text-gray-500">
+                          Estado cuota:{" "}
+                          <span className="font-medium">
+                            {p.installment_status
+                              ? (INSTALLMENT_STATUS_LABEL[p.installment_status] ?? p.installment_status)
+                              : "—"}
+                          </span>
+                        </div>
+                      )}
+
+
+                      {p.proof_url ? (
+                        <a className="text-xs underline" href={p.proof_url} target="_blank" rel="noreferrer">
+                          Ver comprobante
+                        </a>
+                      ) : null}
                     </div>
-                    <div className="text-sm text-gray-600">
-                      {p.payment_date} · ${fmtCOP.format(p.amount)}
-                      {p.installment_number ? <> · Cuota {p.installment_number}</> : null}
-                    </div>
-                    {p.proof_url ? (
-                      <a className="text-xs underline" href={p.proof_url} target="_blank" rel="noreferrer">
-                        Ver comprobante
-                      </a>
-                    ) : null}
+
+                    <span className="rounded-full border px-3 py-1 text-xs">{p.status}</span>
                   </div>
-                  <span className="rounded-full border px-3 py-1 text-xs">{p.status}</span>
-                </div>
-              ))}
+                );
+              })}
+
               {items.length === 0 && <div className="text-gray-500">Sin pagos recientes para esta placa.</div>}
             </div>
           </>

@@ -76,15 +76,77 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
-  // Cuota sugerida (redondeada HACIA ARRIBA a centenas)
-  const dailyQuotaSuggested = useMemo(() => {
-    const amount = parseCOP(f.amountStr);
-    const rate = Number(f.rate_percent) || 0; // tasa total del anticipo
-    const n = Math.max(1, Number(f.installments) || 1);
-    const totalToPay = amount * (1 + rate / 100);
+  // Indica cuál campo fue editado por el usuario para sincronizar el otro
+  const [lastEdited, setLastEdited] = useState<"rate" | "daily" | null>(null);
+
+  function computeDailyFromRate(amount: number, ratePercent: number, installments: number) {
+    const a = Math.max(0, amount || 0);
+    const n = Math.max(1, installments || 1);
+    const r = Math.max(0, ratePercent || 0);
+    const totalToPay = a * (1 + r / 100);
     const raw = Math.round(totalToPay / n) || 0;
     return roundUpTo100(raw);
-  }, [f.amountStr, f.rate_percent, f.installments]);
+  }
+
+  function computeRateFromDaily(amount: number, daily: number, installments: number) {
+    const a = Math.max(1, amount || 0); // evita división por 0
+    const n = Math.max(1, installments || 1);
+    const d = Math.max(0, daily || 0);
+
+    const totalToPay = d * n;
+    const rate = ((totalToPay / a) - 1) * 100;
+
+    return Math.max(0, rate);
+  }
+
+  // ===== Derivados numéricos base =====
+  const amountN = useMemo(() => parseCOP(f.amountStr), [f.amountStr]);
+  const installmentsN = useMemo(() => Math.max(1, Number(f.installments) || 1), [f.installments]);
+  const rateN = useMemo(() => Math.max(0, Number(f.rate_percent) || 0), [f.rate_percent]);
+
+  // ===== Cuota sugerida (depende de amount/rate/installments) =====
+  const dailyQuotaSuggested = useMemo(() => {
+    const totalToPay = amountN * (1 + rateN / 100);
+    const raw = Math.round(totalToPay / installmentsN) || 0;
+    return roundUpTo100(raw);
+  }, [amountN, rateN, installmentsN]);
+
+  // ===== Cuota diaria efectiva (manual si el usuario escribió; si no, sugerida) =====
+  const dailyN = useMemo(() => {
+    return roundUpTo100(f.daily_installmentStr ? parseCOP(f.daily_installmentStr) : dailyQuotaSuggested);
+  }, [f.daily_installmentStr, dailyQuotaSuggested]);
+
+  // ===== Sincronización bidireccional (% <-> cuota) =====
+  useEffect(() => {
+    if (!amountN || installmentsN < 1) return;
+    if (!lastEdited) return;
+
+    // Si el usuario tocó el %, recalcular cuota diaria
+    if (lastEdited === "rate") {
+      const newDaily = computeDailyFromRate(amountN, rateN, installmentsN);
+      const currentDaily = dailyN;
+
+      if (newDaily !== currentDaily) {
+        setF((prev) => ({ ...prev, daily_installmentStr: fmtCOP.format(newDaily) }));
+      }
+      return;
+    }
+
+    // Si el usuario tocó cuota diaria, recalcular %
+    if (lastEdited === "daily") {
+      const newRate = computeRateFromDaily(amountN, dailyN, installmentsN);
+
+      // redondeo a 1 decimal
+      const newRateStr = (Math.round(newRate * 10) / 10).toFixed(1);
+
+      // evita loops: solo set si cambia de verdad
+      const currRate = Number(f.rate_percent || "0");
+      if (!Number.isFinite(currRate) || Math.abs(currRate - Number(newRateStr)) > 0.05) {
+        setF((prev) => ({ ...prev, rate_percent: newRateStr }));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastEdited, amountN, installmentsN, rateN, dailyN]);
 
   const onChange = (k: keyof typeof f, v: string) => setF((s) => ({ ...s, [k]: v }));
 
@@ -132,6 +194,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
         daily_installmentStr: "",
         notes: "",
       }));
+      setLastEdited(null);
     } catch (e: any) {
       setErr(e?.message || "Error");
     } finally {
@@ -152,6 +215,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             required
           />
         </div>
+
         <div>
           <label className="mb-1 block text-sm font-medium">Tipo</label>
           <select
@@ -163,6 +227,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             <option value="collaborator">Colaborador</option>
           </select>
         </div>
+
         <div>
           <label className="mb-1 block text-sm font-medium">Driver ID (opcional)</label>
           <input
@@ -173,6 +238,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             placeholder="123"
           />
         </div>
+
         <div>
           <label className="mb-1 block text-sm font-medium">Placa (opcional)</label>
           <PlateField
@@ -188,6 +254,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             }}
           />
         </div>
+
         <div>
           <label className="mb-1 block text-sm font-medium">Monto (COP)</label>
           <input
@@ -199,10 +266,12 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
               const onlyDigits = e.target.value.replace(/[^\d]/g, "");
               const n = Number(onlyDigits || "0");
               setF((prev) => ({ ...prev, amountStr: n ? fmtCOP.format(n) : "" }));
+              setLastEdited((prev) => (prev === "daily" ? "daily" : "rate")); // si estaba en daily, respeta
             }}
             required
           />
         </div>
+
         <div>
           <label className="mb-1 block text-sm font-medium">Tasa del anticipo (%)</label>
           <input
@@ -211,12 +280,16 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             min={0}
             step={0.001}
             value={f.rate_percent}
-            onChange={(e) => onChange("rate_percent", e.target.value)}
+            onChange={(e) => {
+              setLastEdited("rate");
+              setF((prev) => ({ ...prev, rate_percent: e.target.value }));
+            }}
           />
           <div className="mt-1 text-xs text-gray-500">
             Aplicada sobre el monto para repartir en {f.installments || "21"} cuotas.
           </div>
         </div>
+
         <div>
           <label className="mb-1 block text-sm font-medium">Cuotas</label>
           <input
@@ -225,9 +298,13 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             min={1}
             step={1}
             value={f.installments}
-            onChange={(e) => onChange("installments", e.target.value)}
+            onChange={(e) => {
+              onChange("installments", e.target.value);
+              setLastEdited((prev) => prev ?? "rate"); // si el usuario no ha tocado nada, asume rate como driver
+            }}
           />
         </div>
+
         <div>
           <label className="mb-1 block text-sm font-medium">Fecha inicio</label>
           <input
@@ -237,6 +314,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             onChange={(e) => onChange("start_date", e.target.value)}
           />
         </div>
+
         <div>
           <label className="mb-1 block text-sm font-medium">Cuota diaria</label>
           <input
@@ -245,6 +323,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             placeholder={fmtCOP.format(dailyQuotaSuggested)}
             value={f.daily_installmentStr || fmtCOP.format(dailyQuotaSuggested)}
             onChange={(e) => {
+              setLastEdited("daily");
               const onlyDigits = e.target.value.replace(/[^\d]/g, "");
               const n = Number(onlyDigits || "0");
               setF((prev) => ({
@@ -258,6 +337,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             Sugerida: ${fmtCOP.format(dailyQuotaSuggested)} (puedes editarla).
           </div>
         </div>
+
         <div className="md:col-span-3">
           <label className="mb-1 block text-sm font-medium">Notas</label>
           <textarea
@@ -267,6 +347,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             onChange={(e) => onChange("notes", e.target.value)}
           />
         </div>
+
         <div className="md:col-span-3 flex items-center gap-3">
           <button
             className="rounded-xl bg-black px-5 py-2.5 font-medium text-white shadow hover:opacity-90 disabled:opacity-50"
@@ -341,7 +422,6 @@ function ScheduleModal({
       const json = await rs.json();
       if (!rs.ok) throw new Error(json?.error || "No se pudo pagar la cuota");
 
-      // recargar cronograma
       const rs2 = await fetch(`${API}/advances/${advance.id}/schedule`, {
         headers: { Authorization: ensureBasicAuth() },
       });
@@ -365,13 +445,13 @@ function ScheduleModal({
         className="w-full max-w-4xl max-h-[85vh] rounded-2xl border bg-white shadow-xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="px-5 pt-5 pb-3 flex items-center justify-between shrink-0">
           <h3 className="text-lg font-semibold">Cronograma — Anticipo #{advance.id}</h3>
-          <button className="h-8 w-8 rounded-xl hover:bg-gray-100" onClick={onClose}>✕</button>
+          <button className="h-8 w-8 rounded-xl hover:bg-gray-100" onClick={onClose}>
+            ✕
+          </button>
         </div>
 
-        {/* Body scrollable */}
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 pb-5">
           {loading ? (
             <div className="py-10 text-center">Cargando…</div>
@@ -400,11 +480,15 @@ function ScheduleModal({
                       <tr key={r.id} className="border-t">
                         <td className="px-4 py-2">{r.installment_no}</td>
                         <td className="px-4 py-2">{r.due_date}</td>
-                        <td className="px-4 py-2 font-medium">${fmtCOP.format(r.installment_amount)}</td>
+                        <td className="px-4 py-2 font-medium">
+                          ${fmtCOP.format(r.installment_amount)}
+                        </td>
                         <td className="px-4 py-2">${fmtCOP.format(r.interest_amount)}</td>
                         <td className="px-4 py-2">${fmtCOP.format(r.principal_amount)}</td>
                         <td className="px-4 py-2">
-                          <span className={`rounded-full px-3 py-1 text-xs ${badgeTone(state)}`}>{state}</span>
+                          <span className={`rounded-full px-3 py-1 text-xs ${badgeTone(state)}`}>
+                            {state}
+                          </span>
                         </td>
                         <td className="px-4 py-2">
                           {r.status !== "paid" && (
@@ -573,9 +657,7 @@ function AdvancesList() {
                   <td className="px-4 py-3">{a.id}</td>
                   <td className="px-4 py-3">
                     <div className="font-medium">{a.person_name}</div>
-                    {a.notes && (
-                      <div className="max-w-[260px] truncate text-xs text-gray-500">{a.notes}</div>
-                    )}
+                    {a.notes && <div className="max-w-[260px] truncate text-xs text-gray-500">{a.notes}</div>}
                   </td>
                   <td className="px-4 py-3 text-xs">
                     <span className="rounded-full bg-gray-100 px-2 py-1">{a.person_type}</span>
@@ -589,10 +671,7 @@ function AdvancesList() {
                     <span className={`rounded-full px-3 py-1 text-xs ${badgeTone(a.status)}`}>{a.status}</span>
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-                      onClick={() => setSelected(a)}
-                    >
+                    <button className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50" onClick={() => setSelected(a)}>
                       Cronograma
                     </button>
                   </td>
@@ -605,9 +684,7 @@ function AdvancesList() {
 
       <div className="mt-4 flex items-center justify-between">
         <div className="text-sm text-gray-600">
-          {items.length > 0
-            ? `Mostrando ${offset + 1}–${Math.min(offset + limit, total)} de ${total}`
-            : `Mostrando 0 de ${total}`}
+          {items.length > 0 ? `Mostrando ${offset + 1}–${Math.min(offset + limit, total)} de ${total}` : `Mostrando 0 de ${total}`}
         </div>
         <div className="flex gap-2">
           <button
@@ -646,7 +723,6 @@ export default function AdminAdvances() {
         </div>
 
         <CreateAdvanceForm onCreated={() => setRefreshKey((k) => k + 1)} />
-        {/* re-montar lista al crear */}
         <div key={refreshKey}>
           <AdvancesList />
         </div>

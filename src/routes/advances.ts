@@ -81,6 +81,29 @@ r.post("/", async (req: Request, res: Response) => {
     if (!(await plateExists(plate))) {
       return res.status(400).json({ error: "plate not found or invalid" });
     }
+
+    // Regla: solo 1 advance activo por placa (si viene placa)
+    if (plate) {
+      const upperPlate = String(plate).toUpperCase();
+
+      const { data: existing, error: exErr } = await supabase
+        .from("operational_advances")
+        .select("id")
+        .eq("plate", upperPlate)
+        .eq("status", "active")
+        .limit(1);
+
+      if (exErr) {
+        return res.status(500).json({ error: exErr.message });
+      }
+
+      if ((existing?.length ?? 0) > 0) {
+        return res.status(400).json({
+          error: "No puede haber más de un préstamo activo por placa. Consulte el encargado.",
+        });
+      }
+    }
+
     if (!(await driverExists(driver_id))) {
       return res.status(400).json({ error: "driver_id not found" });
     }
@@ -105,8 +128,19 @@ r.post("/", async (req: Request, res: Response) => {
       .single();
 
     if (advErr || !advIns) {
+      // Postgres unique violation (por el índice parcial)
+      // En Supabase suele venir en error.message; a veces también hay code 23505.
+      const msg = String(advErr?.message || "");
+
+      if (msg.includes("uidx_operational_advances_one_active_per_plate") || msg.includes("duplicate key")) {
+        return res.status(400).json({
+          error: "No puede haber más de un préstamo activo por placa. Consulte el encargado.",
+        });
+      }
+
       return res.status(500).json({ error: advErr?.message || "insert advance failed" });
     }
+
 
     // 2) Generar cronograma DIARIO (cuotas diarias)
     const schedule = Array.from(
