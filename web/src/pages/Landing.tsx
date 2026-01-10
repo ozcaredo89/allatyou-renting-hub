@@ -30,7 +30,7 @@ export default function Landing() {
   const [referralCode, setReferralCode] = useState<string | null>(null);
 
   const [landingViews, setLandingViews] = useState<number | null>(null);
-  // CORRECCIÓN: Eliminado picoPlacaUses porque no se visualiza en la UI
+  // Eliminado picoPlacaUses para evitar errores de variables no usadas
 
   const [initialReminderPlate, setInitialReminderPlate] = useState<string | undefined>(undefined);
   const [autoLoadReminders, setAutoLoadReminders] = useState(false);
@@ -38,7 +38,7 @@ export default function Landing() {
 
   useEffect(() => {
     async function trackAndLoadMetrics() {
-      [cite_start]// 1. Registrar visita (Métrica backend) [cite: 15]
+      // 1. Registrar visita (Métrica backend)
       try {
         await fetch(`${API}/metrics/landing-view`, { method: "POST" });
       } catch {}
@@ -105,7 +105,7 @@ export default function Landing() {
     }
 
     const lastDigit = Number(match[1]);
-    const rule = PICO_PLACA_RULES[lastDigit]; [cite_start]// [cite: 10]
+    const rule = PICO_PLACA_RULES[lastDigit];
 
     if (!rule) {
       setPicoPlacaResult(
@@ -115,7 +115,7 @@ export default function Landing() {
       setPicoPlacaResult(`Para placas terminadas en ${lastDigit}: ${rule}`);
     }
 
-    [cite_start]// Registrar métrica en backend (sin actualizar estado local) [cite: 11]
+    // Registrar métrica en backend (sin actualizar estado local)
     try {
       fetch(`${API}/metrics/pico-placa-use`, { method: "POST" });
     } catch {}
