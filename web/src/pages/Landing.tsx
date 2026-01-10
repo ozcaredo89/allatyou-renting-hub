@@ -1,474 +1,264 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import picoPlacaImg from "../assets/pico-placa.png";
+import { DriverApplicationForm } from "../components/DriverApplicationForm";
 import { ReminderSubscriptionCard } from "../components/ReminderSubscriptionCard";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
+const WHATSAPP_URL = "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20quiero%20informaci%C3%B3n%20sobre%20el%20renting.";
 
-const WHATSAPP_URL =
-  "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20quiero%20informaci%C3%B3n%20sobre%20el%20renting%20de%20veh%C3%ADculos.";
-
-// Ajusta estos textos según el pico y placa real de tu ciudad
 const PICO_PLACA_RULES: Record<number, string> = {
-  0: "El pico y placa es el día Jueves (mañana y tarde) para placas terminadas en 0.",
-  1: "El pico y placa es el día Viernes (mañana y tarde) para placas terminadas en 1.",
-  2: "El pico y placa es el día Viernes (mañana y tarde) para placas terminadas en 2.",
-  3: "El pico y placa es el día Lunes (mañana y tarde) para placas terminadas en 3.",
-  4: "El pico y placa es el día Lunes (mañana y tarde) para placas terminadas en 4.",
-  5: "El pico y placa es el día Martes (mañana y tarde) para placas terminadas en 5.",
-  6: "El pico y placa es el día Martes (mañana y tarde) para placas terminadas en 6.",
-  7: "El pico y placa es el día Miercoles (mañana y tarde) para placas terminadas en 7.",
-  8: "El pico y placa es el día Miercoles (mañana y tarde) para placas terminadas en 8.",
-  9: "El pico y placa es el día Jueves (mañana y tarde) para placas terminadas en 9.",
+  0: "Jueves", 1: "Viernes", 2: "Viernes", 3: "Lunes", 4: "Lunes",
+  5: "Martes", 6: "Martes", 7: "Miércoles", 8: "Miércoles", 9: "Jueves",
 };
 
 export default function Landing() {
+  // Estados de lógica de negocio
   const [plateQuery, setPlateQuery] = useState("");
   const [picoPlacaResult, setPicoPlacaResult] = useState<string | null>(null);
-
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+  
+  // Estados de métricas
   const [landingViews, setLandingViews] = useState<number | null>(null);
   const [picoPlacaUses, setPicoPlacaUses] = useState<number | null>(null);
 
-  // Estado para inicializar la tarjeta de recordatorios desde la URL
+  // Estados recuperados para ReminderSubscriptionCard (CORREGIDO: Faltaban estas variables)
   const [initialReminderPlate, setInitialReminderPlate] = useState<string | undefined>(undefined);
   const [autoLoadReminders, setAutoLoadReminders] = useState(false);
+  
+  // Referencias para scroll (CORREGIDO: Tipos correctos para TypeScript)
   const remindersRef = useRef<HTMLDivElement | null>(null);
+  const formRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    async function trackAndLoadMetrics() {
-      // 1) registrar visita
-      try {
-        await fetch(`${API}/metrics/landing-view`, {
-          method: "POST",
-        });
-      } catch {
-        // no bloqueamos nada si falla
-      }
+    async function init() {
+      // 1. Registrar visita
+      try { await fetch(`${API}/metrics/landing-view`, { method: "POST" }); } catch {}
 
-      // 2) traer resumen de contadores
+      // 2. Cargar resumen de métricas
       try {
         const rs = await fetch(`${API}/metrics/summary`);
-        if (!rs.ok) return;
-        const json = await rs.json();
-        setLandingViews(json.landing_views ?? null);
-        setPicoPlacaUses(json.pico_placa_uses ?? null);
-      } catch {
-        // tampoco bloqueamos nada
-      }
-    }
+        if (rs.ok) {
+          const json = await rs.json();
+          setLandingViews(json.landing_views);
+          setPicoPlacaUses(json.pico_placa_uses);
+        }
+      } catch {}
 
-    trackAndLoadMetrics();
-
-    // 3) leer parámetros de la URL (para flujos desde el correo)
-    try {
+      // 3. Leer parámetros URL (Lógica restaurada del archivo original)
       const params = new URLSearchParams(window.location.search);
+      const ref = params.get("ref");
       const rawPlate = params.get("plate");
       const focus = params.get("focus");
 
-      if (rawPlate) {
-        const normalized = rawPlate
-          .toUpperCase()
-          .replace(/[^A-Z0-9]/g, "")
-          .slice(0, 6);
+      if (ref) setReferralCode(ref);
 
+      if (rawPlate) {
+        const normalized = rawPlate.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
         if (normalized) {
           setInitialReminderPlate(normalized);
-          // Si viene de un correo con placa, queremos que cargue automáticamente
           setAutoLoadReminders(true);
         }
       }
 
+      // Scroll automático si la URL lo pide
       if (focus === "reminders") {
-        // Esperamos un poco para que se renderice la tarjeta antes de hacer scroll
         setTimeout(() => {
-          if (remindersRef.current) {
-            remindersRef.current.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }
-        }, 300);
+          remindersRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 500);
       }
-    } catch {
-      // si algo falla leyendo la URL, no rompemos la landing
     }
+    init();
   }, []);
 
+  // Función corregida para aceptar Refs que pueden ser null
+  const scrollTo = (ref: React.RefObject<HTMLDivElement | null>) => {
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // Lógica de Pico y Placa (Restaurada para usar las constantes)
   function handleCheckPicoPlaca(e: FormEvent) {
-      e.preventDefault();
-      const clean = plateQuery.replace(/\s+/g, "").toUpperCase();
+    e.preventDefault();
+    const clean = plateQuery.replace(/\s+/g, "").toUpperCase();
 
-      if (!clean) {
-      setPicoPlacaResult("Ingresa una placa válida (ej: ABC123).");
+    if (!clean) {
+      setPicoPlacaResult("Ingresa una placa válida.");
       return;
-      }
+    }
 
-      const match = clean.match(/(\d)$/);
-      if (!match) {
-      setPicoPlacaResult(
-          "No encontramos un número al final de la placa. Verifica el formato (ej: ABC123)."
-      );
+    const match = clean.match(/(\d)$/);
+    if (!match) {
+      setPicoPlacaResult("La placa debe terminar en número.");
       return;
-      }
+    }
 
-      const lastDigit = Number(match[1]);
-      const rule = PICO_PLACA_RULES[lastDigit];
+    const lastDigit = Number(match[1]);
+    const rule = PICO_PLACA_RULES[lastDigit];
+    setPicoPlacaResult(rule ? `Día de restricción: ${rule}` : "No encontramos regla para este dígito.");
 
-      if (!rule) {
-      setPicoPlacaResult(
-          `Para placas terminadas en ${lastDigit}, revisa el cuadro de pico y placa.`
-      );
-      } else {
-      setPicoPlacaResult(`Para placas terminadas en ${lastDigit}: ${rule}`);
-      }
-
-      // registrar uso del cuadrito
-      try {
-      fetch(`${API}/metrics/pico-placa-use`, { method: "POST" });
-      } catch {
-      // ignoramos error
-      }
-
-      // actualizar contador en UI si ya tenemos algo cargado
-      setPicoPlacaUses((prev) => (prev == null ? prev : prev + 1));
+    // Métrica
+    try { fetch(`${API}/metrics/pico-placa-use`, { method: "POST" }); } catch {}
+    setPicoPlacaUses((prev) => (prev == null ? prev : prev + 1));
   }
 
-
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50">
-      <div className="border-b border-white/10 bg-slate-950/80">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
+    <div className="min-h-screen bg-slate-950 text-slate-50 font-sans">
+      {/* Navbar con botón de acción */}
+      <nav className="sticky top-0 z-50 border-b border-white/5 bg-slate-950/90 backdrop-blur-md">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500 text-sm font-bold text-slate-950">
-              AY
-            </div>
-            <div className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold tracking-tight">
-                AllAtYou Renting
-              </span>
-              <span className="text-xs text-slate-400">
-                Tu carro, sin complicarte la vida
-              </span>
-            </div>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 font-bold text-slate-950">AY</div>
+            <span className="text-sm font-bold tracking-tight">AllAtYou <span className="text-emerald-400">Renting</span></span>
           </div>
-
-          <div className="hidden gap-3 text-xs md:flex">
-            <a href="#servicios" className="text-slate-300 hover:text-white">
-              Servicios
-            </a>
-            <a href="#pico-placa" className="text-slate-300 hover:text-white">
-              Pico y placa
-            </a>
-            <a href="#por-que" className="text-slate-300 hover:text-white">
-              ¿Por qué AllAtYou?
-            </a>
-            <a href="#contacto" className="text-slate-300 hover:text-white">
-              Contacto
-            </a>
-          </div>
+          <button 
+            onClick={() => scrollTo(formRef)}
+            className="rounded-full bg-emerald-500 px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition-all"
+          >
+            Postularme
+          </button>
         </div>
-      </div>
+      </nav>
 
-      {/* Hero */}
-      <section className="mx-auto flex max-w-5xl flex-col gap-10 px-4 pb-12 pt-10 md:flex-row md:items-center">
-        <div className="flex-1">
-          <p className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-300">
-            <span className="h-2 w-2 rounded-full bg-emerald-400" />
-            Renting y administración de vehículos para trabajo
-          </p>
-          <h1 className="mt-4 text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-            Tu carro trabajando por ti,
-            <span className="block text-emerald-400">
-              con números claros todos los días.
+      {/* Hero: Prioridad Reclutamiento */}
+      <header className="relative overflow-hidden px-4 pb-16 pt-12 md:pt-20">
+        <div className="mx-auto max-w-5xl text-center">
+          <div className="mx-auto mb-6 inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-1.5 text-[10px] font-medium uppercase tracking-widest text-emerald-400">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
             </span>
+            Cupos disponibles para conductores
+          </div>
+          <h1 className="text-balance text-4xl font-extrabold tracking-tight text-white md:text-6xl">
+            Conduce tu futuro con <br />
+            <span className="text-emerald-400">AllAtYou Renting</span>
           </h1>
-          <p className="mt-4 max-w-xl text-sm leading-relaxed text-slate-300">
-            AllAtYou Renting S.A.S se encarga de la operación diaria: pagos
-            de los conductores, gastos, anticipos y reportes de utilidad por
-            placa. Tú ves todo en limpio y decides con tranquilidad.
+          <p className="mx-auto mt-6 max-w-2xl text-lg text-slate-400">
+            Obtén un vehículo en excelentes condiciones, soporte 24/7 y la transparencia que mereces en tus pagos diarios.
           </p>
-
-          <div className="mt-6 flex flex-wrap gap-3">
-            <a
-              href={WHATSAPP_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center justify-center rounded-full bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/30 hover:bg-emerald-400"
+          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+            <button 
+              onClick={() => scrollTo(formRef)}
+              className="w-full sm:w-auto rounded-full bg-emerald-500 px-8 py-4 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-500/20 hover:scale-105 transition-transform"
             >
-              Quiero un carro en renting
+              Comenzar mi postulación
+            </button>
+            <a href={WHATSAPP_URL} target="_blank" rel="noreferrer" className="w-full sm:w-auto rounded-full border border-white/10 bg-white/5 px-8 py-4 text-sm font-semibold hover:bg-white/10 transition-colors">
+              Hablar con un asesor
             </a>
           </div>
-
-          <ul className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-slate-400">
-            <li>✔ Pagos diarios controlados</li>
-            <li>✔ Gastos y anticipos centralizados</li>
-            <li>✔ Profit mensual por placa</li>
-          </ul>
         </div>
+      </header>
 
-        <div className="flex-1">
-          <div className="mx-auto max-w-sm rounded-3xl border border-white/10 bg-slate-900/70 p-4 shadow-2xl shadow-emerald-500/10">
-            <div className="mb-3 flex items-center justify-between text-[11px] text-slate-400">
-              <span>Resumen ejemplo</span>
-              <span>AllAtYou Hub</span>
-            </div>
-            <div className="space-y-3 text-sm">
-              <div className="flex items-center justify-between rounded-2xl bg-slate-950 px-3 py-2">
-                <span className="text-slate-300">Vehículos activos</span>
-                <span className="font-semibold text-emerald-400">13</span>
-              </div>
-              <div className="flex items-center justify-between rounded-2xl bg-slate-950 px-3 py-2">
-                <span className="text-slate-300">Pagos recibidos hoy</span>
-                <span className="font-semibold text-emerald-400">$XXX.XXX</span>
-              </div>
-              <div className="flex items-center justify-between rounded-2xl bg-slate-950 px-3 py-2">
-                <span className="text-slate-300">Vehículos en mora</span>
-                <span className="font-semibold text-amber-300">N</span>
-              </div>
-            </div>
-            <p className="mt-3 text-[11px] text-slate-400">
-              La app interna muestra pagos, gastos, anticipos y utilidad por
-              vehículo en tiempo casi real.
+      {/* Navegación Rápida */}
+      <section className="mx-auto max-w-5xl px-4 py-8">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          {[
+            { label: "Postulación", icon: "🚗", ref: formRef },
+            { label: "Pico y Placa", icon: "🗓️", ref: remindersRef },
+            { label: "Beneficios", icon: "💎", id: "#por-que" },
+            { label: "Contacto", icon: "💬", id: "#contacto" }, // Ajustado ID
+          ].map((item, i) => (
+            <button 
+              key={i}
+              onClick={() => item.ref ? scrollTo(item.ref) : document.querySelector(item.id!)?.scrollIntoView({behavior:'smooth'})}
+              className="flex flex-col items-center justify-center rounded-2xl border border-white/5 bg-slate-900/50 p-6 hover:border-emerald-500/40 hover:bg-slate-900 transition-all group"
+            >
+              <span className="text-2xl mb-2 group-hover:scale-110 transition-transform">{item.icon}</span>
+              <span className="text-xs font-medium text-slate-300 group-hover:text-emerald-400">{item.label}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* Sección Formulario - PRIORIDAD 1 */}
+      <section ref={formRef} className="mx-auto max-w-5xl px-4 py-16">
+        <div className="flex flex-col gap-12 lg:flex-row items-start">
+          <div className="flex-1 lg:sticky lg:top-24">
+            <h2 className="text-3xl font-bold text-white">Únete a la flota</h2>
+            <p className="mt-4 text-slate-400 leading-relaxed">
+              Completa el formulario en menos de 3 minutos. Buscamos conductores con compromiso y ganas de crecer bajo un esquema de renting justo y rentable.
             </p>
+            <div className="mt-8 space-y-4">
+              {["Vehículos modernos y mantenidos", "Cuentas claras en nuestra App propia", "Entregas semanales fijas de $330.000"].map((text, i) => (
+                <div key={i} className="flex items-center gap-3 text-sm text-slate-300">
+                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-[10px] text-emerald-400">✓</div>
+                  {text}
+                </div>
+              ))}
+            </div>
+            {/* Dato de métrica visual opcional */}
+             {(landingViews != null) && (
+                <p className="mt-8 text-[10px] text-slate-600">
+                  Esta oportunidad ha sido vista {landingViews} veces hoy.
+                </p>
+              )}
+          </div>
+          <div className="w-full max-w-md mx-auto">
+            <DriverApplicationForm referralCode={referralCode || undefined} />
           </div>
         </div>
       </section>
 
-      {/* Servicios */}
-      <section
-        id="servicios"
-        className="border-t border-white/5 bg-slate-950 py-10"
-      >
+      {/* Sección Pico y Placa Compacta */}
+      <section id="pico-placa" className="border-t border-white/5 bg-slate-900/30 py-16">
         <div className="mx-auto max-w-5xl px-4">
-          <h2 className="text-center text-xl font-semibold text-white sm:text-2xl">
-            ¿Qué hacemos en AllAtYou?
-          </h2>
-          <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-slate-300">
-            Acompañamos tanto a conductores como a dueños de vehículo para que
-            el carro sea un activo y no un problema.
-          </p>
-          <div className="mt-7 grid gap-4 md:grid-cols-3">
-            <div className="rounded-2xl border border-white/5 bg-slate-900/70 p-4 text-left">
-              <p className="text-sm font-semibold text-white">
-                Renting para conductores
-              </p>
-              <p className="mt-2 text-xs text-slate-300">
-                Esquemas claros de pago diario, soporte y acompañamiento para
-                que puedas trabajar tranquilo con tu vehículo.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/5 bg-slate-900/70 p-4 text-left">
-              <p className="text-sm font-semibold text-white">
-                Administración para dueños
-              </p>
-              <p className="mt-2 text-xs text-slate-300">
-                Centralizamos pagos, gastos, anticipos, inversión, recuperación
-                y utilidad mensual por placa.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/5 bg-slate-900/70 p-4 text-left">
-              <p className="text-sm font-semibold text-white">
-                Reportes y control de mora
-              </p>
-              <p className="mt-2 text-xs text-slate-300">
-                Último pago por vehículo, días de mora y reportes descargables
-                en CSV para revisar la operación.
-              </p>
-            </div>
+          <div className="mb-10 text-center">
+            <h2 className="text-2xl font-bold text-white">Herramientas AllAtYou</h2>
+            <p className="text-sm text-slate-400">Consulta Pico y Placa y programa tus alertas de vencimientos.</p>
           </div>
-        </div>
-      </section>
-
-      {/* Pico y Placa + Asistencias */}
-      <section
-        id="pico-placa"
-        className="border-t border-white/5 bg-slate-950 py-10"
-      >
-        <div className="mx-auto max-w-5xl px-4">
-          <h2 className="text-center text-xl font-semibold text-white sm:text-2xl">
-            Pico y placa y asistencias para tu carro
-          </h2>
-          <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-slate-300">
-            Te ayudamos a recordar cuándo tienes pico y placa, cuándo se vence
-            tu tecnomecánico, y te acompañamos con asistencia para tu vehículo
-            en el día a día.
-          </p>
-
-          <div className="mt-7 grid gap-6 md:grid-cols-2">
-            {/* Cuadro de consulta por placa */}
-            <div className="rounded-2xl border border-emerald-500/20 bg-slate-900/80 p-4 text-left">
-              <p className="text-sm font-semibold text-white">
-                Consulta rápida por placa
-              </p>
-              <p className="mt-2 text-xs text-slate-300">
-                Escribe la placa de tu vehículo y te mostramos el día que aplica
-                pico y placa según el número final. Ajusta las reglas según tu ciudad.
-              </p>
-
-              <form onSubmit={handleCheckPicoPlaca} className="mt-4 space-y-3">
-                <input
-                value={plateQuery}
-                onChange={(e) =>
-                    setPlateQuery(
-                    e.target.value
-                        .toUpperCase()           // siempre en mayúsculas
-                        .replace(/[^A-Z0-9]/g, "") // solo letras y números
-                    )
-                }
-                placeholder="Ejemplo: ABC123"
-                maxLength={6}
-                inputMode="text"
-                className="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 text-sm text-slate-50 outline-none focus:ring-2 focus:ring-emerald-400"
+          
+          <div className="grid md:grid-cols-2 gap-8 items-start bg-slate-900/80 rounded-3xl border border-white/5 p-6 md:p-10">
+            {/* Columna Izquierda: Consulta y Foto */}
+            <div>
+              <h3 className="text-lg font-bold mb-4 text-white">Consulta Rápida</h3>
+              <form onSubmit={handleCheckPicoPlaca} className="flex gap-2">
+                <input 
+                  value={plateQuery}
+                  onChange={(e) => setPlateQuery(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                  placeholder="Placa (Ej: ABC123)" 
+                  maxLength={6}
+                  className="flex-1 rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-500"
                 />
-                <button
-                  type="submit"
-                  className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
-                >
-                  Consultar pico y placa
+                <button type="submit" className="rounded-xl bg-emerald-500 px-6 font-bold text-slate-950 hover:bg-emerald-400">
+                  Ir
                 </button>
               </form>
-
+              
               {picoPlacaResult && (
-                <div className="mt-3 rounded-xl bg-slate-950/70 px-3 py-2 text-xs text-slate-200">
+                <div className="mt-4 rounded-xl bg-emerald-500/10 p-3 text-xs text-emerald-400 border border-emerald-500/20">
                   {picoPlacaResult}
                 </div>
               )}
-
-              <ul className="mt-4 space-y-1 text-xs text-slate-400">
-                <li>• Recordatorios de pico y placa para tu vehículo.</li>
-                <li>• Recordatorios de tecnomecánico y otros vencimientos.</li>
-                <li>• Acompañamiento operativo para mantener tu carro al día.</li>
-              </ul>
-
-              {(landingViews != null || picoPlacaUses != null) && (
-                <p className="mt-3 text-[11px] text-slate-500">
-                  {landingViews != null && (
-                    <>
-                      Esta landing ha sido visitada{" "}
-                      <span className="font-semibold">{landingViews}</span> veces.{" "}
-                    </>
-                  )}
-                  {picoPlacaUses != null && (
-                    <>
-                      Consultas de pico y placa realizadas:{" "}
-                      <span className="font-semibold">{picoPlacaUses}</span>.
-                    </>
-                  )}
-                </p>
-              )}
-            </div>
-
-            {/* Imagen con el cuadro oficial de pico y placa */}
-            <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
-              <p className="text-sm font-semibold text-white">
-                Calendario de pico y placa
-              </p>
-              <p className="mt-2 text-xs text-slate-300">
-                Usamos el cuadro oficial de pico y placa para ayudarte a planear
-                mejor tus turnos y tus recorridos.
-              </p>
-              <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-slate-950">
-                <img
-                  src={picoPlacaImg}
-                  alt="Calendario de pico y placa"
-                  className="w-full object-contain"
-                />
+              
+              <div className="mt-8">
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4">Calendario Oficial</p>
+                <div className="overflow-hidden rounded-2xl border border-white/10 bg-slate-950">
+                  <img src={picoPlacaImg} alt="Pico y placa" className="w-full object-contain opacity-80 hover:opacity-100 transition-opacity" />
+                </div>
               </div>
             </div>
-          </div>
-          <div ref={remindersRef}>
-            <ReminderSubscriptionCard
-              initialPlate={initialReminderPlate}
-              autoLoadOnMount={autoLoadReminders}
-            />
-          </div>
-        </div>
-      </section>
 
-      {/* Por qué */}
-      <section
-        id="por-que"
-        className="border-t border-white/5 bg-slate-950 py-10"
-      >
-        <div className="mx-auto max-w-5xl px-4">
-          <h2 className="text-center text-xl font-semibold text-white sm:text-2xl">
-            ¿Por qué AllAtYou?
-          </h2>
-          <div className="mt-6 grid gap-4 md:grid-cols-4">
-            <div className="rounded-2xl border border-white/5 bg-slate-900/70 p-4 text-left">
-              <p className="text-[11px] font-semibold text-emerald-300">
-                Transparencia
-              </p>
-              <p className="mt-2 text-xs text-slate-300">
-                Todo se registra: pagos, gastos, anticipos y ajustes contables.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/5 bg-slate-900/70 p-4 text-left">
-              <p className="text-[11px] font-semibold text-emerald-300">
-                App propia
-              </p>
-              <p className="mt-2 text-xs text-slate-300">
-                Plataforma hecha a la medida de la operación diaria.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/5 bg-slate-900/70 p-4 text-left">
-              <p className="text-[11px] font-semibold text-emerald-300">
-                Soporte humano
-              </p>
-              <p className="mt-2 text-xs text-slate-300">
-                No eres un número. Hablamos, ajustamos y buscamos que gane
-                todo el mundo.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/5 bg-slate-900/70 p-4 text-left">
-              <p className="text-[11px] font-semibold text-emerald-300">
-                Enfoque en rentabilidad
-              </p>
-              <p className="mt-2 text-xs text-slate-300">
-                La meta es clara: que la flota sea rentable y medible por
-                vehículo.
-              </p>
+            {/* Columna Derecha: Recordatorios */}
+            <div ref={remindersRef}>
+              <ReminderSubscriptionCard 
+                initialPlate={initialReminderPlate} 
+                autoLoadOnMount={autoLoadReminders} 
+              />
             </div>
           </div>
         </div>
       </section>
 
-      {/* Contacto */}
-      <section
-        id="contacto"
-        className="border-t border-white/5 bg-slate-950 py-10"
-      >
-        <div className="mx-auto max-w-5xl px-4">
-          <div className="rounded-3xl border border-emerald-500/30 bg-slate-900/80 p-6 text-left md:p-8">
-            <h2 className="text-lg font-semibold text-white sm:text-xl">
-              Hablemos de tu carro y de tus números
-            </h2>
-            <p className="mt-2 text-sm text-slate-300">
-              Si quieres poner tu vehículo a producir, o necesitas un carro
-              para trabajar, podemos revisar el esquema que más te sirva.
-            </p>
-            <div className="mt-5 flex flex-wrap gap-3">
-              <a
-                href={WHATSAPP_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center justify-center rounded-full bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/30 hover:bg-emerald-400"
-              >
-                Escribir por WhatsApp
-              </a>
-              <a
-                href="mailto:contacto@allatyou.com"
-                className="inline-flex items-center justify-center rounded-full border border-white/15 bg-white/5 px-6 py-2.5 text-sm font-semibold text-slate-50 hover:bg-white/10"
-              >
-                Enviar correo
-              </a>
-            </div>
-            <p className="mt-4 text-[11px] text-slate-400">
-              AllAtYou Renting S.A.S — NIT 901.995.593 — Cali, Colombia.
-            </p>
-          </div>
+      {/* Footer y Contacto Compacto */}
+      <footer id="contacto" className="border-t border-white/5 bg-slate-950 py-12 px-4 text-center">
+        <h3 className="text-lg font-semibold text-white mb-4">¿Tienes dudas?</h3>
+        <div className="flex justify-center gap-4 mb-8">
+           <a href={WHATSAPP_URL} target="_blank" rel="noreferrer" className="text-sm text-emerald-400 hover:text-emerald-300 underline">WhatsApp</a>
+           <a href="mailto:contacto@allatyou.com" className="text-sm text-emerald-400 hover:text-emerald-300 underline">Email</a>
         </div>
-      </section>
+        <p className="text-xs text-slate-500">© 2026 AllAtYou Renting S.A.S — NIT 901.995.593 — Cali, Colombia.</p>
+      </footer>
     </div>
   );
 }

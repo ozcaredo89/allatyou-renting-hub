@@ -1,38 +1,41 @@
+// src/routes/drivers.ts
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 
 const r = Router();
 
-/** Devuelve datos del conductor por placa. */
-r.get("/:plate", async (req: Request, res: Response) => {
-  const plate = String(req.params.plate || "").toUpperCase();
+const PLATE_RE = /^[A-Z]{3}\d{3}$/;
 
-  // formato COL autos: ABC123
-  const PLATE_RE = /^[A-Z]{3}\d{3}$/;
+/** Devuelve datos del conductor por placa (para pagos/autocompletar). */
+r.get("/:plate", async (req: Request, res: Response) => {
+  const plate = String(req.params.plate || "").toUpperCase().trim();
+
   if (!PLATE_RE.test(plate)) {
     return res.status(400).json({ error: "invalid plate format (ABC123)" });
   }
 
+  // IMPORTANTE: la fuente actual es la VIEW legacy
+  // (antes era public.drivers; ahora es public.drivers_vw)
   const { data, error } = await supabase
-    .from("drivers")
-    .select("*")
+    .from("drivers_vw")
+    .select("plate, driver_name, has_credit, default_amount, default_installment")
     .eq("plate", plate)
-    .single();
+    .maybeSingle();
 
-  if (error && error.code !== "PGRST116") {
+  if (error) {
     return res.status(500).json({ error: error.message });
   }
 
-  // Respuesta uniforme
-  if (!data) return res.json({ found: false });
+  if (!data) return res.status(404).json({ found: false });
+
   return res.json({
     found: true,
     driver: {
       plate: data.plate,
       driver_name: data.driver_name,
-      has_credit: data.has_credit,
-      default_amount: data.default_amount,
-      default_installment: data.default_installment,
+      has_credit: Boolean(data.has_credit),
+      default_amount: data.default_amount ?? null,
+      default_installment: data.default_installment ?? null,
     },
   });
 });
