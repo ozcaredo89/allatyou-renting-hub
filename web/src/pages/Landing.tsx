@@ -4,6 +4,7 @@ import picoPlacaImg from "../assets/pico-placa.png";
 import { DriverApplicationForm } from "../components/DriverApplicationForm";
 import { VehicleApplicationForm } from "../components/VehicleApplicationForm";
 import { ReminderSubscriptionCard } from "../components/ReminderSubscriptionCard";
+import { ShareButton } from "../components/ShareButton"; // <--- Importamos el nuevo componente
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -323,10 +324,19 @@ export default function Landing() {
             </div>
             <h2 className="text-3xl font-bold text-white">Únete como Conductor</h2>
             <p className="mt-4 text-slate-400 text-sm leading-relaxed">
-              Accede a un vehículo en condiciones óptimas. [cite_start]Sin jefes, pero con el respaldo de un equipo que quiere verte crecer[cite: 8].
+              Accede a un vehículo en condiciones óptimas. Sin jefes, pero con el respaldo de un equipo que quiere verte crecer.
             </p>
             
-            <ul className="mt-8 space-y-4">
+            <div className="mt-6 mb-8">
+              <ShareButton 
+                title="Conduce con AllAtYou" 
+                text="¡Hola! Mira esta oportunidad para trabajar conduciendo con vehículos de AllAtYou."
+                hash="#conductores"
+                colorClass="text-emerald-400"
+              />
+            </div>
+            
+            <ul className="space-y-4">
               {[
                 "Vehículos asegurados y con mantenimiento al día.",
                 "Plataforma transparente: sabes cuánto ganas.",
@@ -356,8 +366,17 @@ export default function Landing() {
             <p className="mt-4 text-slate-400 text-sm leading-relaxed">
               Convierte tu carro en un activo real. Nosotros nos encargamos de conseguir el conductor, administrar los pagos y cuidar tu patrimonio.
             </p>
+
+            <div className="mt-6 mb-8">
+              <ShareButton 
+                title="Administración de Vehículos AllAtYou" 
+                text="¡Hola! Te recomiendo AllAtYou para que pongas a producir tu vehículo con tranquilidad."
+                hash="#propietarios"
+                colorClass="text-blue-400"
+              />
+            </div>
             
-            <div className="mt-8 space-y-6">
+            <div className="space-y-6">
               <div className="flex gap-4">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-xl">🤝</div>
                 <div>
