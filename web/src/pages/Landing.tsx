@@ -4,7 +4,7 @@ import picoPlacaImg from "../assets/pico-placa.png";
 import { DriverApplicationForm } from "../components/DriverApplicationForm";
 import { VehicleApplicationForm } from "../components/VehicleApplicationForm";
 import { ReminderSubscriptionCard } from "../components/ReminderSubscriptionCard";
-import { ShareButton } from "../components/ShareButton"; // <--- Importamos el nuevo componente
+import { ShareButton } from "../components/ShareButton";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -30,7 +30,7 @@ export default function Landing() {
   const [referralCode, setReferralCode] = useState<string | null>(null);
 
   const [landingViews, setLandingViews] = useState<number | null>(null);
-  const [picoPlacaUses, setPicoPlacaUses] = useState<number | null>(null);
+  // CORRECCIÓN: Eliminado picoPlacaUses porque no se visualiza en la UI
 
   const [initialReminderPlate, setInitialReminderPlate] = useState<string | undefined>(undefined);
   const [autoLoadReminders, setAutoLoadReminders] = useState(false);
@@ -38,16 +38,17 @@ export default function Landing() {
 
   useEffect(() => {
     async function trackAndLoadMetrics() {
+      [cite_start]// 1. Registrar visita (Métrica backend) [cite: 15]
       try {
         await fetch(`${API}/metrics/landing-view`, { method: "POST" });
       } catch {}
 
+      // 2. Traer resumen (Solo necesitamos landing_views para mostrar)
       try {
         const rs = await fetch(`${API}/metrics/summary`);
         if (!rs.ok) return;
         const json = await rs.json();
         setLandingViews(json.landing_views ?? null);
-        setPicoPlacaUses(json.pico_placa_uses ?? null);
       } catch {}
     }
 
@@ -104,7 +105,7 @@ export default function Landing() {
     }
 
     const lastDigit = Number(match[1]);
-    const rule = PICO_PLACA_RULES[lastDigit];
+    const rule = PICO_PLACA_RULES[lastDigit]; [cite_start]// [cite: 10]
 
     if (!rule) {
       setPicoPlacaResult(
@@ -114,11 +115,10 @@ export default function Landing() {
       setPicoPlacaResult(`Para placas terminadas en ${lastDigit}: ${rule}`);
     }
 
+    [cite_start]// Registrar métrica en backend (sin actualizar estado local) [cite: 11]
     try {
       fetch(`${API}/metrics/pico-placa-use`, { method: "POST" });
     } catch {}
-
-    setPicoPlacaUses((prev) => (prev == null ? prev : prev + 1));
   }
 
   return (
