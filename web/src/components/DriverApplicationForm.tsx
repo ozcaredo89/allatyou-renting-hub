@@ -120,7 +120,7 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
               Acepto pruebas de toxicología aleatorias
             </label>
             <label className="flex items-start gap-3 text-xs text-slate-300">
-              <input type="checkbox" className="mt-1 accent-emerald-500" onChange={e => setFormData({...formData, confirmations: {...formData.confirmations, truthDeclarationAccepted: true, acceptsWorkConditions: true, understandsDamageLiability: true}})} />
+              <input type="checkbox" className="mt-1 accent-emerald-500" onChange={() => setFormData({...formData, confirmations: {...formData.confirmations, truthDeclarationAccepted: true, acceptsWorkConditions: true, understandsDamageLiability: true}})} />
               Certifico que toda la información es verídica
             </label>
           </div>
