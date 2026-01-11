@@ -17,6 +17,7 @@ type Advance = {
   amount: number;
   rate_percent: number;
   installments: number;
+  current_installment: number;
   start_date: string; // YYYY-MM-DD
   status: "active" | "closed" | "cancelled";
   notes?: string | null;
@@ -666,6 +667,7 @@ function AdvancesList() {
                   <td className="px-4 py-3">${fmtCOP.format(a.amount)}</td>
                   <td className="px-4 py-3">{a.rate_percent}%</td>
                   <td className="px-4 py-3">{a.installments}</td>
+                  <td className="px-4 py-3 font-mono">{a.current_installment} / {a.installments}</td>
                   <td className="px-4 py-3">{a.start_date}</td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-3 py-1 text-xs ${badgeTone(a.status)}`}>{a.status}</span>

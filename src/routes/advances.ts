@@ -1,7 +1,6 @@
 // src/routes/advances.ts
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
-import { buildFixedSchedule  } from "../lib/amort";
 
 const r = Router();
 
@@ -32,12 +31,6 @@ async function driverExists(driver_id?: number): Promise<boolean> {
 }
 
 // --------- POST /advances : crea el préstamo y genera cronograma ----------
-/**
- * Body:
- * { person_name, person_type ('driver'|'collaborator'),
- *   driver_id?, plate?, amount (COP), rate_percent=15, installments=21,
- *   start_date=YYYY-MM-DD, notes? }
- */
 r.post("/", async (req: Request, res: Response) => {
   try {
     const {
@@ -55,37 +48,19 @@ r.post("/", async (req: Request, res: Response) => {
     const daily_installment = Number(req.body?.daily_installment);
 
     // Validaciones básicas
-    if (!person_name || typeof person_name !== "string") {
-      return res.status(400).json({ error: "person_name required" });
-    }
-    if (!["driver", "collaborator"].includes(person_type)) {
-      return res.status(400).json({ error: "person_type must be 'driver'|'collaborator'" });
-    }
-    if (!(Number(amount) > 0)) {
-      return res.status(400).json({ error: "amount > 0 required" });
-    }
-    if (!(Number(rate_percent) >= 0)) {
-      return res.status(400).json({ error: "rate_percent >= 0 required" });
-    }
-    if (!(Number(installments) >= 1)) {
-      return res.status(400).json({ error: "installments >= 1 required" });
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(start_date))) {
-      return res.status(400).json({ error: "start_date must be YYYY-MM-DD" });
-    }
-    if (!(daily_installment > 0)) {
-    return res.status(400).json({ error: "daily_installment > 0 required" });
-    }
+    if (!person_name || typeof person_name !== "string") return res.status(400).json({ error: "person_name required" });
+    if (!["driver", "collaborator"].includes(person_type)) return res.status(400).json({ error: "person_type invalid" });
+    if (!(Number(amount) > 0)) return res.status(400).json({ error: "amount > 0 required" });
+    if (!(Number(installments) >= 1)) return res.status(400).json({ error: "installments >= 1 required" });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(start_date))) return res.status(400).json({ error: "start_date must be YYYY-MM-DD" });
+    if (!(daily_installment > 0)) return res.status(400).json({ error: "daily_installment > 0 required" });
 
-    // Validar existencia de placa/driver si vienen
-    if (!(await plateExists(plate))) {
-      return res.status(400).json({ error: "plate not found or invalid" });
-    }
-
-    // Regla: solo 1 advance activo por placa (si viene placa)
+    // Validar existencia de placa/driver
+    if (!(await plateExists(plate))) return res.status(400).json({ error: "plate not found or invalid" });
+    
+    // Regla: solo 1 advance activo por placa
     if (plate) {
       const upperPlate = String(plate).toUpperCase();
-
       const { data: existing, error: exErr } = await supabase
         .from("operational_advances")
         .select("id")
@@ -93,20 +68,13 @@ r.post("/", async (req: Request, res: Response) => {
         .eq("status", "active")
         .limit(1);
 
-      if (exErr) {
-        return res.status(500).json({ error: exErr.message });
-      }
-
+      if (exErr) return res.status(500).json({ error: exErr.message });
       if ((existing?.length ?? 0) > 0) {
-        return res.status(400).json({
-          error: "No puede haber más de un préstamo activo por placa. Consulte el encargado.",
-        });
+        return res.status(400).json({ error: "Ya existe un préstamo activo para esta placa." });
       }
     }
 
-    if (!(await driverExists(driver_id))) {
-      return res.status(400).json({ error: "driver_id not found" });
-    }
+    if (!(await driverExists(driver_id))) return res.status(400).json({ error: "driver_id not found" });
 
     // 1) Crear el advance
     const { data: advIns, error: advErr } = await supabase
@@ -123,60 +91,39 @@ r.post("/", async (req: Request, res: Response) => {
         status: "active",
         notes: notes ?? null,
         daily_installment: Math.round(daily_installment),
+        current_installment: 0 // Inicializamos en 0
       })
       .select("*")
       .single();
 
     if (advErr || !advIns) {
-      // Postgres unique violation (por el índice parcial)
-      // En Supabase suele venir en error.message; a veces también hay code 23505.
       const msg = String(advErr?.message || "");
-
-      if (msg.includes("uidx_operational_advances_one_active_per_plate") || msg.includes("duplicate key")) {
-        return res.status(400).json({
-          error: "No puede haber más de un préstamo activo por placa. Consulte el encargado.",
-        });
+      if (msg.includes("duplicate key") || msg.includes("uidx_operational_advances_one_active_per_plate")) {
+        return res.status(400).json({ error: "Ya existe un préstamo activo para esta placa." });
       }
-
-      return res.status(500).json({ error: advErr?.message || "insert advance failed" });
+      return res.status(500).json({ error: advErr?.message || "insert failed" });
     }
 
+    // 2) Generar cronograma
+    const schedule = Array.from({ length: advIns.installments }, (_, i) => {
+      const installmentNo = i + 1;
+      const dueDate = new Date(advIns.start_date);
+      dueDate.setDate(dueDate.getDate() + i);
 
-    // 2) Generar cronograma DIARIO (cuotas diarias)
-    const schedule = Array.from(
-      { length: advIns.installments },
-      (_, i) => {
-        const installmentNo = i + 1;
-        const dueDate = new Date(advIns.start_date);
-        dueDate.setDate(dueDate.getDate() + i);
+      return {
+        advance_id: advIns.id,
+        installment_no: installmentNo,
+        due_date: dueDate.toISOString().slice(0, 10),
+        installment_amount: advIns.daily_installment,
+        interest_amount: 0,
+        principal_amount: advIns.daily_installment,
+        status: "pending",
+      };
+    });
 
-        return {
-          installment_no: installmentNo,
-          due_date: dueDate.toISOString().slice(0, 10),
-          installment_amount: advIns.daily_installment,
-          interest_amount: 0,
-          principal_amount: advIns.daily_installment,
-        };
-      }
-    );
-
-
-    const schRows = schedule.map(s => ({
-      advance_id: advIns.id,
-      installment_no: s.installment_no,
-      due_date: s.due_date,
-      installment_amount: s.installment_amount,
-      interest_amount: s.interest_amount,
-      principal_amount: s.principal_amount,
-      status: "pending",
-    }));
-
-    const { error: schErr } = await supabase
-      .from("operational_advance_schedule")
-      .insert(schRows);
+    const { error: schErr } = await supabase.from("operational_advance_schedule").insert(schedule);
 
     if (schErr) {
-      // rollback “manual”: borrar advance si falla cronograma
       await supabase.from("operational_advances").delete().eq("id", advIns.id);
       return res.status(500).json({ error: schErr.message });
     }
@@ -187,7 +134,7 @@ r.post("/", async (req: Request, res: Response) => {
   }
 });
 
-// --------- GET /advances?status&person&plate -------------
+// --------- GET /advances -------------
 r.get("/", async (req: Request, res: Response) => {
   const { status, person, plate, limit = "50", offset = "0" } = req.query as Record<string, string>;
 
@@ -197,7 +144,7 @@ r.get("/", async (req: Request, res: Response) => {
     .order("created_at", { ascending: false });
 
   if (status) q = q.eq("status", status);
-  if (plate)  q = q.eq("plate", plate.toUpperCase());
+  if (plate) q = q.eq("plate", plate.toUpperCase());
   if (person) q = q.ilike("person_name", `%${person}%`);
 
   const lim = Math.max(1, Math.min(200, parseInt(limit)));
@@ -225,7 +172,7 @@ r.get("/:id/schedule", async (req: Request, res: Response) => {
   if (error) return res.status(500).json({ error: error.message });
 
   const today = new Date().toISOString().slice(0, 10);
-  const withOverdue = (sch ?? []).map(row => {
+  const withOverdue = (sch ?? []).map((row) => {
     const isPaid = row.status === "paid";
     const overdue = !isPaid && row.due_date < today;
     return { ...row, overdue };
@@ -235,21 +182,17 @@ r.get("/:id/schedule", async (req: Request, res: Response) => {
 });
 
 // --------- POST /advances/:id/payments -------------------
-/**
- * Body: { installment_no, paid_date?, amount? }
- * - Marca la cuota como pagada (paid) con paid_date
- * - Inserta ledger "advance_repayment" (positivo)
- */
+// Aquí está la lógica crítica actualizada
 r.post("/:id/payments", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "invalid id" });
 
   const { installment_no, paid_date, amount } = req.body || {};
   if (!(Number(installment_no) >= 1)) {
-    return res.status(400).json({ error: "installment_no >= 1 required" });
+    return res.status(400).json({ error: "installment_no required" });
   }
 
-  // Traer advance y ese schedule
+  // Traer advance para saber total cuotas
   const { data: adv, error: advErr } = await supabase
     .from("operational_advances")
     .select("*")
@@ -257,6 +200,7 @@ r.post("/:id/payments", async (req: Request, res: Response) => {
     .single();
   if (advErr || !adv) return res.status(404).json({ error: "advance not found" });
 
+  // Traer cuota específica
   const { data: sch, error: schErr } = await supabase
     .from("operational_advance_schedule")
     .select("*")
@@ -269,13 +213,11 @@ r.post("/:id/payments", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "installment already paid" });
   }
 
-  const paidDate: string = /^\d{4}-\d{2}-\d{2}$/.test(String(paid_date))
+  const paidDate = /^\d{4}-\d{2}-\d{2}$/.test(String(paid_date))
     ? paid_date
     : new Date().toISOString().slice(0, 10);
 
-  const paidAmount = Math.round(Number(amount || sch.installment_amount));
-
-  // 1) Marcar paid
+  // 1) Marcar la cuota como pagada
   const { error: upErr } = await supabase
     .from("operational_advance_schedule")
     .update({ status: "paid", paid_date: paidDate })
@@ -283,24 +225,31 @@ r.post("/:id/payments", async (req: Request, res: Response) => {
 
   if (upErr) return res.status(500).json({ error: upErr.message });
 
-  // 3) Si todas pagadas -> cerrar advance
-  const { data: rest, error: pendingErr } = await supabase
+  // 2) Contar cuántas cuotas pagadas lleva ESTE advance
+  const { count: paidCount, error: countErr } = await supabase
     .from("operational_advance_schedule")
-    .select("status")
+    .select("*", { count: "exact", head: true })
     .eq("advance_id", id)
-    .neq("status", "paid")
-    .limit(1);
-  if (!pendingErr && (rest?.length ?? 0) === 0) {
+    .eq("status", "paid");
+
+  if (!countErr && typeof paidCount === "number") {
+    const isComplete = paidCount >= adv.installments;
+    
+    // 3) Actualizar current_installment y cerrar si aplica
     await supabase
       .from("operational_advances")
-      .update({ status: "closed" })
+      .update({
+        current_installment: paidCount,
+        status: isComplete ? "closed" : "active", // Cierre automático
+        updated_at: new Date().toISOString()
+      })
       .eq("id", id);
   }
 
   res.json({ ok: true });
 });
 
-// --------- PATCH /advances/:id  (actualizar status/notas) ------------
+// --------- PATCH /advances/:id ---------------------------
 r.patch("/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "invalid id" });
@@ -308,7 +257,7 @@ r.patch("/:id", async (req: Request, res: Response) => {
   const payload: any = {};
   if (typeof req.body.notes === "string") payload.notes = req.body.notes;
   if (typeof req.body.status === "string") {
-    if (!["active","closed","cancelled"].includes(req.body.status)) {
+    if (!["active", "closed", "cancelled"].includes(req.body.status)) {
       return res.status(400).json({ error: "invalid status" });
     }
     payload.status = req.body.status;
