@@ -700,7 +700,7 @@ r.get("/last-amount", async (req: Request, res: Response) => {
     .from("payments")
     .select("plate, payment_date, amount, status, installment_number, created_at")
     .eq("plate", plate)
-    .eq("status", "confirmed")
+    //.eq("status", "confirmed")
     .order("payment_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(1)

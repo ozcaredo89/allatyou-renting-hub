@@ -389,9 +389,9 @@ export default function App() {
     const shortfall = installmentN != null ? (editSplit ? Math.max(0, 70000 - amountN) : auto.shortfall) : 0;
 
     const lines = [
-      `Anticipo/seguro: $${fmtCOP.format(insurance)}`,
+      `Seguro: $${fmtCOP.format(insurance)}`,
       `Entrega: $${fmtCOP.format(delivery)}`,
-      `Cuota crédito: $${fmtCOP.format(credit)}`,
+      `Cuota anticipo: $${fmtCOP.format(credit)}`,
     ];
 
     if (installmentN != null && shortfall > 0) {
