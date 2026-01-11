@@ -54,7 +54,8 @@ function validationError(res: Response, fields: FieldIssue[]) {
 }
 
 /**
- * POST /driver-applications
+ * POST /driver-applications (Público)
+ * Crea una nueva postulación
  */
 r.post("/", async (req: Request, res: Response) => {
   try {
@@ -442,6 +443,74 @@ r.post("/", async (req: Request, res: Response) => {
       message: e?.message ?? "Unexpected error",
     });
   }
+});
+
+// ============================================
+// ADMIN ROUTES (Protected via Basic Auth)
+// ============================================
+
+// GET /driver-applications (Admin List)
+r.get("/", async (req: Request, res: Response) => {
+  // 1. Basic Auth Check
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  // 2. Query Params
+  const { status, limit = "50" } = req.query;
+
+  // 3. Build Query
+  let q = supabase
+    .from("driver_applications")
+    .select("*, driver_application_references(*), driver_application_documents(*)") // Traemos relaciones
+    .order("created_at", { ascending: false })
+    .limit(Number(limit));
+
+  if (status) {
+    q = q.eq("status", status);
+  }
+
+  // 4. Execute
+  const { data, error } = await q;
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  return res.json(data);
+});
+
+// PATCH /driver-applications/:id (Admin Update Status)
+r.patch("/:id", async (req: Request, res: Response) => {
+  // 1. Basic Auth Check
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { id } = req.params;
+  const { status, status_reason } = req.body;
+
+  if (!status) {
+    return res.status(400).json({ error: "status is required" });
+  }
+
+  // 2. Update
+  const { error } = await supabase
+    .from("driver_applications")
+    .update({ 
+      status, 
+      status_reason, 
+      updated_at: new Date().toISOString() 
+    })
+    .eq("id", id);
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  return res.json({ ok: true });
 });
 
 export default r;

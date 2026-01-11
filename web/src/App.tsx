@@ -5,6 +5,7 @@ import Reports from "./pages/Reports";
 import Expenses from "./pages/Expenses";
 import AdminProfit from "./pages/AdminProfit";
 import RemindersLog from "./pages/RemindersLog";
+import AdminRecruitment from "./pages/AdminRecruitment"; // 1. Importamos la nueva página
 import Landing from "./pages/Landing";
 
 export default function App() {
@@ -69,9 +70,14 @@ export default function App() {
               }
             />
             <Route path="/pay" element={<Pay />} />
+            
+            {/* Rutas Administrativas */}
             <Route path="/admin/advances" element={<AdminAdvances />} />
             <Route path="/admin/profit" element={<AdminProfit />} />
             <Route path="/admin/reminders-log" element={<RemindersLog />} />
+            
+            {/* 2. Agregamos la nueva ruta de Reclutamiento */}
+            <Route path="/admin/recruitment" element={<AdminRecruitment />} />
 
             <Route path="/reports" element={<Reports />} />
             <Route path="/expenses" element={<Expenses />} />

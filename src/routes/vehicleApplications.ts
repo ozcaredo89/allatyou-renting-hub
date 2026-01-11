@@ -45,7 +45,8 @@ function validationError(res: Response, fields: FieldIssue[]) {
 }
 
 /**
- * POST /vehicle-applications
+ * POST /vehicle-applications (Público)
+ * Registro de nuevos vehículos
  */
 r.post("/", async (req: Request, res: Response) => {
   try {
@@ -128,8 +129,8 @@ r.post("/", async (req: Request, res: Response) => {
     }
 
     const availability = business.availability;
-    const allowedAvail = ["hours", "days", "unlimited"]; // Ajustar según lo que envíe el front
-    if (!isNonEmptyString(availability)) { // || !allowedAvail.includes(availability) -> opcional validar estricto
+    // const allowedAvail = ["hours", "days", "unlimited"];
+    if (!isNonEmptyString(availability)) {
        fields.push({ path: "business.availability", issue: "required" });
     }
 
@@ -164,7 +165,6 @@ r.post("/", async (req: Request, res: Response) => {
     // -----------------------------
     // Validate: Photos
     // -----------------------------
-    // Solo validamos estructura básica si vienen
     photos.forEach((p: any, idx: number) => {
         if (!isNonEmptyString(p.url) || !p.url.startsWith("https://")) {
             fields.push({ path: `photos[${idx}].url`, issue: "invalid_url" });
@@ -186,7 +186,6 @@ r.post("/", async (req: Request, res: Response) => {
     // -----------------------------
     // Anti-duplicados (Por Placa)
     // -----------------------------
-    // Un vehículo solo puede estar postulado una vez en estado pendiente.
     const existing = await supabase
       .from("vehicle_applications")
       .select("id")
@@ -198,8 +197,6 @@ r.post("/", async (req: Request, res: Response) => {
     }
     
     if (existing.data && existing.data.length > 0) {
-        // Opcional: Podríamos permitir re-postular si fue rechazado antes, 
-        // pero por ahora bloqueamos duplicados exactos de placa.
         return res.status(409).json({
             error: "vehicle_already_exists",
             message: "This vehicle plate is already registered in our system."
@@ -209,15 +206,12 @@ r.post("/", async (req: Request, res: Response) => {
     // -----------------------------
     // Insert: vehicle_applications
     // -----------------------------
-    // Mapeamos el payload del frontend a las columnas SQL snake_case
     const insertData = {
-        // Propietario
         owner_name: String(ownerName).trim(),
         owner_phone: ownerPhone,
         owner_email: ownerEmail,
         owner_city: String(ownerCity).trim(),
 
-        // Vehículo
         plate: plateNormalized,
         brand: String(brand).trim(),
         line: String(line).trim(),
@@ -225,22 +219,18 @@ r.post("/", async (req: Request, res: Response) => {
         color: String(color).trim(),
         fuel_type: String(fuel).trim(),
         
-        // Sugerencias (Flags para auditoría)
         is_brand_suggestion: !!vehicle.isBrandNewSuggestion,
         is_line_suggestion: !!vehicle.isLineNewSuggestion,
 
-        // Negocio
         appointment_date: String(appointmentDate).trim(),
         availability_type: String(availability).trim(),
         expected_daily_rent: expectedPrice,
 
-        // Estado
         mileage: mileage || null,
         soat_expires_at: soatDate || null,
         techno_expires_at: technoDate || null,
         has_all_risk_insurance: hasInsurance,
 
-        // Fotos (JSONB)
         photos: photos, 
 
         status: 'pending',
@@ -254,13 +244,9 @@ r.post("/", async (req: Request, res: Response) => {
       .single();
 
     if (error) {
-        // Manejo de errores de base de datos
         return res.status(500).json({ error: error.message });
     }
 
-    // -----------------------------
-    // Response
-    // -----------------------------
     return res.status(201).json({
       id: data.id,
       createdAt: data.created_at,
@@ -273,6 +259,74 @@ r.post("/", async (req: Request, res: Response) => {
       message: e?.message ?? "Unexpected error",
     });
   }
+});
+
+// ============================================
+// ADMIN ROUTES (Protected via Basic Auth)
+// ============================================
+
+// GET /vehicle-applications (Admin List)
+r.get("/", async (req: Request, res: Response) => {
+  // 1. Basic Auth Check
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  // 2. Query Params
+  const { status, limit = "50" } = req.query;
+
+  // 3. Build Query
+  let q = supabase
+    .from("vehicle_applications")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(Number(limit));
+
+  if (status) {
+    q = q.eq("status", status);
+  }
+
+  // 4. Execute
+  const { data, error } = await q;
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  return res.json(data);
+});
+
+// PATCH /vehicle-applications/:id (Admin Update Status)
+r.patch("/:id", async (req: Request, res: Response) => {
+  // 1. Basic Auth Check
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { id } = req.params;
+  const { status, status_reason } = req.body;
+
+  if (!status) {
+    return res.status(400).json({ error: "status is required" });
+  }
+
+  // 2. Update
+  const { error } = await supabase
+    .from("vehicle_applications")
+    .update({ 
+      status, 
+      status_reason,
+      // updated_at: new Date().toISOString() // Si tu tabla no tiene updated_at, comenta esto
+    })
+    .eq("id", id);
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  return res.json({ ok: true });
 });
 
 export default r;
