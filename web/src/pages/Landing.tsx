@@ -30,20 +30,32 @@ export default function Landing() {
   const [referralCode, setReferralCode] = useState<string | null>(null);
 
   const [landingViews, setLandingViews] = useState<number | null>(null);
-  // Eliminado picoPlacaUses para evitar errores de variables no usadas
 
   const [initialReminderPlate, setInitialReminderPlate] = useState<string | undefined>(undefined);
   const [autoLoadReminders, setAutoLoadReminders] = useState(false);
   const remindersRef = useRef<HTMLDivElement | null>(null);
 
+  // NUEVO: Efecto para forzar el scroll si la URL tiene un hash (ej: #conductores)
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash) {
+      // Damos un pequeño respiro (delay) para asegurar que el DOM esté pintado
+      setTimeout(() => {
+        const id = hash.replace("#", "");
+        const element = document.getElementById(id);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 600); // 600ms es suficiente para que React termine de renderizar
+    }
+  }, []);
+
   useEffect(() => {
     async function trackAndLoadMetrics() {
-      // 1. Registrar visita (Métrica backend)
       try {
         await fetch(`${API}/metrics/landing-view`, { method: "POST" });
       } catch {}
 
-      // 2. Traer resumen (Solo necesitamos landing_views para mostrar)
       try {
         const rs = await fetch(`${API}/metrics/summary`);
         if (!rs.ok) return;
@@ -115,7 +127,6 @@ export default function Landing() {
       setPicoPlacaResult(`Para placas terminadas en ${lastDigit}: ${rule}`);
     }
 
-    // Registrar métrica en backend (sin actualizar estado local)
     try {
       fetch(`${API}/metrics/pico-placa-use`, { method: "POST" });
     } catch {}
