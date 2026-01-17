@@ -666,7 +666,6 @@ function AdvancesList() {
                   <td className="px-4 py-3">{a.plate || "—"}</td>
                   <td className="px-4 py-3">${fmtCOP.format(a.amount)}</td>
                   <td className="px-4 py-3">{a.rate_percent}%</td>
-                  <td className="px-4 py-3">{a.installments}</td>
                   <td className="px-4 py-3 font-mono">{a.current_installment} / {a.installments}</td>
                   <td className="px-4 py-3">{a.start_date}</td>
                   <td className="px-4 py-3">
