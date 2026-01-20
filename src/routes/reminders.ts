@@ -1,3 +1,4 @@
+// src/routes/reminders.ts
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { sendEmail } from "../lib/email";
@@ -6,18 +7,17 @@ import { sendWhatsApp } from "../lib/whatsapp";
 const r = Router();
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
 
-// Mapa simple de pico y placa (Cali)
+// =====================================================================
+// 1. CONFIGURACIÓN DE PICO Y PLACA (CALI - ROTACIÓN ACTUALIZADA)
+// =====================================================================
+// Mapeo: Dígito final -> Día de la semana (1=Lun, 2=Mar, 3=Mié, 4=Jue, 5=Vie)
+// Lógica aplicada: Rotación movida un día adelante respecto al ciclo anterior.
 const PICO_PDAY: Record<number, number> = {
-  0: 4, // jueves
-  1: 5, // viernes
-  2: 5, // viernes
-  3: 1, // lunes
-  4: 1, // lunes
-  5: 2, // martes
-  6: 2, // martes
-  7: 3, // miércoles
-  8: 3, // miércoles
-  9: 4, // jueves
+  1: 1, 2: 1, // Lunes
+  3: 2, 4: 2, // Martes
+  5: 3, 6: 3, // Miércoles
+  7: 4, 8: 4, // Jueves
+  9: 5, 0: 5, // Viernes
 };
 
 type ReminderRow = {
@@ -39,9 +39,10 @@ type ReminderRow = {
   active: boolean;
 };
 
-/**
- * Normaliza placa a ABC123 (mayúsculas y solo A-Z0-9)
- */
+// =====================================================================
+// 2. HELPERS
+// =====================================================================
+
 function normalizePlate(raw: unknown): string {
   return String(raw || "")
     .toUpperCase()
@@ -53,7 +54,6 @@ function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-// ... (helpers de fecha normalizeDateOrNull, parseYmdLocalDate, etc. se mantienen igual)
 function normalizeDateOrNull(value: unknown, fieldName: string): string | null {
   if (value == null) return null;
   const s = String(value).trim();
@@ -92,18 +92,19 @@ function truncate(s: string, max = 300): string {
 }
 
 // =====================================================================
-// RUTAS - ORDEN CORREGIDO (Específicas primero, Dinámicas después)
+// 3. RUTAS ESTÁTICAS Y DE GESTIÓN (Deben ir PRIMERO)
 // =====================================================================
 
 /**
- * GET /reminders/log?plate=ABC123&limit=100
- * MOVIDO ARRIBA: Para evitar que /:plate capture la palabra "log"
+ * GET /reminders/log
+ * Devuelve el historial de envíos.
+ * IMPORTANTE: Está antes de /:plate para evitar que "log" se interprete como placa.
  */
 r.get("/log", async (req: Request, res: Response) => {
   try {
     const plateRaw = String(req.query.plate || "").trim();
     const plate = plateRaw ? normalizePlate(plateRaw) : "";
-    const limit = Math.min(500, Math.max(1, Number(req.query.limit || 1000)));
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
 
     let q = supabase
       .from("reminder_delivery_log")
@@ -111,14 +112,9 @@ r.get("/log", async (req: Request, res: Response) => {
       .order("created_at", { ascending: false })
       .limit(limit);
 
-    // Si viene placa, filtramos. Si no viene, trae todo.
     if (plate) q = q.eq("plate", plate);
-
-    // Filtros adicionales si los mandas desde el front
     if (req.query.channel) q = q.eq("channel", req.query.channel);
     if (req.query.status) q = q.eq("status", req.query.status);
-    // Para reasons es más complejo porque es array, por ahora lo dejamos simple o usamos .cs (contains)
-    // if (req.query.reason) q = q.contains("reason_types", [req.query.reason]);
 
     const { data, error } = await q;
 
@@ -131,7 +127,8 @@ r.get("/log", async (req: Request, res: Response) => {
 
 /**
  * POST /reminders/run
- * MOVIDO ARRIBA TAMBIÉN (Buena práctica)
+ * Ejecuta el envío masivo (Cron Job).
+ * Verifica hora Y día de la semana para Pico y Placa.
  */
 r.post("/run", async (req: Request, res: Response) => {
   const secretHeader = (req.headers["x-internal-secret"] || "") as string;
@@ -142,24 +139,196 @@ r.post("/run", async (req: Request, res: Response) => {
   }
 
   try {
-    // ... (Lógica del Cron Run se mantiene idéntica) ...
-    // Para ahorrar espacio en la respuesta, asumo que mantienes el código
-    // de envío de emails/whatsapp que ya tenías aquí.
-    // Solo asegúrate de que esté ANTES de /:plate
+    // Calcular hora local Colombia (UTC-5)
+    const nowUtc = new Date();
+    const nowLocal = new Date(nowUtc.getTime() - 5 * 60 * 60 * 1000); 
     
-    // ... [CÓDIGO DE TU RUN ACTUAL] ...
-    
-    // Placeholder para no borrar tu lógica:
-    return res.json({ message: "Run executed (placeholder logic preserved)" }); 
+    const currentHour = nowLocal.getHours();
+    const currentDayOfWeek = nowLocal.getDay(); // 0=Dom, 1=Lun ... 5=Vie
+    const todayStr = nowLocal.toISOString().slice(0, 10);
+
+    // Buscar suscripciones activas que tengan algo configurado para ESTA hora
+    const orParts = [
+      `and(notify_soat.eq.true,soat_notify_hour.eq.${currentHour})`,
+      `and(notify_tecno.eq.true,tecno_notify_hour.eq.${currentHour})`,
+      `and(notify_pico.eq.true,pico_notify_hour.eq.${currentHour})`,
+    ];
+
+    const { data, error } = await supabase
+      .from("reminder_subscriptions")
+      .select("*")
+      .eq("active", true)
+      .or(orParts.join(","));
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const rows = (data || []) as ReminderRow[];
+    let sentCount = 0;
+    const errorsOut: any[] = [];
+
+    for (const sub of rows) {
+      const emailTo = (sub.notification_email || "").trim();
+      const waTo = (sub.notification_whatsapp || "").trim();
+
+      if (!emailTo && !waTo) continue;
+
+      const reasons: string[] = [];
+
+      // 1. Revisar SOAT
+      if (sub.notify_soat && sub.soat_notify_hour === currentHour && sub.soat_expires_at) {
+        if (isWithinReminderWindow(nowLocal, sub.soat_expires_at, sub.days_before_soat)) {
+            const d = parseYmdLocalDate(sub.soat_expires_at);
+            reasons.push(`SOAT (vence el ${d.toLocaleDateString("es-CO")})`);
+        }
+      }
+
+      // 2. Revisar Tecnomecánica
+      if (sub.notify_tecno && sub.tecno_notify_hour === currentHour && sub.tecno_expires_at) {
+        if (isWithinReminderWindow(nowLocal, sub.tecno_expires_at, sub.days_before_tecno)) {
+            const d = parseYmdLocalDate(sub.tecno_expires_at);
+            reasons.push(`Tecnomecánica (vence el ${d.toLocaleDateString("es-CO")})`);
+        }
+      }
+
+      // 3. Revisar Pico y Placa (LÓGICA CORREGIDA)
+      // Solo alerta si es el día correcto de la semana
+      if (sub.notify_pico && sub.pico_notify_hour === currentHour) {
+        const lastChar = sub.plate.slice(-1);
+        const lastDigit = parseInt(lastChar, 10);
+        
+        if (!isNaN(lastDigit)) {
+            const expectedDay = PICO_PDAY[lastDigit];
+            // Comparación estricta: Hoy vs Día asignado
+            if (currentDayOfWeek === expectedDay) {
+                reasons.push("Hoy tienes Pico y Placa en Cali.");
+            }
+        }
+      }
+
+      // Si no hay razones para notificar hoy, saltamos a la siguiente placa
+      if (reasons.length === 0) continue;
+
+      // Construir mensaje
+      const manageUrl = `https://www.allatyou.com/?plate=${sub.plate}&focus=reminders#pico-placa`;
+      const subject = `Recordatorio AllAtYou – ${sub.plate}`;
+      const bodyText = 
+        `Hola, recordatorio para la placa ${sub.plate}:\n\n` +
+        reasons.map(r => `• ${r}`).join("\n") + 
+        `\n\nGestionar alertas: ${manageUrl}`;
+
+      // Enviar Email
+      if (emailTo) {
+        try {
+            await sendEmail({ to: emailTo, subject, text: bodyText });
+            await logDelivery(sub, "email", emailTo, reasons, "sent", todayStr, currentHour);
+            sentCount++;
+        } catch (e: any) {
+            await logDelivery(sub, "email", emailTo, reasons, "error", todayStr, currentHour, e.message);
+            errorsOut.push({ plate: sub.plate, channel: "email", error: e.message });
+        }
+      }
+
+      // Enviar WhatsApp
+      if (waTo) {
+        try {
+            await sendWhatsApp({ to: waTo, body: bodyText });
+            sentCount++; // (Opcional: descomentar logDelivery si quieres guardar log de WA también)
+        } catch (e: any) {
+            errorsOut.push({ plate: sub.plate, channel: "whatsapp", error: e.message });
+        }
+      }
+    }
+
+    return res.json({ 
+        date: todayStr, 
+        hour: currentHour, 
+        checked: rows.length, 
+        sent: sentCount,
+        errors: errorsOut 
+    });
+
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || "internal error" });
   }
 });
 
+// Helper interno para loguear en base de datos
+async function logDelivery(sub: ReminderRow, channel: string, to: string, reasons: string[], status: string, date: string, hour: number, errorMsg?: string) {
+    const rTypes = [];
+    if (reasons.some(r => r.includes("SOAT"))) rTypes.push("soat");
+    if (reasons.some(r => r.includes("Tecno"))) rTypes.push("tecno");
+    if (reasons.some(r => r.includes("Pico"))) rTypes.push("pico");
+
+    await supabase.from("reminder_delivery_log").insert({
+        plate: sub.plate,
+        subscription_id: sub.id,
+        channel,
+        to_value: to,
+        reason_types: rTypes,
+        subject: "Recordatorio Automático",
+        body_preview: truncate(reasons.join(", ")),
+        status,
+        error_message: errorMsg ? truncate(errorMsg) : null,
+        run_id: `${date}-${hour}`,
+        run_hour: hour,
+        run_date: date
+    });
+}
+
+/**
+ * POST /reminders
+ * Crear o Actualizar suscripción
+ */
+r.post("/", async (req: Request, res: Response) => {
+  try {
+    const { plate: rawPlate, ...rest } = req.body || {};
+    const plate = normalizePlate(rawPlate);
+
+    if (!PLATE_RE.test(plate)) {
+      return res.status(400).json({ error: "invalid plate format (expected ABC123)" });
+    }
+
+    const checkHour = (h: any) => (typeof h === 'number' && h >= 0 && h <= 23) ? h : 18;
+
+    const row = {
+      plate,
+      notify_soat: rest.notify_soat ?? true,
+      notify_tecno: rest.notify_tecno ?? true,
+      notify_pico: rest.notify_pico ?? false,
+      days_before_soat: rest.days_before_soat || 15,
+      days_before_tecno: rest.days_before_tecno || 10,
+      soat_notify_hour: checkHour(rest.soat_notify_hour),
+      tecno_notify_hour: checkHour(rest.tecno_notify_hour),
+      pico_notify_hour: checkHour(rest.pico_notify_hour || 5), // 5am default pico y placa
+      notification_email: rest.notification_email || null,
+      notification_whatsapp: rest.notification_whatsapp || null,
+      soat_expires_at: normalizeDateOrNull(rest.soat_expires_at, "soat"),
+      tecno_expires_at: normalizeDateOrNull(rest.tecno_expires_at, "tecno"),
+      city: rest.city || null,
+      active: true,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("reminder_subscriptions")
+      .upsert(row, { onConflict: "plate" })
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.status(200).json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// =====================================================================
+// 4. RUTAS DINÁMICAS (Deben ir AL FINAL)
+// =====================================================================
 
 /**
  * GET /reminders/:plate
- * AHORA ESTÁ AL FINAL: Solo captura si no coincidió con /log o /run
+ * Consulta suscripción individual.
  */
 r.get("/:plate", async (req: Request, res: Response) => {
   try {
@@ -167,9 +336,7 @@ r.get("/:plate", async (req: Request, res: Response) => {
     const plate = normalizePlate(plateRaw);
 
     if (!PLATE_RE.test(plate)) {
-      return res
-        .status(400)
-        .json({ error: "invalid plate format (expected ABC123)" });
+      return res.status(400).json({ error: "invalid plate format" });
     }
 
     const { data, error } = await supabase
@@ -178,33 +345,15 @@ r.get("/:plate", async (req: Request, res: Response) => {
       .eq("plate", plate)
       .limit(1);
 
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
+    if (error) return res.status(500).json({ error: error.message });
 
     const row = data && data[0];
-    if (!row) {
-      return res.status(404).json({ error: "subscription not found" });
-    }
+    if (!row) return res.status(404).json({ error: "subscription not found" });
 
     return res.json(row);
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || "internal error" });
   }
-});
-
-/**
- * POST /reminders (Upsert suscripción)
- */
-r.post("/", async (req: Request, res: Response) => {
-    // ... (Tu código existente de POST / se mantiene igual)
-    // Este no tiene conflicto de ruta, puede ir donde sea, pero mejor abajo.
-    try {
-        // ... lógica de upsert ...
-        return res.status(200).json({ message: "Subscription updated (placeholder)" });
-    } catch (e: any) {
-        return res.status(500).json({ error: e.message });
-    }
 });
 
 export default r;
