@@ -15,6 +15,7 @@ import AdminAdvances from "./pages/AdminAdvances";
 import AdminProfit from "./pages/AdminProfit";
 import RemindersLog from "./pages/RemindersLog";
 import AdminRecruitment from "./pages/AdminRecruitment";
+import AdminVehicles from "./pages/AdminVehicles"; // <--- 1. IMPORTAR
 
 export default function App() {
   const hostname = window.location.hostname;
@@ -58,6 +59,7 @@ export default function App() {
           <Route path="profit" element={<AdminProfit />} />
           <Route path="reminders-log" element={<RemindersLog />} />
           <Route path="recruitment" element={<AdminRecruitment />} />
+          <Route path="vehicles" element={<AdminVehicles />} /> {/* <--- 2. AGREGAR RUTA */}
 
           {/* Redirección por defecto: /admin -> /admin/recruitment */}
           <Route index element={<Navigate to="recruitment" replace />} />

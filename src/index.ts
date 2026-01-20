@@ -18,6 +18,7 @@ import uploads from "./routes/uploads";
 import reports from "./routes/reports";
 import profitRoutes from "./routes/profit";
 import remindersRoutes from "./routes/reminders";
+import vehiclesRoutes from "./routes/vehicles";
 
 const app = express();
 
@@ -83,6 +84,7 @@ app.use("/reports", basicAuth, profitRoutes);
 app.use("/reports", basicAuth, reports);
 app.use("/ledger",  basicAuth, ledgerRoutes);
 app.use("/advances", basicAuth, advancesRoutes);
+app.use("/vehicles", basicAuth, vehiclesRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

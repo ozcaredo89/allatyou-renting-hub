@@ -38,6 +38,10 @@ export default function AdminLayout() {
             <NavLink to="/admin/recruitment" className={navItemClass}>
               <span>👥</span> Reclutamiento
             </NavLink>
+            {/* --- AQUÍ AGREGAMOS EL BOTÓN DE FLOTA --- */}
+            <NavLink to="/admin/vehicles" className={navItemClass}>
+              <span>🚗</span> Flota
+            </NavLink>
           </div>
 
           {/* GRUPO: FINANCIERO */}
