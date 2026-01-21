@@ -1,445 +1,271 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import picoPlacaImg from "../assets/pico-placa.png";
 import { DriverApplicationForm } from "../components/DriverApplicationForm";
 import { VehicleApplicationForm } from "../components/VehicleApplicationForm";
 import { ReminderSubscriptionCard } from "../components/ReminderSubscriptionCard";
 import { ShareButton } from "../components/ShareButton";
+import { IncomeSimulator } from "../components/IncomeSimulator";
+import { ProcessSteps, MoneyFlow, FaqSection } from "../components/MarketingSections";
+import { ModelOverview } from "../components/ModelOverview"; 
+import picoPlacaImg from "../assets/pico-placa.png";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
-
-const WHATSAPP_URL =
-  "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20quiero%20informaci%C3%B3n%20sobre%20el%20renting%20de%20veh%C3%ADculos.";
+const WHATSAPP_URL = "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20vengo%20de%20la%20web%20y%20quiero%20m%C3%A1s%20info.";
 
 const PICO_PLACA_RULES: Record<number, string> = {
-  0: "El pico y placa es el día Viernes (mañana y tarde) para placas terminadas en 0.",
-  1: "El pico y placa es el día Lunes (mañana y tarde) para placas terminadas en 1.",
-  2: "El pico y placa es el día Lunes (mañana y tarde) para placas terminadas en 2.",
-  3: "El pico y placa es el día Martes (mañana y tarde) para placas terminadas en 3.",
-  4: "El pico y placa es el día Martes (mañana y tarde) para placas terminadas en 4.",
-  5: "El pico y placa es el día Miercoles (mañana y tarde) para placas terminadas en 5.",
-  6: "El pico y placa es el día Miercoles (mañana y tarde) para placas terminadas en 6.",
-  7: "El pico y placa es el día Jueves (mañana y tarde) para placas terminadas en 7.",
-  8: "El pico y placa es el día Jueves (mañana y tarde) para placas terminadas en 8.",
-  9: "El pico y placa es el día Viernes (mañana y tarde) para placas terminadas en 9.",
+  0: "Viernes (0) - Mañana y Tarde", 1: "Lunes (1) - Mañana y Tarde", 2: "Lunes (2) - Mañana y Tarde",
+  3: "Martes (3) - Mañana y Tarde", 4: "Martes (4) - Mañana y Tarde", 5: "Miércoles (5) - Mañana y Tarde",
+  6: "Miércoles (6) - Mañana y Tarde", 7: "Jueves (7) - Mañana y Tarde", 8: "Jueves (8) - Mañana y Tarde",
+  9: "Viernes (9) - Mañana y Tarde",
 };
 
 export default function Landing() {
   const [plateQuery, setPlateQuery] = useState("");
   const [picoPlacaResult, setPicoPlacaResult] = useState<string | null>(null);
   const [referralCode, setReferralCode] = useState<string | null>(null);
-
   const [landingViews, setLandingViews] = useState<number | null>(null);
-
   const [initialReminderPlate, setInitialReminderPlate] = useState<string | undefined>(undefined);
   const [autoLoadReminders, setAutoLoadReminders] = useState(false);
   const remindersRef = useRef<HTMLDivElement | null>(null);
 
-  // NUEVO: Efecto para forzar el scroll si la URL tiene un hash (ej: #conductores)
   useEffect(() => {
     const hash = window.location.hash;
     if (hash) {
-      // Damos un pequeño respiro (delay) para asegurar que el DOM esté pintado
       setTimeout(() => {
-        const id = hash.replace("#", "");
-        const element = document.getElementById(id);
-        if (element) {
-          element.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      }, 600); // 600ms es suficiente para que React termine de renderizar
+        const element = document.getElementById(hash.replace("#", ""));
+        if (element) element.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 600);
     }
-  }, []);
+    
+    fetch(`${API}/metrics/landing-view`, { method: "POST" }).catch(() => {});
+    fetch(`${API}/metrics/summary`)
+      .then(r => r.json())
+      .then(d => setLandingViews(d.landing_views ?? null))
+      .catch(() => {});
 
-  useEffect(() => {
-    async function trackAndLoadMetrics() {
-      try {
-        await fetch(`${API}/metrics/landing-view`, { method: "POST" });
-      } catch {}
-
-      try {
-        const rs = await fetch(`${API}/metrics/summary`);
-        if (!rs.ok) return;
-        const json = await rs.json();
-        setLandingViews(json.landing_views ?? null);
-      } catch {}
+    const params = new URLSearchParams(window.location.search);
+    const rawPlate = params.get("plate");
+    if (params.get("ref")) setReferralCode(params.get("ref"));
+    if (rawPlate) {
+      const norm = rawPlate.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+      if (norm) { setInitialReminderPlate(norm); setAutoLoadReminders(true); }
     }
-
-    trackAndLoadMetrics();
-
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const rawPlate = params.get("plate");
-      const focus = params.get("focus");
-      const ref = params.get("ref");
-
-      if (ref) setReferralCode(ref);
-
-      if (rawPlate) {
-        const normalized = rawPlate
-          .toUpperCase()
-          .replace(/[^A-Z0-9]/g, "")
-          .slice(0, 6);
-
-        if (normalized) {
-          setInitialReminderPlate(normalized);
-          setAutoLoadReminders(true);
-        }
-      }
-
-      if (focus === "reminders") {
-        setTimeout(() => {
-          if (remindersRef.current) {
-            remindersRef.current.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }
-        }, 300);
-      }
-    } catch {}
+    if (params.get("focus") === "reminders") {
+      setTimeout(() => remindersRef.current?.scrollIntoView({ behavior: "smooth" }), 300);
+    }
   }, []);
 
   function handleCheckPicoPlaca(e: FormEvent) {
     e.preventDefault();
     const clean = plateQuery.replace(/\s+/g, "").toUpperCase();
-
-    if (!clean) {
-      setPicoPlacaResult("Ingresa una placa válida (ej: ABC123).");
-      return;
+    if (!clean || !clean.match(/(\d)$/)) {
+      setPicoPlacaResult("Ingresa una placa válida (Ej: ABC123)"); return;
     }
-
-    const match = clean.match(/(\d)$/);
-    if (!match) {
-      setPicoPlacaResult(
-        "No encontramos un número al final de la placa. Verifica el formato (ej: ABC123)."
-      );
-      return;
-    }
-
-    const lastDigit = Number(match[1]);
-    const rule = PICO_PLACA_RULES[lastDigit];
-
-    if (!rule) {
-      setPicoPlacaResult(
-        `Para placas terminadas en ${lastDigit}, revisa el cuadro de pico y placa.`
-      );
-    } else {
-      setPicoPlacaResult(`Para placas terminadas en ${lastDigit}: ${rule}`);
-    }
-
-    try {
-      fetch(`${API}/metrics/pico-placa-use`, { method: "POST" });
-    } catch {}
+    const last = Number(clean.match(/(\d)$/)![1]);
+    setPicoPlacaResult(PICO_PLACA_RULES[last] || "Revisa el calendario oficial.");
+    fetch(`${API}/metrics/pico-placa-use`, { method: "POST" }).catch(() => {});
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 scroll-smooth">
-      <div className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500 text-sm font-bold text-slate-950">
-              AY
-            </div>
-            <div className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold tracking-tight">
-                AllAtYou Renting
-              </span>
-              <span className="text-xs text-slate-400">
-                Tu carro, sin complicarte la vida
-              </span>
+    <div className="min-h-screen font-sans text-[#eaf0ff] selection:bg-emerald-500/30 selection:text-emerald-200"
+         style={{
+           backgroundColor: "#0b1220",
+           backgroundImage: `
+             radial-gradient(900px 500px at 20% 10%, rgba(16, 185, 129, 0.15), transparent 65%),
+             radial-gradient(700px 450px at 85% 35%, rgba(124, 92, 255, 0.10), transparent 60%),
+             radial-gradient(900px 600px at 50% 120%, rgba(251, 191, 36, 0.05), transparent 60%)
+           `
+         }}>
+
+      <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0b1220]/80 backdrop-blur-md">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 shadow-lg shadow-emerald-500/20 text-sm font-bold text-white">AY</div>
+            <div className="leading-tight">
+              <div className="font-bold text-white tracking-wide">AllAtYou</div>
+              <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Renting Hub</div>
             </div>
           </div>
-
-          <div className="hidden gap-6 text-xs font-medium md:flex">
-            <a href="#pico-placa" className="text-slate-300 hover:text-emerald-400 transition-colors">
-              Pico y placa
-            </a>
-            <a href="#conductores" className="text-slate-300 hover:text-emerald-400 transition-colors">
-              Soy Conductor
-            </a>
-            <a href="#propietarios" className="text-slate-300 hover:text-emerald-400 transition-colors">
-              Soy Propietario
-            </a>
-            <a href="#contacto" className="text-slate-300 hover:text-emerald-400 transition-colors">
-              Contacto
-            </a>
-          </div>
-        </div>
-      </div>
-
-      {/* Hero */}
-      <section className="mx-auto flex max-w-5xl flex-col gap-10 px-4 pb-12 pt-10 md:flex-row md:items-center">
-        <div className="flex-1">
-          <p className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-300">
-            <span className="h-2 w-2 rounded-full bg-emerald-400" />
-            Renting y administración de vehículos
-          </p>
-          <h1 className="mt-4 text-balance text-3xl font-semibold tracking-tight text-white sm:text-5xl">
-            Tu carro trabajando por ti,
-            <span className="block text-emerald-400">
-              con números claros.
-            </span>
-          </h1>
-          <p className="mt-4 max-w-xl text-sm leading-relaxed text-slate-300">
-            AllAtYou Renting S.A.S se encarga de la operación diaria: pagos,
-            conductores y mantenimiento. Tú ves todo en limpio y decides con tranquilidad.
-          </p>
-
-          <div className="mt-6 flex flex-wrap gap-3">
-            <a
-              href="#propietarios"
-              className="inline-flex items-center justify-center rounded-full bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/30 hover:bg-emerald-400 transition-all"
-            >
-              Registrar mi vehículo
-            </a>
-            <a
-              href="#conductores"
-              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-6 py-2.5 text-sm font-semibold text-white hover:bg-white/10 transition-all"
-            >
-              Quiero conducir
-            </a>
+          <nav className="hidden md:flex gap-6 text-sm font-medium text-slate-400">
+            <a href="#como" className="hover:text-white transition-colors">Cómo funciona</a>
+            <a href="#flujo" className="hover:text-white transition-colors">Dinero</a>
+            <a href="#pico-placa" className="hover:text-white transition-colors">Utilidades</a>
+            <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
+          </nav>
+          <div className="flex gap-3">
+             <a href="#simulador" className="hidden sm:inline-flex items-center rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-bold hover:bg-white/10 transition-all">
+               Simular
+             </a>
+             <a href={WHATSAPP_URL} target="_blank" className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 transition-all">
+               WhatsApp
+             </a>
           </div>
         </div>
+      </header>
 
-        <div className="flex-1">
-          <div className="mx-auto max-w-sm rounded-3xl border border-white/10 bg-slate-900/70 p-4 shadow-2xl shadow-emerald-500/10">
-            <div className="mb-3 flex items-center justify-between text-[11px] text-slate-400">
-              <span>Resumen ejemplo</span>
-              <span>AllAtYou Hub</span>
-            </div>
-            <div className="space-y-3 text-sm">
-              <div className="flex items-center justify-between rounded-2xl bg-slate-950 px-3 py-2">
-                <span className="text-slate-300">Vehículos activos</span>
-                <span className="font-semibold text-emerald-400">13</span>
-              </div>
-              <div className="flex items-center justify-between rounded-2xl bg-slate-950 px-3 py-2">
-                <span className="text-slate-300">Pagos recibidos hoy</span>
-                <span className="font-semibold text-emerald-400">$XXX.XXX</span>
-              </div>
-              <div className="flex items-center justify-between rounded-2xl bg-slate-950 px-3 py-2">
-                <span className="text-slate-300">Vehículos en mora</span>
-                <span className="font-semibold text-amber-300">0</span>
-              </div>
-            </div>
-            <p className="mt-3 text-[11px] text-slate-400">
-              Gestión en tiempo real para tu tranquilidad financiera.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* Servicios */}
-      <section id="servicios" className="border-t border-white/5 bg-slate-950 py-16">
-        <div className="mx-auto max-w-5xl px-4">
-          <h2 className="text-center text-xl font-semibold text-white sm:text-2xl">
-            ¿Qué hacemos en AllAtYou?
-          </h2>
-          <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-slate-300">
-            Conectamos dueños de vehículos con conductores responsables bajo un modelo de renting justo.
-          </p>
-          <div className="mt-10 grid gap-6 md:grid-cols-3">
-            <div className="rounded-3xl border border-white/5 bg-slate-900/50 p-6 hover:bg-slate-900 transition-colors">
-              <div className="mb-4 text-3xl">🚗</div>
-              <p className="text-sm font-semibold text-white">Renting para conductores</p>
-              <p className="mt-2 text-xs text-slate-400 leading-relaxed">
-                Sin cuota inicial astronómica. Paga una renta diaria justa y trabaja con libertad.
-              </p>
-            </div>
-            <div className="rounded-3xl border border-white/5 bg-slate-900/50 p-6 hover:bg-slate-900 transition-colors">
-              <div className="mb-4 text-3xl">📈</div>
-              <p className="text-sm font-semibold text-white">Gestión para propietarios</p>
-              <p className="mt-2 text-xs text-slate-400 leading-relaxed">
-                Olvídate de cobrar, de los talleres y de los dolores de cabeza. Nosotros administramos tu activo.
-              </p>
-            </div>
-            <div className="rounded-3xl border border-white/5 bg-slate-900/50 p-6 hover:bg-slate-900 transition-colors">
-              <div className="mb-4 text-3xl">🛡️</div>
-              <p className="text-sm font-semibold text-white">Seguridad y Control</p>
-              <p className="mt-2 text-xs text-slate-400 leading-relaxed">
-                Monitoreo satelital, seguros y una plataforma tecnológica para que sepas dónde está tu dinero.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Pico y Placa (Layout 50/50 Optimizado) */}
-      <section id="pico-placa" className="border-t border-white/5 bg-slate-900/20 py-16">
-        <div className="mx-auto max-w-5xl px-4">
-          <div className="mb-10 text-center">
-            <h2 className="text-2xl font-bold text-white">Herramientas para tu día a día</h2>
-            <p className="text-sm text-slate-400">Consulta Pico y Placa y configura recordatorios automáticos.</p>
-          </div>
+      <main className="px-4 pb-20 pt-10">
+        <div className="mx-auto max-w-6xl">
           
-          <div className="grid md:grid-cols-2 gap-8 items-start">
-            {/* Columna Izquierda: Consulta y Calendario */}
-            <div>
-              <div className="rounded-2xl border border-emerald-500/20 bg-slate-950 p-6 mb-6">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-500 mb-3">Consulta Rápida</h3>
-                <form onSubmit={handleCheckPicoPlaca} className="flex gap-2">
-                  <input 
-                    value={plateQuery}
-                    onChange={(e) => setPlateQuery(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
-                    placeholder="Placa (Ej: ABC123)" 
-                    maxLength={6}
-                    className="flex-1 rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                  <button type="submit" className="rounded-xl bg-emerald-500 px-6 font-bold text-slate-950 hover:bg-emerald-400 transition-colors">
-                    Ir
-                  </button>
-                </form>
-                
-                {picoPlacaResult && (
-                  <div className="mt-4 rounded-xl bg-emerald-500/10 p-3 text-xs text-emerald-400 border border-emerald-500/20">
-                    {picoPlacaResult}
-                  </div>
-                )}
-                
-                {landingViews && (
-                  <p className="mt-3 text-[10px] text-slate-600">
-                    Esta herramienta ha sido utilizada hoy.
-                  </p>
-                )}
+          <section className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-12 items-center mb-20">
+            {/* Left: Copy de Venta */}
+            <div className="rounded-3xl border border-white/10 bg-white/[0.02] p-8 shadow-2xl backdrop-blur-sm">
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-bold text-emerald-400 mb-6">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"/>
+                Marketplace: Propietarios ↔ Conductores
               </div>
               
-              <div className="rounded-2xl overflow-hidden border border-white/10 bg-slate-950">
-                <img 
-                  src={picoPlacaImg} 
-                  alt="Calendario Oficial Pico y Placa" 
-                  className="w-full h-auto object-contain opacity-90 hover:opacity-100 transition-opacity" 
+              <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-white mb-6 leading-[1.1]">
+                Pon tu carro a producir <span className="text-emerald-400">sin manejarlo.</span>
+              </h1>
+              
+              <p className="text-lg text-slate-400 mb-8 leading-relaxed max-w-xl">
+                Asignamos un <strong className="text-slate-200">conductor verificado</strong>, administramos la operación y te liquidamos con números claros.
+              </p>
+
+              <div className="flex flex-wrap gap-4 mb-8">
+                <a href="#simulador" className="rounded-xl bg-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-xl shadow-emerald-600/20 hover:bg-emerald-500 hover:-translate-y-0.5 transition-all">
+                  Simular Ganancias
+                </a>
+                <a href="#como" className="rounded-xl border border-white/10 bg-white/5 px-6 py-3 text-sm font-bold text-slate-200 hover:bg-white/10 transition-all">
+                  Cómo funciona
+                </a>
+              </div>
+
+              {/* CHECKS DE CONFIANZA */}
+              <div className="flex flex-wrap gap-3 mb-8">
+                {[
+                  "Conductores verificados",
+                  "Reportes + liquidación",
+                  "Soporte ante novedades"
+                ].map((text, i) => (
+                  <div key={i} className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-3 py-1.5 text-xs font-medium text-slate-300">
+                    <div className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[10px] text-slate-950 font-bold">✓</div>
+                    {text}
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-8 border-t border-white/5">
+                <a href="#propietarios" className="group block rounded-2xl border border-white/5 bg-white/[0.03] p-4 hover:bg-white/[0.06] transition-all">
+                  <h3 className="font-bold text-white mb-1 group-hover:text-emerald-400 transition-colors">Soy Propietario →</h3>
+                  <p className="text-xs text-slate-400">Quiero rentabilizar mi activo con control.</p>
+                </a>
+                <a href="#conductores" className="group block rounded-2xl border border-white/5 bg-white/[0.03] p-4 hover:bg-white/[0.06] transition-all">
+                  <h3 className="font-bold text-white mb-1 group-hover:text-emerald-400 transition-colors">Soy Conductor →</h3>
+                  <p className="text-xs text-slate-400">Busco vehículo para trabajar ya.</p>
+                </a>
+              </div>
+            </div>
+
+            {/* Right: Simulador + Modelo Visual */}
+            <div id="simulador" className="relative z-10">
+              {/* COMPONENTE NUEVO */}
+              <ModelOverview /> 
+              <IncomeSimulator />
+            </div>
+          </section>
+
+          {/* SECCIONES INFORMATIVAS */}
+          <div className="grid gap-6 mb-20">
+            <section id="como" className="rounded-3xl border border-white/10 bg-[#101a33]/50 p-8 backdrop-blur-sm">
+              <h2 className="text-2xl font-bold text-white mb-2">Cómo funciona (Propietarios)</h2>
+              <p className="text-slate-400 mb-8 max-w-2xl">Tu carro entra a una operación administrada profesionalmente. Nosotros nos encargamos del "trabajo sucio".</p>
+              <ProcessSteps />
+            </section>
+
+            <section id="flujo" className="rounded-3xl border border-white/10 bg-[#101a33]/50 p-8 backdrop-blur-sm">
+              <h2 className="text-2xl font-bold text-white mb-2">Flujo del dinero</h2>
+              <p className="text-slate-400 mb-8">La confianza se construye con cuentas claras. Así se distribuye el ingreso.</p>
+              <MoneyFlow />
+            </section>
+          </div>
+
+          {/* UTILIDADES */}
+          <section id="pico-placa" className="grid lg:grid-cols-2 gap-8 mb-20">
+            <div className="rounded-3xl border border-white/10 bg-[#0e1730] p-8">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold text-white">Pico y Placa Cali</h3>
+                {landingViews && <span className="text-[10px] bg-white/5 px-2 py-1 rounded text-slate-400">👁 {landingViews} visitas hoy</span>}
+              </div>
+              
+              <form onSubmit={handleCheckPicoPlaca} className="flex gap-2 mb-6">
+                <input 
+                  value={plateQuery}
+                  onChange={(e) => setPlateQuery(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                  placeholder="Placa (Ej: ABC123)" 
+                  maxLength={6}
+                  className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-emerald-500 focus:outline-none"
                 />
+                <button type="submit" className="rounded-xl bg-emerald-600 px-6 font-bold text-white hover:bg-emerald-500 transition-colors">
+                  Consultar
+                </button>
+              </form>
+
+              {picoPlacaResult && (
+                <div className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">
+                  {picoPlacaResult}
+                </div>
+              )}
+
+              <div className="rounded-xl overflow-hidden border border-white/10 opacity-80 hover:opacity-100 transition-opacity">
+                <img src={picoPlacaImg} alt="Calendario" className="w-full h-auto" />
               </div>
             </div>
 
-            {/* Columna Derecha: Tarjeta de Recordatorios */}
             <div ref={remindersRef}>
-              <ReminderSubscriptionCard 
-                initialPlate={initialReminderPlate} 
-                autoLoadOnMount={autoLoadReminders} 
-              />
+              <ReminderSubscriptionCard initialPlate={initialReminderPlate} autoLoadOnMount={autoLoadReminders} />
             </div>
-          </div>
-        </div>
-      </section>
+          </section>
 
-      {/* SECCIÓN CONDUCTORES */}
-      <section id="conductores" className="border-t border-white/5 bg-slate-950 py-20 relative overflow-hidden">
-        {/* Decoración de fondo */}
-        <div className="absolute top-0 right-0 -mr-20 -mt-20 h-[500px] w-[500px] rounded-full bg-emerald-500/5 blur-[100px]" />
-        
-        <div className="mx-auto max-w-5xl px-4 flex flex-col md:flex-row gap-16 items-start relative z-10">
-          <div className="flex-1 md:sticky md:top-24">
-            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 text-[10px] font-bold text-emerald-400 mb-4">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              CONVOCATORIA ABIERTA
-            </div>
-            <h2 className="text-3xl font-bold text-white">Únete como Conductor</h2>
-            <p className="mt-4 text-slate-400 text-sm leading-relaxed">
-              Accede a un vehículo en condiciones óptimas. Sin jefes, pero con el respaldo de un equipo que quiere verte crecer.
-            </p>
-            
-            <div className="mt-6 mb-8">
-              <ShareButton 
-                title="Conduce con AllAtYou" 
-                text="¡Hola! Mira esta oportunidad para trabajar conduciendo con vehículos de AllAtYou."
-                hash="#conductores"
-                colorClass="text-emerald-400"
-              />
-            </div>
-            
-            <ul className="space-y-4">
-              {[
-                "Vehículos asegurados y con mantenimiento al día.",
-                "Plataforma transparente: sabes cuánto ganas.",
-                "Soporte operativo en caso de accidentes o varadas."
-              ].map((item, i) => (
-                <li key={i} className="flex items-start gap-3 text-sm text-slate-300">
-                  <div className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/5 text-[10px] text-emerald-400">✓</div>
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="flex-1 w-full max-w-md">
-            <DriverApplicationForm referralCode={referralCode || undefined} />
-          </div>
-        </div>
-      </section>
-
-      {/* 3. NUEVA SECCIÓN: PROPIETARIOS (Layout Invertido) */}
-      <section id="propietarios" className="border-t border-white/5 bg-slate-900/30 py-20">
-        <div className="mx-auto max-w-5xl px-4 flex flex-col md:flex-row-reverse gap-16 items-start">
-          <div className="flex-1 md:sticky md:top-24">
-            <div className="inline-flex items-center gap-2 rounded-full bg-blue-500/10 px-3 py-1 text-[10px] font-bold text-blue-400 mb-4">
-              RENTABILIDAD Y CONTROL
-            </div>
-            <h2 className="text-3xl font-bold text-white">Registra tu Vehículo</h2>
-            <p className="mt-4 text-slate-400 text-sm leading-relaxed">
-              Convierte tu carro en un activo real. Nosotros nos encargamos de conseguir el conductor, administrar los pagos y cuidar tu patrimonio.
-            </p>
-
-            <div className="mt-6 mb-8">
-              <ShareButton 
-                title="Administración de Vehículos AllAtYou" 
-                text="¡Hola! Te recomiendo AllAtYou para que pongas a producir tu vehículo con tranquilidad."
-                hash="#propietarios"
-                colorClass="text-blue-400"
-              />
-            </div>
-            
-            <div className="space-y-6">
-              <div className="flex gap-4">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-xl">🤝</div>
-                <div>
-                  <h4 className="text-sm font-semibold text-white">Selección Rigurosa</h4>
-                  <p className="mt-1 text-xs text-slate-400">Validamos antecedentes, experiencia y vivienda de cada conductor.</p>
-                </div>
+          {/* FORMULARIOS */}
+          <section id="conductores" className="mb-20 grid lg:grid-cols-[1fr_1.5fr] gap-12 items-start">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-bold text-emerald-400 mb-4">
+                CONVOCATORIA ABIERTA
               </div>
-              <div className="flex gap-4">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-xl">📱</div>
-                <div>
-                  <h4 className="text-sm font-semibold text-white">Control Total</h4>
-                  <p className="mt-1 text-xs text-slate-400">Acceso a nuestra App para ver la producción de tu carro en tiempo real.</p>
-                </div>
-              </div>
+              <h2 className="text-3xl font-bold text-white mb-4">Únete como Conductor</h2>
+              <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+                Accede a un vehículo en condiciones óptimas. Sin jefes, pero con el respaldo de un equipo que quiere verte crecer.
+              </p>
+              <ShareButton title="Conduce con AllAtYou" text="Oportunidad para conductores." hash="#conductores" colorClass="text-emerald-400" />
             </div>
-          </div>
-          <div className="flex-1 w-full max-w-md">
-            <VehicleApplicationForm />
-          </div>
-        </div>
-      </section>
+            <div className="rounded-3xl border border-white/10 bg-[#101a33]/80 p-1">
+               <DriverApplicationForm referralCode={referralCode || undefined} />
+            </div>
+          </section>
 
-      {/* Contacto */}
-      <footer id="contacto" className="border-t border-white/5 bg-slate-950 py-16">
-        <div className="mx-auto max-w-5xl px-4 text-center">
-          <h2 className="text-2xl font-semibold text-white">¿Tienes dudas puntuales?</h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-slate-400">
-            Nuestro equipo está listo para explicarte el modelo de negocio al detalle.
-          </p>
-          <div className="mt-8 flex justify-center gap-4">
-            <a
-              href={WHATSAPP_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-full bg-emerald-600 px-8 py-3 text-sm font-bold text-white hover:bg-emerald-500 transition-colors"
-            >
-              Hablemos por WhatsApp
-            </a>
-            <a
-              href="mailto:contacto@allatyou.com"
-              className="rounded-full border border-white/10 bg-white/5 px-8 py-3 text-sm font-bold text-white hover:bg-white/10 transition-colors"
-            >
-              Enviar Correo
-            </a>
-          </div>
-          <div className="mt-12 border-t border-white/5 pt-8">
-            <p className="text-xs text-slate-500">
-              © {new Date().getFullYear()} AllAtYou Renting S.A.S — NIT 901.995.593 — Cali, Colombia.
-            </p>
-          </div>
+          <section id="propietarios" className="mb-20 grid lg:grid-cols-[1fr_1.5fr] gap-12 items-start lg:grid-flow-col-dense">
+            <div className="lg:col-start-2">
+              <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-[10px] font-bold text-blue-400 mb-4">
+                RENTABILIDAD SEGURA
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-4">Registra tu Vehículo</h2>
+              <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+                Convierte tu carro en un activo real. Nosotros gestionamos todo por ti.
+              </p>
+              <ShareButton title="Administración AllAtYou" text="Rentabiliza tu vehículo." hash="#propietarios" colorClass="text-blue-400" />
+            </div>
+            <div className="lg:col-start-1 rounded-3xl border border-white/10 bg-[#101a33]/80 p-1">
+              <VehicleApplicationForm />
+            </div>
+          </section>
+
+          <section id="faq" className="mb-20 rounded-3xl border border-white/10 bg-[#101a33]/50 p-8">
+             <h2 className="text-2xl font-bold text-white mb-6">Preguntas frecuentes</h2>
+             <FaqSection />
+          </section>
+
+          <footer className="border-t border-white/10 pt-12 pb-8 text-center text-xs text-slate-500">
+            <div className="flex justify-center gap-6 mb-8">
+              <a href={WHATSAPP_URL} className="hover:text-emerald-400 transition-colors">WhatsApp Soporte</a>
+              <a href="mailto:contacto@allatyou.com" className="hover:text-emerald-400 transition-colors">Email</a>
+            </div>
+            <p className="mb-2">© {new Date().getFullYear()} AllAtYou Renting S.A.S — NIT 901.995.593 — Cali, Colombia.</p>
+            <p>Mockup funcional v2.0 - Diseño híbrido operativo.</p>
+          </footer>
+
         </div>
-      </footer>
+      </main>
     </div>
   );
 }
