@@ -50,7 +50,7 @@ export function FaqSection() {
     { q: "¿Qué pasa si hay un choque?", a: "El vehículo debe tener seguro todo riesgo. El conductor paga el deducible si es culpable. Nosotros gestionamos el trámite." },
     { q: "¿Quién paga los comparendos?", a: "El conductor responsable. Se descuenta de su depósito o liquidación. Tenemos trazabilidad de quién tenía el carro." },
     { q: "¿Cuándo recibo mi dinero?", a: "Las liquidaciones se generan periódicamente (semanal o quincenal según acuerdo) y se transfieren a tu cuenta bancaria." },
-    { q: "¿Qué requisitos piden?", a: "Vehículo modelo 2020 en adelante (preferiblemente), SOAT y Tecno vigentes, Seguro Todo Riesgo." },
+    { q: "¿Qué requisitos piden?", a: "Vehículo modelo 2015 en adelante (preferiblemente), SOAT y Tecno vigentes, Seguro Todo Riesgo." },
   ];
 
   return (
