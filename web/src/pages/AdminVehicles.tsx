@@ -327,7 +327,7 @@ export default function AdminVehicles() {
                       >
                         <option value="">-- Vehículo sin asignar --</option>
                         {drivers.map(d => (
-                          <option key={d.id} value={d.id}>{d.full_name} — {d.id}</option>
+                          <option key={d.id} value={d.id}>{d.full_name}</option>
                         ))}
                       </select>
                       <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-emerald-600">▼</div>
