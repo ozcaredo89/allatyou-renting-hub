@@ -32,15 +32,21 @@ export default function AdminLayout() {
           {/* GRUPO: OPERACIÓN */}
           <div className="mb-6">
             <p className="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Operación</p>
-            <NavLink to="/admin/advances" className={navItemClass}>
-              <span>💸</span> Anticipos
+            
+            {/* ACTIVOS PRINCIPALES */}
+            <NavLink to="/admin/vehicles" className={navItemClass}>
+              <span>🚗</span> Flota
             </NavLink>
+            <NavLink to="/admin/drivers" className={navItemClass}>
+              <span>🧢</span> Conductores
+            </NavLink>
+
+            {/* GESTIÓN */}
             <NavLink to="/admin/recruitment" className={navItemClass}>
               <span>👥</span> Reclutamiento
             </NavLink>
-            {/* --- AQUÍ AGREGAMOS EL BOTÓN DE FLOTA --- */}
-            <NavLink to="/admin/vehicles" className={navItemClass}>
-              <span>🚗</span> Flota
+            <NavLink to="/admin/advances" className={navItemClass}>
+              <span>💸</span> Anticipos
             </NavLink>
           </div>
 

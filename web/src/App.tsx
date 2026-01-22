@@ -12,10 +12,11 @@ import Expenses from "./pages/Expenses";
 
 // Páginas Administrativas
 import AdminAdvances from "./pages/AdminAdvances";
+import AdminDrivers from "./pages/AdminDrivers"; // Módulo nuevo
+import AdminVehicles from "./pages/AdminVehicles";
 import AdminProfit from "./pages/AdminProfit";
-import RemindersLog from "./pages/RemindersLog";
 import AdminRecruitment from "./pages/AdminRecruitment";
-import AdminVehicles from "./pages/AdminVehicles"; // <--- 1. IMPORTAR
+import RemindersLog from "./pages/RemindersLog";
 
 export default function App() {
   const hostname = window.location.hostname;
@@ -29,12 +30,11 @@ export default function App() {
         {/* =======================================================
             MUNDO 1: PÚBLICO / OPERATIVO
             Usa PublicLayout (Header Blanco).
-            No tiene sidebar.
            ======================================================= */}
         <Route element={<PublicLayout />}>
           {/* Ruta Raíz: 
-              - Si es operativo (web.), redirige directo a pagar.
-              - Si es comercial (www.), muestra la Landing. 
+              - Si es operativo (web.), redirige a pagar.
+              - Si es comercial (www. o localhost), muestra la Landing. 
           */}
           <Route
             path="/"
@@ -51,18 +51,23 @@ export default function App() {
         {/* =======================================================
             MUNDO 2: ADMINISTRATIVO
             Usa AdminLayout (Sidebar Oscuro).
-            Las páginas internas validan sus credenciales (Basic Auth).
+            Las páginas internas validan sus credenciales.
            ======================================================= */}
         <Route path="/admin" element={<AdminLayout />}>
-          {/* Rutas hijas relativas a /admin/ */}
+          {/* GESTIÓN DE ACTIVOS (Lo principal) */}
+          <Route path="vehicles" element={<AdminVehicles />} /> 
+          <Route path="drivers" element={<AdminDrivers />} />
+
+          {/* GESTIÓN DE TALENTO */}
+          <Route path="recruitment" element={<AdminRecruitment />} />
+
+          {/* FINANZAS Y UTILIDADES */}
           <Route path="advances" element={<AdminAdvances />} />
           <Route path="profit" element={<AdminProfit />} />
           <Route path="reminders-log" element={<RemindersLog />} />
-          <Route path="recruitment" element={<AdminRecruitment />} />
-          <Route path="vehicles" element={<AdminVehicles />} /> {/* <--- 2. AGREGAR RUTA */}
 
-          {/* Redirección por defecto: /admin -> /admin/recruitment */}
-          <Route index element={<Navigate to="recruitment" replace />} />
+          {/* Redirección por defecto: /admin -> /admin/vehicles (Más útil) */}
+          <Route index element={<Navigate to="vehicles" replace />} />
         </Route>
 
         {/* =======================================================
