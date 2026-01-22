@@ -36,24 +36,42 @@ r.post("/", async (req: Request, res: Response) => {
   const body = req.body;
 
   try {
-    // Validación básica
+    // 1. Validación básica
     if (!body.plate) {
       return res.status(400).json({ error: "La placa es obligatoria." });
     }
 
-    // Normalizamos la placa (Mayúsculas y sin espacios)
+    // 2. Normalizamos la placa
     const cleanPlate = body.plate.trim().toUpperCase().replace(/\s/g, "");
 
-    // Objeto para insertar
+    // 3. Lógica de Sincronización de Nombre (Owner Name)
+    let ownerName = "SIN CONDUCTOR ASIGNADO"; // Valor por defecto si no hay conductor
+
+    if (body.current_driver_id) {
+      // Si enviaron un ID, buscamos el nombre real en la tabla drivers
+      const { data: driverInfo } = await supabase
+        .from("drivers")
+        .select("full_name")
+        .eq("id", body.current_driver_id)
+        .single();
+      
+      if (driverInfo) {
+        ownerName = driverInfo.full_name;
+      }
+    }
+
+    // 4. Objeto para insertar
     const newVehicle = {
       plate: cleanPlate,
       brand: body.brand,
       line: body.line,
       model_year: body.model_year,
       
-      // Asignación inicial (opcional)
       current_driver_id: body.current_driver_id || null, 
       
+      // Aquí asignamos el nombre sincronizado
+      owner_name: ownerName, 
+
       // Legal
       alarm_code: body.alarm_code,
       soat_expires_at: body.soat_expires_at,
@@ -67,8 +85,6 @@ r.post("/", async (req: Request, res: Response) => {
       battery_install_date: body.battery_install_date,
       tires_notes: body.tires_notes,
       
-      // Campos de auditoría
-      owner_name: "AllAtYou Renting", // Valor por defecto
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -85,7 +101,6 @@ r.post("/", async (req: Request, res: Response) => {
       .single();
 
     if (error) {
-      // Manejo de duplicados (Error 23505 en Postgres)
       if (error.code === '23505') {
         return res.status(409).json({ error: "Ya existe un vehículo con esta placa." });
       }
@@ -100,14 +115,15 @@ r.post("/", async (req: Request, res: Response) => {
 
 /**
  * PUT /vehicles/:plate
- * Actualiza la hoja de vida del vehículo.
+ * Actualiza la hoja de vida del vehículo y sincroniza el conductor.
  */
 r.put("/:plate", async (req: Request, res: Response) => {
   const { plate } = req.params;
   const body = req.body;
 
   try {
-    const updates = {
+    // 1. Preparar objeto base de actualizaciones
+    const updates: any = {
       brand: body.brand,
       line: body.line,
       model_year: body.model_year,
@@ -124,6 +140,26 @@ r.put("/:plate", async (req: Request, res: Response) => {
       updated_at: new Date().toISOString(),
     };
 
+    // 2. Lógica de Sincronización (Si el current_driver_id viene en la petición)
+    if (body.current_driver_id !== undefined) {
+      if (body.current_driver_id === null) {
+        // Caso A: Se quitó el conductor
+        updates.owner_name = "SIN CONDUCTOR ASIGNADO";
+      } else {
+        // Caso B: Se asignó un conductor nuevo, buscamos su nombre
+        const { data: driverInfo } = await supabase
+          .from("drivers")
+          .select("full_name")
+          .eq("id", body.current_driver_id)
+          .single();
+        
+        if (driverInfo) {
+          updates.owner_name = driverInfo.full_name;
+        }
+      }
+    }
+
+    // 3. Limpieza de undefineds
     const cleanUpdates = Object.fromEntries(
       Object.entries(updates).filter(([_, v]) => v !== undefined)
     );
