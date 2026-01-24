@@ -4,6 +4,7 @@ import cors, { CorsOptionsDelegate } from "cors";
 import { basicAuth } from "./middleware/basicAuth";
 
 import advancesRoutes from "./routes/advances";
+import companiesRoutes from "./routes/companies";
 import drivers from "./routes/drivers";
 import emailTestRouter from "./routes/emailTest";
 import whatsappTestRouter from "./routes/whatsappTest";
@@ -80,6 +81,7 @@ app.use("/no-pay", noPayRoutes);
 app.use("/reminders", remindersRoutes);
 
 /** Rutas protegidas con Basic Auth (monta el middleware en la misma línea) */
+app.use("/companies", basicAuth, companiesRoutes); 
 app.use("/reports", basicAuth, profitRoutes);
 app.use("/reports", basicAuth, reports);
 app.use("/ledger",  basicAuth, ledgerRoutes);
