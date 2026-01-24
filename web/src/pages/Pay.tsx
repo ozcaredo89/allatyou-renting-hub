@@ -50,7 +50,6 @@ const INSTALLMENT_STATUS_LABEL: Record<Exclude<InstallmentStatus, null>, string>
   pending: "Pendiente",
 };
 
-
 function SupportWhatsAppCard({ name, plate }: { name: string; plate: string }) {
   const displayName = (name || "NOMBRE").trim();
   const displayPlate = (plate || "PLACA").toUpperCase().trim();
@@ -331,27 +330,68 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [f.plate, plateValid, plateExists]);
 
+  // --- Sugerencias automáticas (Incluyendo Fecha) ---
   useEffect(() => {
     if (!lastSuggestion) return;
-    setF((prev) => {
-      let changed = false;
-      const next = { ...prev };
+    let cancelled = false;
 
-      if (!prev.amountStr && lastSuggestion.last_amount > 0) {
-        next.amountStr = fmtCOP.format(lastSuggestion.last_amount);
-        changed = true;
-      }
+    const applySuggestion = async () => {
+      let nextDate = "";
 
-      if (!prev.installment_number && lastSuggestion.last_installment_number != null) {
-        const nextInstallment = lastSuggestion.last_installment_number + 1;
-        if (nextInstallment > 0) {
-          next.installment_number = String(nextInstallment);
-          changed = true;
+      // 1. Calcular la siguiente fecha de pago (Ultimo pago + 1 día)
+      if (lastSuggestion.last_payment_date) {
+        // Parsear fecha local YYYY-MM-DD para evitar problemas de zona horaria
+        const parts = lastSuggestion.last_payment_date.split("-");
+        const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        d.setDate(d.getDate() + 1); // Sumar 1 día
+
+        const yy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        const candidate = `${yy}-${mm}-${dd}`;
+
+        // 2. Verificar si es Pico y Placa para sugerir el día siguiente válido
+        const check = await checkNoPay(lastSuggestion.plate, candidate);
+        if (check?.noPay && check.suggestedDate) {
+          nextDate = check.suggestedDate;
+        } else {
+          nextDate = candidate;
         }
       }
 
-      return changed ? next : prev;
-    });
+      if (cancelled) return;
+
+      setF((prev) => {
+        let changed = false;
+        const next = { ...prev };
+
+        // Aplicar fecha sugerida (sobrescribe la actual)
+        if (nextDate && nextDate !== prev.payment_date) {
+          next.payment_date = nextDate;
+          changed = true;
+        }
+
+        // Aplicar monto sugerido si el campo está vacío
+        if (!prev.amountStr && lastSuggestion.last_amount > 0) {
+          next.amountStr = fmtCOP.format(lastSuggestion.last_amount);
+          changed = true;
+        }
+
+        // Aplicar cuota sugerida si el campo está vacío
+        if (!prev.installment_number && lastSuggestion.last_installment_number != null) {
+          const nextInstallment = lastSuggestion.last_installment_number + 1;
+          if (nextInstallment > 0) {
+            next.installment_number = String(nextInstallment);
+            changed = true;
+          }
+        }
+
+        return changed ? next : prev;
+      });
+    };
+
+    applySuggestion();
+    return () => { cancelled = true; };
   }, [lastSuggestion]);
 
   // ---------- UI warnings ----------
@@ -491,12 +531,8 @@ export default function App() {
         {/* Card: Form */}
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <form onSubmit={onSubmit} className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-sm font-medium">Nombre</label>
-              {input("payer_name", { placeholder: "Nombre del Conductor", required: true })}
-            </div>
-
-            {/* Placa */}
+            
+            {/* CORRECCIÓN: Placa primero (Columna 1) */}
             <div>
               <label className="mb-1 block text-sm font-medium">Placa</label>
               <input
@@ -521,6 +557,12 @@ export default function App() {
               {!plateExists && f.plate ? (
                 <div className="mt-1 text-xs text-red-600">Placa no registrada</div>
               ) : null}
+            </div>
+
+            {/* CORRECCIÓN: Nombre segundo (Columna 2 y 3) */}
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-sm font-medium">Nombre</label>
+              {input("payer_name", { placeholder: "Nombre del Conductor", required: true })}
             </div>
 
             <div>
