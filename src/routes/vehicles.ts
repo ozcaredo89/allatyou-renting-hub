@@ -45,10 +45,9 @@ r.post("/", async (req: Request, res: Response) => {
     const cleanPlate = body.plate.trim().toUpperCase().replace(/\s/g, "");
 
     // 3. Lógica de Sincronización de Nombre (Owner Name)
-    let ownerName = "SIN CONDUCTOR ASIGNADO"; // Valor por defecto si no hay conductor
+    let ownerName = "SIN CONDUCTOR ASIGNADO"; // Valor por defecto
 
     if (body.current_driver_id) {
-      // Si enviaron un ID, buscamos el nombre real en la tabla drivers
       const { data: driverInfo } = await supabase
         .from("drivers")
         .select("full_name")
@@ -68,16 +67,15 @@ r.post("/", async (req: Request, res: Response) => {
       model_year: body.model_year,
       
       current_driver_id: body.current_driver_id || null, 
-      
-      // Aquí asignamos el nombre sincronizado
       owner_name: ownerName, 
 
-      // Legal
+      // Legal & Seguridad
       alarm_code: body.alarm_code,
       soat_expires_at: body.soat_expires_at,
       tecno_expires_at: body.tecno_expires_at,
       extinguisher_expiry: body.extinguisher_expiry,
-      
+      gps_renewal_date: body.gps_renewal_date, // <--- NUEVO CAMPO GPS
+
       // Mantenimiento
       timing_belt_last_date: body.timing_belt_last_date,
       timing_belt_last_km: body.timing_belt_last_km,
@@ -89,7 +87,7 @@ r.post("/", async (req: Request, res: Response) => {
       updated_at: new Date().toISOString(),
     };
 
-    // Eliminamos undefineds
+    // Eliminamos undefineds para que Postgres use defaults si aplica (o null)
     const cleanInsert = Object.fromEntries(
       Object.entries(newVehicle).filter(([_, v]) => v !== undefined)
     );
@@ -128,25 +126,29 @@ r.put("/:plate", async (req: Request, res: Response) => {
       line: body.line,
       model_year: body.model_year,
       current_driver_id: body.current_driver_id,
+      
+      // Legal & Seguridad
       alarm_code: body.alarm_code,
       soat_expires_at: body.soat_expires_at,
       tecno_expires_at: body.tecno_expires_at,
       extinguisher_expiry: body.extinguisher_expiry,
+      gps_renewal_date: body.gps_renewal_date, // <--- NUEVO CAMPO GPS
+      
+      // Mantenimiento
       timing_belt_last_date: body.timing_belt_last_date,
       timing_belt_last_km: body.timing_belt_last_km,
       battery_brand: body.battery_brand,
       battery_install_date: body.battery_install_date,
       tires_notes: body.tires_notes,
+      
       updated_at: new Date().toISOString(),
     };
 
-    // 2. Lógica de Sincronización (Si el current_driver_id viene en la petición)
+    // 2. Lógica de Sincronización de nombre (Si cambia el driver)
     if (body.current_driver_id !== undefined) {
       if (body.current_driver_id === null) {
-        // Caso A: Se quitó el conductor
         updates.owner_name = "SIN CONDUCTOR ASIGNADO";
       } else {
-        // Caso B: Se asignó un conductor nuevo, buscamos su nombre
         const { data: driverInfo } = await supabase
           .from("drivers")
           .select("full_name")

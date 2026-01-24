@@ -15,6 +15,7 @@ type Vehicle = {
   soat_expires_at: string | null;
   tecno_expires_at: string | null;
   alarm_code: string | null;
+  gps_renewal_date: string | null; // <--- NUEVO CAMPO
   timing_belt_last_date: string | null;
   extinguisher_expiry: string | null;
   battery_install_date: string | null;
@@ -30,6 +31,7 @@ const EMPTY_VEHICLE: Vehicle = {
   current_driver_id: null,
   soat_expires_at: null,
   tecno_expires_at: null,
+  gps_renewal_date: null, // <--- NUEVO CAMPO
   alarm_code: "",
   timing_belt_last_date: null,
   extinguisher_expiry: null,
@@ -260,7 +262,6 @@ export default function AdminVehicles() {
                     Identificación y Asignación
                   </h3>
                   
-                  {/* SI ESTAMOS CREANDO, PEDIMOS PLACA. SI NO, NO LA MOSTRAMOS O SOLO LECTURA */}
                   {isCreating && (
                     <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4">
                       <label className="block text-xs font-bold text-slate-900 mb-1">PLACA (Obligatorio)</label>
@@ -345,6 +346,11 @@ export default function AdminVehicles() {
                   <div>
                     <label className="block text-xs font-medium text-slate-700 mb-1">Vencimiento Tecno</label>
                     <input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.tecno_expires_at || ""} onChange={e => setEditing({...editing, tecno_expires_at: e.target.value})} />
+                  </div>
+                  {/* NUEVO CAMPO GPS */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Renovación GPS</label>
+                    <input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.gps_renewal_date || ""} onChange={e => setEditing({...editing, gps_renewal_date: e.target.value})} />
                   </div>
                 </div>
 
