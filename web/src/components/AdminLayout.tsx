@@ -56,6 +56,10 @@ export default function AdminLayout() {
             <NavLink to="/admin/profit" className={navItemClass}>
               <span>📈</span> Utilidad Mensual
             </NavLink>
+            {/* NUEVO LINK: REPORTES */}
+            <NavLink to="/admin/reports" className={navItemClass}>
+              <span>📑</span> Reportes
+            </NavLink>
           </div>
 
           {/* GRUPO: SISTEMA */}

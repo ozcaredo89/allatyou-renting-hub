@@ -1,4 +1,4 @@
-import { useState, useEffect, ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { ensureBasicAuth } from "../lib/auth";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");

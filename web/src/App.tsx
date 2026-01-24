@@ -7,12 +7,12 @@ import PublicLayout from "./components/PublicLayout";
 // Páginas Públicas / Operativas
 import Landing from "./pages/Landing";
 import Pay from "./pages/Pay";
-import Reports from "./pages/Reports";
+import Reports from "./pages/Reports"; // Se mantiene el import
 import Expenses from "./pages/Expenses";
 
 // Páginas Administrativas
 import AdminAdvances from "./pages/AdminAdvances";
-import AdminDrivers from "./pages/AdminDrivers"; // Módulo nuevo
+import AdminDrivers from "./pages/AdminDrivers";
 import AdminVehicles from "./pages/AdminVehicles";
 import AdminProfit from "./pages/AdminProfit";
 import AdminRecruitment from "./pages/AdminRecruitment";
@@ -44,7 +44,7 @@ export default function App() {
           />
           
           <Route path="/pay" element={<Pay />} />
-          <Route path="/reports" element={<Reports />} />
+          {/* MOVIDO: Reports ya no está aquí */}
           <Route path="/expenses" element={<Expenses />} />
         </Route>
 
@@ -64,9 +64,13 @@ export default function App() {
           {/* FINANZAS Y UTILIDADES */}
           <Route path="advances" element={<AdminAdvances />} />
           <Route path="profit" element={<AdminProfit />} />
+          
+          {/* NUEVA UBICACIÓN DE REPORTES (Mora/Cobros) */}
+          <Route path="reports" element={<Reports />} /> 
+
           <Route path="reminders-log" element={<RemindersLog />} />
 
-          {/* Redirección por defecto: /admin -> /admin/vehicles (Más útil) */}
+          {/* Redirección por defecto */}
           <Route index element={<Navigate to="vehicles" replace />} />
         </Route>
 
