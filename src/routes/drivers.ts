@@ -4,10 +4,6 @@ import { supabase } from "../lib/supabase";
 const r = Router();
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
 
-// ==========================================
-// NUEVAS RUTAS: GESTIÓN DE CONDUCTORES (Admin)
-// ==========================================
-
 /**
  * GET /drivers
  * Lista conductores.
@@ -50,6 +46,7 @@ r.post("/", async (req: Request, res: Response) => {
     const { data, error } = await supabase
       .from("drivers")
       .insert({
+        // Datos Personales
         full_name: body.full_name.toUpperCase(),
         document_number: body.document_number,
         phone: body.phone,
@@ -57,7 +54,15 @@ r.post("/", async (req: Request, res: Response) => {
         address: body.address || null,
         date_of_birth: body.date_of_birth || null,
         notes: body.notes || null,
-        status: body.status || "active"
+        status: body.status || "active",
+        
+        // Documentación (URLs)
+        cv_url: body.cv_url || null,
+        id_front_url: body.id_front_url || null,
+        id_back_url: body.id_back_url || null,
+        license_front_url: body.license_front_url || null,
+        license_back_url: body.license_back_url || null,
+        contract_url: body.contract_url || null
       })
       .select()
       .single();
@@ -83,6 +88,7 @@ r.put("/:id", async (req: Request, res: Response) => {
 
   try {
     const updates = {
+      // Datos Personales
       full_name: body.full_name?.toUpperCase(),
       document_number: body.document_number,
       phone: body.phone,
@@ -91,10 +97,19 @@ r.put("/:id", async (req: Request, res: Response) => {
       date_of_birth: body.date_of_birth,
       notes: body.notes,
       status: body.status,
+      
+      // Documentación (URLs)
+      cv_url: body.cv_url,
+      id_front_url: body.id_front_url,
+      id_back_url: body.id_back_url,
+      license_front_url: body.license_front_url,
+      license_back_url: body.license_back_url,
+      contract_url: body.contract_url,
+
       updated_at: new Date().toISOString()
     };
 
-    // Limpieza de undefined
+    // Limpieza de undefined (solo actualiza lo que venga en el body)
     const cleanUpdates = Object.fromEntries(
       Object.entries(updates).filter(([_, v]) => v !== undefined)
     );
@@ -128,6 +143,9 @@ r.post("/promote/:applicationId", async (req: Request, res: Response) => {
 
     if (appErr || !app) return res.status(404).json({ error: "Application not found" });
 
+    // Al promover, copiamos también los documentos si existieran en la postulación
+    // (Asumiendo que driver_applications tiene campos similares o se mapean aquí)
+    // Por ahora mapeamos lo básico que existía.
     const { data: driver, error: createErr } = await supabase
       .from("drivers")
       .insert({
@@ -139,6 +157,8 @@ r.post("/promote/:applicationId", async (req: Request, res: Response) => {
         address: app.address,
         application_id: app.id,
         status: "active"
+        // Si driver_applications tuviera PDF, aquí se mapearían:
+        // cv_url: app.cv_url ...
       })
       .select()
       .single();
