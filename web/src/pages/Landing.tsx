@@ -9,6 +9,7 @@ import { ProcessSteps, MoneyFlow, FaqSection } from "../components/MarketingSect
 import { ModelOverview } from "../components/ModelOverview"; 
 import { AssistanceBanner } from "../components/AssistanceBanner";
 import { PicoPlacaModal, ReminderModal } from "../components/UtilitiesModals";
+import { TrustSection } from "../components/TrustSection"; // <--- IMPORTAR
 
 const WHATSAPP_URL = "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20vengo%20de%20la%20web%20y%20quiero%20m%C3%A1s%20info.";
 
@@ -217,6 +218,9 @@ export default function Landing() {
             </div>
             <div className="lg:col-start-1 rounded-3xl border border-white/10 bg-[#101a33]/80 p-1"><VehicleApplicationForm /></div>
           </section>
+
+          {/* === SECCIÓN DE CONFIANZA === */}
+          <TrustSection />
 
           <section id="faq" className="mb-20 rounded-3xl border border-white/10 bg-[#101a33]/50 p-8">
              <h2 className="text-2xl font-bold text-white mb-6">Preguntas frecuentes</h2>
