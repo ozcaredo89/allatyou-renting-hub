@@ -21,6 +21,10 @@ import profitRoutes from "./routes/profit";
 import remindersRoutes from "./routes/reminders";
 import vehiclesRoutes from "./routes/vehicles";
 
+// --- MÓDULO COBRANZA (NUEVO) ---
+import collectionsRoutes from "./routes/collections";
+import appUsersRoutes from "./routes/app-users";
+
 const app = express();
 
 /** CORS: WEB_ORIGIN (puede ser lista separada por comas) + localhost + *.vercel.app */
@@ -87,6 +91,10 @@ app.use("/reports", basicAuth, reports);
 app.use("/ledger",  basicAuth, ledgerRoutes);
 app.use("/advances", basicAuth, advancesRoutes);
 app.use("/vehicles", basicAuth, vehiclesRoutes);
+
+// --- RUTAS DE COBRANZA ---
+app.use("/collections", basicAuth, collectionsRoutes);
+app.use("/app-users", basicAuth, appUsersRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

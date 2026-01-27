@@ -209,4 +209,29 @@ r.get("/:plate", async (req: Request, res: Response) => {
   });
 });
 
+/**
+ * PATCH /drivers/:id/contact
+ * Actualización rápida de contacto (Teléfono/Email) para módulo de cobranza.
+ */
+r.patch("/:id/contact", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { phone } = req.body;
+
+  if (!phone) return res.status(400).json({ error: "Teléfono requerido" });
+
+  try {
+    const { data, error } = await supabase
+      .from("drivers")
+      .update({ phone, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select("id, full_name, phone")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ success: true, driver: data });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  }
+});
+
 export default r;

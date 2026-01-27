@@ -13,6 +13,7 @@ import Expenses from "./pages/Expenses";
 // Páginas Administrativas
 import AdminAdvances from "./pages/AdminAdvances";
 import AdminDrivers from "./pages/AdminDrivers";
+import AdminCollections from "./pages/AdminCollections";
 import AdminVehicles from "./pages/AdminVehicles";
 import AdminProfit from "./pages/AdminProfit";
 import AdminRecruitment from "./pages/AdminRecruitment";
@@ -68,6 +69,10 @@ export default function App() {
           {/* NUEVA UBICACIÓN DE REPORTES (Mora/Cobros) */}
           <Route path="reports" element={<Reports />} /> 
 
+          {/* GESTIÓN DE COBRANZAS */}
+          <Route path="collections" element={<AdminCollections />} />
+
+          {/* RUTA DE LOG DE RECORDATORIOS */}
           <Route path="reminders-log" element={<RemindersLog />} />
 
           {/* Redirección por defecto */}

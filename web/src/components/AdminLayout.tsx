@@ -48,6 +48,10 @@ export default function AdminLayout() {
             <NavLink to="/admin/advances" className={navItemClass}>
               <span>💸</span> Anticipos
             </NavLink>
+            {/* CAMBIO DE ICONO AQUÍ */}
+            <NavLink to="/admin/collections" className={navItemClass}>
+              <span>📲</span> Gestión Cobros
+            </NavLink>
           </div>
 
           {/* GRUPO: FINANCIERO */}
