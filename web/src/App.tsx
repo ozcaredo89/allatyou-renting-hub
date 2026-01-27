@@ -9,6 +9,7 @@ import Landing from "./pages/Landing";
 import Pay from "./pages/Pay";
 import Reports from "./pages/Reports"; // Se mantiene el import
 import Expenses from "./pages/Expenses";
+import Assistance from "./pages/Assistance"; // <--- NUEVO IMPORT
 
 // Páginas Administrativas
 import AdminAdvances from "./pages/AdminAdvances";
@@ -45,8 +46,10 @@ export default function App() {
           />
           
           <Route path="/pay" element={<Pay />} />
-          {/* MOVIDO: Reports ya no está aquí */}
           <Route path="/expenses" element={<Expenses />} />
+          
+          {/* NUEVA RUTA DE ASISTENCIA */}
+          <Route path="/assistance" element={<Assistance />} />
         </Route>
 
         {/* =======================================================

@@ -31,6 +31,14 @@ export default function PublicLayout() {
               Inicio
             </NavLink>
 
+            {/* NUEVO LINK DE ASISTENCIA */}
+            <NavLink
+              to="/assistance"
+              className={({ isActive }) => `${link} ${isActive ? active : inactive}`}
+            >
+              Asistencia
+            </NavLink>
+
             {showPagosLink && (
               <NavLink
                 to="/pay"
@@ -39,15 +47,11 @@ export default function PublicLayout() {
                 Pagos
               </NavLink>
             )}
-            
-            {/* Si alguna vez necesitas reactivar links a reportes públicos:
-            <NavLink to="/reports" className={...}>Reportes</NavLink> 
-            */}
           </nav>
         </div>
       </header>
 
-      {/* CONTENIDO PÚBLICO (Landing, Pay, etc.) */}
+      {/* CONTENIDO PÚBLICO (Landing, Pay, Assistance, etc.) */}
       <main className="flex-1">
         <Outlet />
       </main>
