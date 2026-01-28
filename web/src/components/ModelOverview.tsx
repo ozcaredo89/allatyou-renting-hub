@@ -36,45 +36,52 @@ export function ModelOverview() {
   ];
 
   return (
-    <div className="mb-6 rounded-2xl border border-dashed border-white/10 bg-[#0e1525]/50 p-5">
-      <div className="mb-4 flex items-center justify-between px-1">
+    <div className="mb-6 rounded-3xl border border-white/10 bg-[#0f172a]/80 p-6 backdrop-blur-sm shadow-2xl">
+      <div className="mb-6 flex items-center justify-between px-1">
         <h3 className="text-sm font-bold text-white tracking-wide">Vista rápida del modelo</h3>
-        <span className="text-[10px] text-slate-500 uppercase tracking-wider">Ciclo AllAtYou</span>
+        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Ciclo AllAtYou</span>
       </div>
       
-      <div className="flex flex-wrap items-center justify-center gap-3 md:justify-between">
+      {/* CAMBIO CLAVE: flex-col en móvil, flex-row en md */}
+      <div className="flex flex-col md:flex-row items-center justify-between gap-4 relative">
+        
+        {/* Línea conectora vertical (visible solo en móvil) para unir visualmente */}
+        <div className="absolute left-1/2 top-4 bottom-4 w-px bg-gradient-to-b from-white/5 via-white/10 to-white/5 -translate-x-1/2 md:hidden z-0"></div>
+
         {steps.map((step, i) => (
-          <div key={i} className="flex items-center gap-2">
-            {/* El Chip */}
+          <div key={i} className="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto relative z-10">
+            
+            {/* El Chip (Tarjeta del paso) */}
             <div 
-              className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold transition-all
+              className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-xs font-semibold transition-all w-full md:w-auto justify-center md:justify-start shadow-lg
                 ${step.highlight 
                   ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]" 
-                  : "border-white/5 bg-[#161f32] text-slate-400 hover:border-white/10 hover:text-slate-300"
+                  : "border-white/5 bg-[#1e293b] text-slate-200"
                 }`}
             >
-              <span className={`${step.highlight ? "text-emerald-400" : "text-slate-500"}`}>
+              <span className={`${step.highlight ? "text-emerald-400" : "text-slate-400"}`}>
                 {step.icon}
               </span>
               {step.text}
             </div>
 
-            {/* La Flecha SVG (Elegante) */}
+            {/* La Flecha (Lógica condicional para Responsive) */}
             {i < steps.length - 1 && (
-              <div className="hidden md:block text-slate-700">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
-                </svg>
-              </div>
-            )}
-            
-            {/* Flecha para móvil (abajo) */}
-            {i < steps.length - 1 && (
-              <div className="md:hidden text-slate-700 w-full flex justify-center">
-                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>
-                </svg>
-              </div>
+              <>
+                {/* Flecha Horizontal (Desktop) */}
+                <div className="hidden md:block text-slate-600">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+                  </svg>
+                </div>
+                
+                {/* Flecha Vertical (Mobile) */}
+                <div className="md:hidden text-slate-600">
+                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>
+                  </svg>
+                </div>
+              </>
             )}
           </div>
         ))}
