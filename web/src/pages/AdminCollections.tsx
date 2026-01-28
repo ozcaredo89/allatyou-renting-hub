@@ -153,7 +153,8 @@ export default function AdminCollections() {
               tab === "history" ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"
             }`}
           >
-            Historial de Envíos (Hoy)
+            {/* CAMBIO: Se eliminó "(Hoy)" del texto */}
+            Historial de Envíos
           </button>
         </div>
 
@@ -175,7 +176,7 @@ export default function AdminCollections() {
             onClose={() => setShowCreateUser(false)} 
             onSuccess={() => {
               setShowCreateUser(false);
-              loadUsers(); // Recargar lista para que aparezca el nuevo
+              loadUsers(); 
             }} 
           />
         )}
@@ -185,7 +186,7 @@ export default function AdminCollections() {
   );
 }
 
-// --- VISTAS EXISTENTES (Sin cambios mayores, solo se mantienen) ---
+// --- PENDING VIEW (Sin cambios) ---
 function PendingView({ currentUser, template, companyId, onSent }: { currentUser: AppUser | null, template: string, companyId: string, onSent: () => void }) {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -301,17 +302,29 @@ function PendingView({ currentUser, template, companyId, onSent }: { currentUser
   );
 }
 
+// --- HISTORY VIEW (ACTUALIZADO CON FILTRO DE FECHA) ---
 function HistoryView({ companyId }: { companyId: string }) {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // Estado para la fecha: Por defecto HOY (ajustado a zona horaria local simple)
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().split('T')[0];
+  });
 
-  useEffect(() => { if (companyId) loadHistory(); }, [companyId]);
+  // Se recarga cuando cambia la empresa O la fecha
+  useEffect(() => { 
+    if (companyId) loadHistory(); 
+  }, [companyId, selectedDate]);
 
   async function loadHistory() {
     setLoading(true);
     try {
       const auth = ensureBasicAuth();
-      const res = await fetch(`${API}/collections/history?companyId=${companyId}`, { headers: { Authorization: auth } });
+      // Se envía el parámetro date al backend
+      const res = await fetch(`${API}/collections/history?companyId=${companyId}&date=${selectedDate}`, { headers: { Authorization: auth } });
       const json = await res.json();
       setItems(json || []);
     } catch { alert("Error cargando historial"); } finally { setLoading(false); }
@@ -327,44 +340,58 @@ function HistoryView({ companyId }: { companyId: string }) {
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-      <table className="min-w-full text-sm">
-        <thead className="bg-slate-50 border-b border-slate-200 text-left">
-          <tr>
-            <th className="px-4 py-3 font-semibold text-slate-700">Hora</th>
-            <th className="px-4 py-3 font-semibold text-slate-700">Placa</th>
-            <th className="px-4 py-3 font-semibold text-slate-700">Conductor</th>
-            <th className="px-4 py-3 font-semibold text-slate-700">Enviado por</th>
-            <th className="px-4 py-3 font-semibold text-slate-700 text-center">Reenvíos</th>
-            <th className="px-4 py-3 font-semibold text-slate-700 text-right">Mensaje</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {loading ? (
-            <tr><td colSpan={6} className="p-8 text-center text-slate-400">Cargando...</td></tr>
-          ) : items.length === 0 ? (
-            <tr><td colSpan={6} className="p-8 text-center text-slate-500">No hay envíos hoy.</td></tr>
-          ) : (
-            items.map((item) => (
-              <tr key={item.id} className="hover:bg-slate-50">
-                <td className="px-4 py-3 text-slate-500">{new Date(item.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                <td className="px-4 py-3 font-mono font-bold text-slate-800">{item.vehicle_plate}</td>
-                <td className="px-4 py-3">{item.vehicle?.owner_name || "—"}</td>
-                <td className="px-4 py-3"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-medium">{item.sender?.full_name || "Sistema"}</span></td>
-                <td className="px-4 py-3 text-center font-mono text-slate-500">{item.resend_count}</td>
-                <td className="px-4 py-3 text-right">
-                  <button onClick={() => handleResend(item)} className="text-blue-600 hover:underline text-xs" title={item.message_snapshot}>Ver / Reenviar</button>
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+    <div className="space-y-4">
+      
+      {/* FILTRO DE FECHA */}
+      <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm w-fit">
+        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Fecha:</span>
+        <input 
+          type="date" 
+          className="text-sm font-medium text-slate-700 bg-transparent outline-none cursor-pointer"
+          value={selectedDate}
+          onChange={(e) => setSelectedDate(e.target.value)}
+        />
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 border-b border-slate-200 text-left">
+            <tr>
+              <th className="px-4 py-3 font-semibold text-slate-700">Hora</th>
+              <th className="px-4 py-3 font-semibold text-slate-700">Placa</th>
+              <th className="px-4 py-3 font-semibold text-slate-700">Conductor</th>
+              <th className="px-4 py-3 font-semibold text-slate-700">Enviado por</th>
+              <th className="px-4 py-3 font-semibold text-slate-700 text-center">Reenvíos</th>
+              <th className="px-4 py-3 font-semibold text-slate-700 text-right">Mensaje</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {loading ? (
+              <tr><td colSpan={6} className="p-8 text-center text-slate-400">Cargando...</td></tr>
+            ) : items.length === 0 ? (
+              <tr><td colSpan={6} className="p-8 text-center text-slate-500">No hay envíos registrados en esta fecha.</td></tr>
+            ) : (
+              items.map((item) => (
+                <tr key={item.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3 text-slate-500">{new Date(item.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                  <td className="px-4 py-3 font-mono font-bold text-slate-800">{item.vehicle_plate}</td>
+                  <td className="px-4 py-3">{item.vehicle?.owner_name || "—"}</td>
+                  <td className="px-4 py-3"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-medium">{item.sender?.full_name || "Sistema"}</span></td>
+                  <td className="px-4 py-3 text-center font-mono text-slate-500">{item.resend_count}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => handleResend(item)} className="text-blue-600 hover:underline text-xs" title={item.message_snapshot}>Ver / Reenviar</button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-// --- MODAL: CREAR USUARIO ---
+// ... CreateUserModal y PhoneEditModal se mantienen igual ...
 function CreateUserModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) {
   const [form, setForm] = useState({ full_name: "", document_number: "", phone: "" });
   const [saving, setSaving] = useState(false);
