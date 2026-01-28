@@ -119,7 +119,7 @@ export default function Landing() {
                 {/* 2. Botones de Utilidad (Ganchos SEO) */}
                 <div>
                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3 pl-1">Herramientas Gratuitas</p>
-                   <div className="grid grid-cols-2 gap-3">
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <button 
                         onClick={() => setShowPicoPlaca(true)}
                         className="group flex items-center gap-3 rounded-xl border border-slate-700 bg-[#0f172a] px-4 py-3 text-left hover:border-emerald-500/50 hover:bg-[#1e293b] transition-all"
