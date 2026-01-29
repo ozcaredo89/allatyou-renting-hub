@@ -30,7 +30,8 @@ type HistoryItem = {
   resend_count: number;
   message_snapshot: string;
   sender: { full_name: string };
-  vehicle: { owner_name: string };
+  vehicle: { owner_name: string; owner_whatsapp?: string };
+  driver: { phone: string };
 };
 
 type Template = {
@@ -331,11 +332,22 @@ function HistoryView({ companyId }: { companyId: string }) {
   }
 
   async function handleResend(item: HistoryItem) {
-    alert("Para reenviar: \n\n" + item.message_snapshot);
+    // Lógica inteligente: Prioridad Driver > Dueño
+    const phone = item.driver?.phone || item.vehicle?.owner_whatsapp;
+
+    if (!phone) {
+      return alert("No se encontró un número de teléfono para reenviar este mensaje.");
+    }
+
+    // 1. Abrir WhatsApp (Igual que en pendientes)
+    const whatsappUrl = `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(item.message_snapshot)}`;
+    window.open(whatsappUrl, "_blank");
+
+    // 2. Registrar el reenvío en el backend
     try {
       const auth = ensureBasicAuth();
       await fetch(`${API}/collections/resend/${item.id}`, { method: "POST", headers: { Authorization: auth } });
-      loadHistory();
+      loadHistory(); // Recargar contador
     } catch (e) { console.error(e); }
   }
 

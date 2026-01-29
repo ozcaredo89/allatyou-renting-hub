@@ -160,7 +160,7 @@ r.post("/send", async (req: Request, res: Response) => {
         days_overdue,
         message_snapshot,
         generated_date: dateStr,
-        status: "sent",
+        // status: "sent", // Por ahora asumimos que se envió si se hizo click
         resend_count: 0
       });
 
@@ -185,7 +185,8 @@ r.get("/history", async (req: Request, res: Response) => {
       .select(`
         *,
         sender:app_users!sent_by_user_id(full_name),
-        vehicle:vehicles!vehicle_plate(owner_name) 
+        vehicle:vehicles!vehicle_plate(owner_name, owner_whatsapp),
+        driver:drivers!driver_id(phone)
       `)
       .eq("generated_date", dateStr)
       .order("sent_at", { ascending: false });
