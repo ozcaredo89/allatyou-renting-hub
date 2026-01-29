@@ -1,11 +1,21 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Menu, X } from "lucide-react"; // Necesitas tener instalado lucide-react
 import { clearBasicAuth } from "../lib/auth";
 
 export default function AdminLayout() {
+  const [isSidebarOpen, setSidebarOpen] = useState(false);
+  const location = useLocation();
+
+  // Cerrar el menú automáticamente cuando cambiamos de página (UX móvil)
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location]);
+
   const handleLogout = () => {
     if (confirm("¿Cerrar sesión del panel administrativo?")) {
       clearBasicAuth();
-      window.location.href = "/"; // Forzamos recarga para limpiar memoria
+      window.location.href = "/";
     }
   };
 
@@ -19,13 +29,41 @@ export default function AdminLayout() {
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
-      {/* SIDEBAR OSCURO */}
-      <aside className="w-64 bg-slate-900 text-white flex flex-col shrink-0 transition-all duration-300">
-        <div className="p-6 border-b border-slate-800">
-          <h2 className="text-xl font-bold tracking-tight text-white">
-            AllAtYou <span className="text-emerald-500">Admin</span>
-          </h2>
-          <p className="text-xs text-slate-500 mt-1">Panel de Control</p>
+      
+      {/* 1. BACKDROP (Fondo oscuro) - Solo visible en móvil cuando el menú está abierto */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* 2. SIDEBAR RESPONSIVO */}
+      {/* - Mobile: fixed, z-50, controla visibilidad con translate-x
+         - Desktop (md): relative, siempre visible (translate-x-0)
+      */}
+      <aside 
+        className={`
+          fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white flex flex-col shrink-0 transition-transform duration-300 ease-in-out shadow-2xl
+          md:relative md:translate-x-0 md:shadow-none
+          ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}
+        `}
+      >
+        <div className="p-6 border-b border-slate-800 flex justify-between items-center">
+          <div>
+            <h2 className="text-xl font-bold tracking-tight text-white">
+              AllAtYou <span className="text-emerald-500">Admin</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">Panel de Control</p>
+          </div>
+          
+          {/* Botón cerrar solo visible en móvil */}
+          <button 
+            onClick={() => setSidebarOpen(false)} 
+            className="md:hidden text-slate-400 hover:text-white"
+          >
+            <X className="w-6 h-6" />
+          </button>
         </div>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">
@@ -33,22 +71,18 @@ export default function AdminLayout() {
           <div className="mb-6">
             <p className="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Operación</p>
             
-            {/* ACTIVOS PRINCIPALES */}
             <NavLink to="/admin/vehicles" className={navItemClass}>
               <span>🚗</span> Flota
             </NavLink>
             <NavLink to="/admin/drivers" className={navItemClass}>
               <span>🧢</span> Conductores
             </NavLink>
-
-            {/* GESTIÓN */}
             <NavLink to="/admin/recruitment" className={navItemClass}>
               <span>👥</span> Reclutamiento
             </NavLink>
             <NavLink to="/admin/advances" className={navItemClass}>
               <span>💸</span> Anticipos
             </NavLink>
-            {/* CAMBIO DE ICONO AQUÍ */}
             <NavLink to="/admin/collections" className={navItemClass}>
               <span>📲</span> Gestión Cobros
             </NavLink>
@@ -60,7 +94,6 @@ export default function AdminLayout() {
             <NavLink to="/admin/profit" className={navItemClass}>
               <span>📈</span> Utilidad Mensual
             </NavLink>
-            {/* NUEVO LINK: REPORTES */}
             <NavLink to="/admin/reports" className={navItemClass}>
               <span>📑</span> Reportes
             </NavLink>
@@ -86,10 +119,25 @@ export default function AdminLayout() {
         </div>
       </aside>
 
-      {/* ÁREA DE CONTENIDO (Aquí se pintan las páginas) */}
-      <main className="flex-1 overflow-y-auto bg-slate-50 scroll-smooth p-0">
-        <Outlet />
-      </main>
+      {/* 3. CONTENEDOR PRINCIPAL */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden w-full">
+        
+        {/* HEADER MÓVIL (Solo visible en pantallas pequeñas) */}
+        <header className="md:hidden bg-slate-900 text-white p-4 flex items-center justify-between shadow-md shrink-0">
+           <div className="flex items-center gap-3">
+             <button onClick={() => setSidebarOpen(true)} className="p-1 hover:bg-slate-800 rounded-lg">
+               <Menu className="w-6 h-6" />
+             </button>
+             <span className="font-bold text-sm tracking-wide">AllAtYou Admin</span>
+           </div>
+        </header>
+
+        {/* CONTENIDO DE LA PÁGINA */}
+        <main className="flex-1 overflow-y-auto bg-slate-50 scroll-smooth p-0 w-full relative">
+          <Outlet />
+        </main>
+      </div>
+
     </div>
   );
 }
