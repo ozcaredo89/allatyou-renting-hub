@@ -91,6 +91,9 @@ export default function AdminLayout() {
           {/* GRUPO: FINANCIERO */}
           <div className="mb-6">
             <p className="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Financiero</p>
+            <NavLink to="/admin/deposits" className={navItemClass}>
+              <span>💰</span> Depósitos
+            </NavLink>
             <NavLink to="/admin/profit" className={navItemClass}>
               <span>📈</span> Utilidad Mensual
             </NavLink>

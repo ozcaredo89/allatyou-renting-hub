@@ -1,3 +1,4 @@
+// src/index.ts
 import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors, { CorsOptionsDelegate } from "cors";
@@ -15,40 +16,34 @@ import metricsRouter from "./routes/metrics";
 import noPayRoutes from "./routes/noPay";
 import payments from "./routes/payments";
 import uploads from "./routes/uploads";
-// Si tienes DOS routers distintos bajo /reports, déjalos; si no, elimina el que sobre.
 import reports from "./routes/reports";
 import profitRoutes from "./routes/profit";
 import remindersRoutes from "./routes/reminders";
 import vehiclesRoutes from "./routes/vehicles";
-
-// --- MÓDULO COBRANZA (NUEVO) ---
 import collectionsRoutes from "./routes/collections";
 import appUsersRoutes from "./routes/app-users";
+
+// --- MÓDULO DEPÓSITOS (NUEVO) ---
+import depositsRoutes from "./routes/deposits";
 
 const app = express();
 
 /** CORS: WEB_ORIGIN (puede ser lista separada por comas) + localhost + *.vercel.app */
 const corsOptions: CorsOptionsDelegate = (req, cb) => {
   const origin = (req.headers?.origin as string) || "";
-
-  // Soportar varios orígenes en WEB_ORIGIN separados por coma
   const envOrigins = (process.env.WEB_ORIGIN || "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-
   const allowList = [
     ...envOrigins,
     "http://localhost:5173",
   ];
-
   let allowed = false;
   try {
     const host = origin ? new URL(origin).host : "";
     allowed = allowList.includes(origin) || host.endsWith(".vercel.app");
-  } catch {
-    // si new URL falla, dejamos allowed = false
-  }
+  } catch { }
 
   cb(null, {
     origin: allowed,
@@ -91,10 +86,11 @@ app.use("/reports", basicAuth, reports);
 app.use("/ledger",  basicAuth, ledgerRoutes);
 app.use("/advances", basicAuth, advancesRoutes);
 app.use("/vehicles", basicAuth, vehiclesRoutes);
-
-// --- RUTAS DE COBRANZA ---
 app.use("/collections", basicAuth, collectionsRoutes);
 app.use("/app-users", basicAuth, appUsersRoutes);
+
+// --- RUTA DE DEPÓSITOS ---
+app.use("/deposits", basicAuth, depositsRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

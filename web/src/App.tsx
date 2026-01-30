@@ -14,6 +14,7 @@ import Assistance from "./pages/Assistance"; // <--- NUEVO IMPORT
 // Páginas Administrativas
 import AdminAdvances from "./pages/AdminAdvances";
 import AdminDrivers from "./pages/AdminDrivers";
+import AdminDeposits from "./pages/AdminDeposits";
 import AdminCollections from "./pages/AdminCollections";
 import AdminVehicles from "./pages/AdminVehicles";
 import AdminProfit from "./pages/AdminProfit";
@@ -68,6 +69,7 @@ export default function App() {
           {/* FINANZAS Y UTILIDADES */}
           <Route path="advances" element={<AdminAdvances />} />
           <Route path="profit" element={<AdminProfit />} />
+          <Route path="deposits" element={<AdminDeposits />} />
           
           {/* NUEVA UBICACIÓN DE REPORTES (Mora/Cobros) */}
           <Route path="reports" element={<Reports />} /> 
