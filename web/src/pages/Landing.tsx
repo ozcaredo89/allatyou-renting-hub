@@ -10,6 +10,7 @@ import { ModelOverview } from "../components/ModelOverview";
 import { AssistanceBanner } from "../components/AssistanceBanner";
 import { PicoPlacaModal, ReminderModal } from "../components/UtilitiesModals";
 import { TrustSection } from "../components/TrustSection"; // <--- IMPORTAR
+import AssistanceQuiz from "../components/AssistanceQuiz";
 
 const WHATSAPP_URL = "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20vengo%20de%20la%20web%20y%20quiero%20m%C3%A1s%20info.";
 
@@ -234,6 +235,9 @@ export default function Landing() {
             </div>
             <p className="mb-2">© {new Date().getFullYear()} AllAtYou Renting S.A.S — NIT 901.995.593 — Cali, Colombia.</p>
           </footer>
+          {/* === SECCIÓN DE PREGUNTAS === */}
+          <AssistanceQuiz />
+      
         </div>
       </main>
 

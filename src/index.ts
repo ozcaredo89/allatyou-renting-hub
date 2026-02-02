@@ -1,4 +1,3 @@
-// src/index.ts
 import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors, { CorsOptionsDelegate } from "cors";
@@ -22,9 +21,10 @@ import remindersRoutes from "./routes/reminders";
 import vehiclesRoutes from "./routes/vehicles";
 import collectionsRoutes from "./routes/collections";
 import appUsersRoutes from "./routes/app-users";
-
-// --- MÓDULO DEPÓSITOS (NUEVO) ---
 import depositsRoutes from "./routes/deposits";
+
+// --- MÓDULO MARKETING (NUEVO) ---
+import marketingRoutes from "./routes/marketing";
 
 const app = express();
 
@@ -79,6 +79,9 @@ app.use("/metrics", metricsRouter);
 app.use("/no-pay", noPayRoutes);
 app.use("/reminders", remindersRoutes);
 
+// --- RUTA DE MARKETING (PÚBLICA PARA LA LANDING) ---
+app.use("/marketing", marketingRoutes);
+
 /** Rutas protegidas con Basic Auth (monta el middleware en la misma línea) */
 app.use("/companies", basicAuth, companiesRoutes); 
 app.use("/reports", basicAuth, profitRoutes);
@@ -88,8 +91,6 @@ app.use("/advances", basicAuth, advancesRoutes);
 app.use("/vehicles", basicAuth, vehiclesRoutes);
 app.use("/collections", basicAuth, collectionsRoutes);
 app.use("/app-users", basicAuth, appUsersRoutes);
-
-// --- RUTA DE DEPÓSITOS ---
 app.use("/deposits", basicAuth, depositsRoutes);
 
 const PORT = process.env.PORT || 3000;
