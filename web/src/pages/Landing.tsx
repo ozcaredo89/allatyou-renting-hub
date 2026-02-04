@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Calendar, Bell, Calculator, Info } from "lucide-react"; // Agregué iconos extra para uniformidad
+import { Calendar, Bell, Calculator, Info } from "lucide-react";
 import { DriverApplicationForm } from "../components/DriverApplicationForm";
 import { VehicleApplicationForm } from "../components/VehicleApplicationForm";
 import { ShareButton } from "../components/ShareButton";
@@ -9,8 +9,9 @@ import { ProcessSteps, MoneyFlow, FaqSection } from "../components/MarketingSect
 import { ModelOverview } from "../components/ModelOverview"; 
 import { AssistanceBanner } from "../components/AssistanceBanner";
 import { PicoPlacaModal, ReminderModal } from "../components/UtilitiesModals";
-import { TrustSection } from "../components/TrustSection"; // <--- IMPORTAR
+import { TrustSection } from "../components/TrustSection";
 import AssistanceQuiz from "../components/AssistanceQuiz";
+import Logo from "../components/Logo"; // <--- 1. IMPORTAR EL LOGO
 
 const WHATSAPP_URL = "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20vengo%20de%20la%20web%20y%20quiero%20m%C3%A1s%20info.";
 
@@ -59,16 +60,17 @@ export default function Landing() {
            `
          }}>
 
-      {/* 1. NAVBAR (LIMPIO DE NUEVO) */}
+      {/* 1. NAVBAR */}
       <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0b1220]/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 shadow-lg shadow-emerald-500/20 text-sm font-bold text-white">AY</div>
-            <div className="leading-tight">
-              <div className="font-bold text-white tracking-wide">AllAtYou</div>
-              <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Renting Hub</div>
-            </div>
+          
+          {/* AQUÍ ESTÁ EL CAMBIO DEL LOGO */}
+          <div className="flex items-center">
+             {/* Reemplazamos el div "AY" y el texto por el componente SVG */}
+             {/* h-8 a h-10 es un buen tamaño para navbar */}
+             <Logo className="h-9 md:h-10 w-auto" />
           </div>
+
           <nav className="hidden md:flex gap-6 text-sm font-medium text-slate-400">
             <a href="#como" className="hover:text-white transition-colors">Cómo funciona</a>
             <a href="#flujo" className="hover:text-white transition-colors">Dinero</a>
@@ -102,7 +104,7 @@ export default function Landing() {
                 Asignamos un <strong className="text-slate-200">conductor verificado</strong>, administramos la operación y te liquidamos con números claros.
               </p>
 
-              {/* === ZONA DE ACCIÓN (AQUÍ ESTÁ EL CAMBIO) === */}
+              {/* === ZONA DE ACCIÓN === */}
               <div className="flex flex-col gap-6 mb-8">
                 
                 {/* 1. Botones Principales (Negocio) */}
@@ -182,7 +184,7 @@ export default function Landing() {
           </section>
         </div>
 
-        {/* RESTO DE SECCIONES IGUALES */}
+        {/* RESTO DE SECCIONES */}
         <div className="mx-auto max-w-6xl px-4 mt-12">
           
           <section id="como" className="rounded-3xl border border-white/10 bg-[#101a33]/50 p-8 backdrop-blur-sm mb-16">
@@ -199,7 +201,6 @@ export default function Landing() {
             <MoneyFlow />
           </section>
 
-          {/* ... Formularios y Footer se mantienen igual ... */}
           <section id="conductores" className="mb-20 grid lg:grid-cols-[1fr_1.5fr] gap-12 items-start">
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-bold text-emerald-400 mb-4">CONVOCATORIA ABIERTA</div>
@@ -224,8 +225,8 @@ export default function Landing() {
           <TrustSection />
 
           <section id="faq" className="mb-20 rounded-3xl border border-white/10 bg-[#101a33]/50 p-8">
-             <h2 className="text-2xl font-bold text-white mb-6">Preguntas frecuentes</h2>
-             <FaqSection />
+              <h2 className="text-2xl font-bold text-white mb-6">Preguntas frecuentes</h2>
+              <FaqSection />
           </section>
 
           <footer className="border-t border-white/10 pt-12 pb-8 text-center text-xs text-slate-500">
@@ -235,7 +236,8 @@ export default function Landing() {
             </div>
             <p className="mb-2">© {new Date().getFullYear()} AllAtYou Renting S.A.S — NIT 901.995.593 — Cali, Colombia.</p>
           </footer>
-          {/* === SECCIÓN DE PREGUNTAS === */}
+          
+          {/* === SECCIÓN DE PREGUNTAS / QUIZ FLOTANTE === */}
           <AssistanceQuiz />
       
         </div>
