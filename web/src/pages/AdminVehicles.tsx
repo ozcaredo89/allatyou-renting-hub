@@ -15,11 +15,16 @@ type Vehicle = {
   soat_expires_at: string | null;
   tecno_expires_at: string | null;
   alarm_code: string | null;
-  gps_renewal_date: string | null; // <--- NUEVO CAMPO
+  gps_renewal_date: string | null;
   timing_belt_last_date: string | null;
   extinguisher_expiry: string | null;
   battery_install_date: string | null;
   tires_notes: string | null;
+  // CAMPOS DE INVERSIÓN (Mapeados desde vehicle_investments)
+  purchase_price?: string; 
+  purchase_date?: string;
+  // Raw data del backend para mapeo interno
+  vehicle_investments?: any[];
 };
 
 // Objeto vacío para inicializar el formulario de creación
@@ -31,12 +36,25 @@ const EMPTY_VEHICLE: Vehicle = {
   current_driver_id: null,
   soat_expires_at: null,
   tecno_expires_at: null,
-  gps_renewal_date: null, // <--- NUEVO CAMPO
+  gps_renewal_date: null,
   alarm_code: "",
   timing_belt_last_date: null,
   extinguisher_expiry: null,
   battery_install_date: null,
-  tires_notes: ""
+  tires_notes: "",
+  // Inicialización de campos nuevos
+  purchase_price: "",
+  purchase_date: new Date().toISOString().slice(0, 10)
+};
+
+// Helper para formatear visualmente (solo visual)
+const formatMoneyInput = (value: string | undefined) => {
+  if (!value) return "";
+  // Quitamos cualquier cosa que no sea número para limpiar
+  const clean = value.replace(/\D/g, "");
+  if (!clean) return "";
+  // Formateamos como moneda COP (sin decimales para inputs manuales)
+  return new Intl.NumberFormat("es-CO").format(Number(clean));
 };
 
 export default function AdminVehicles() {
@@ -64,12 +82,34 @@ export default function AdminVehicles() {
         window.location.reload();
         return;
       }
-      const jsonV = await rsV.json();
+      const rawVehicles = await rsV.json();
 
       const rsD = await fetch(`${API}/drivers`, { headers }); 
       const jsonD = await rsD.json();
 
-      setItems(Array.isArray(jsonV) ? jsonV : []);
+      // Procesar vehículos para extraer la inversión inicial "Inicial" si existe
+      const processedVehicles = Array.isArray(rawVehicles) ? rawVehicles.map((v: any) => {
+        let price = "";
+        let date = "";
+        
+        // Buscamos si el backend nos devolvió las inversiones
+        if (v.vehicle_investments && Array.isArray(v.vehicle_investments)) {
+            const initial = v.vehicle_investments.find((inv: any) => inv.concept === 'Inicial');
+            if (initial) {
+                price = String(initial.amount);
+                date = initial.date;
+            }
+        }
+
+        return {
+            ...v,
+            purchase_price: price,
+            // Si no tiene fecha guardada, sugerimos hoy, pero si tiene, usamos esa
+            purchase_date: date || new Date().toISOString().slice(0, 10)
+        };
+      }) : [];
+
+      setItems(processedVehicles);
       setDrivers(Array.isArray(jsonD) ? jsonD : []);
     } catch (e) {
       console.error(e);
@@ -97,20 +137,24 @@ export default function AdminVehicles() {
       const auth = ensureBasicAuth();
       const headers = { "Content-Type": "application/json", Authorization: auth };
       
+      // Limpiamos el objeto de campos internos (el array raw) que no necesitamos enviar
+      const { vehicle_investments, ...bodyToSend } = editing;
+
       let res;
       if (isCreating) {
         // MODO CREACIÓN (POST)
         res = await fetch(`${API}/vehicles`, {
           method: "POST",
           headers,
-          body: JSON.stringify(editing),
+          body: JSON.stringify(bodyToSend),
         });
       } else {
         // MODO EDICIÓN (PUT)
+        // Ahora SÍ enviamos purchase_price y purchase_date para que el backend actualice
         res = await fetch(`${API}/vehicles/${editing.plate}`, {
           method: "PUT",
           headers,
-          body: JSON.stringify(editing),
+          body: JSON.stringify(bodyToSend),
         });
       }
 
@@ -264,17 +308,53 @@ export default function AdminVehicles() {
                   
                   {isCreating && (
                     <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4">
-                      <label className="block text-xs font-bold text-slate-900 mb-1">PLACA (Obligatorio)</label>
-                      <input 
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-lg font-bold font-mono focus:ring-2 focus:ring-emerald-500 outline-none uppercase placeholder:normal-case"
-                        placeholder="Ej: ABC123"
-                        value={editing.plate}
-                        onChange={e => setEditing({...editing, plate: e.target.value.toUpperCase().replace(/\s/g, '')})}
-                        required
-                      />
-                      <p className="text-[10px] text-slate-500 mt-1">Debe ser única. No se puede cambiar después.</p>
+                        <label className="block text-xs font-bold text-slate-900 mb-1">PLACA (Obligatorio)</label>
+                        <input 
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-lg font-bold font-mono focus:ring-2 focus:ring-emerald-500 outline-none uppercase placeholder:normal-case"
+                          placeholder="Ej: ABC123"
+                          value={editing.plate}
+                          onChange={e => setEditing({...editing, plate: e.target.value.toUpperCase().replace(/\s/g, '')})}
+                          required
+                        />
+                        <p className="text-[10px] text-slate-500 mt-1">Debe ser única. No se puede cambiar después.</p>
                     </div>
                   )}
+
+                  {/* CAMPOS DE INVERSIÓN (VISIBLES EN CREAR Y EDITAR) */}
+                  <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-200 bg-slate-50/50 p-3 rounded-lg">
+                      <div className="col-span-2">
+                        <p className="text-xs font-bold text-slate-500 uppercase">Datos de Inversión (Inicial)</p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Precio Compra</label>
+                        <div className="relative">
+                            <span className="absolute left-3 top-2 text-slate-400">$</span>
+                            <input
+                                type="text" // <--- CAMBIO 1: Text en lugar de number
+                                className="w-full pl-6 pr-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                                placeholder="0"
+                                
+                                // <--- CAMBIO 2: Formateo visual (Pone los puntos)
+                                value={formatMoneyInput(editing.purchase_price)} 
+                                
+                                // <--- CAMBIO 3: Al escribir, quitamos puntos para guardar solo el número limpio
+                                onChange={e => {
+                                    const raw = e.target.value.replace(/\D/g, "");
+                                    setEditing({...editing, purchase_price: raw});
+                                }}
+                            />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Fecha Compra</label>
+                        <input
+                            type="date"
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                            value={editing.purchase_date}
+                            onChange={e => setEditing({...editing, purchase_date: e.target.value})}
+                        />
+                      </div>
+                  </div>
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
@@ -347,7 +427,6 @@ export default function AdminVehicles() {
                     <label className="block text-xs font-medium text-slate-700 mb-1">Vencimiento Tecno</label>
                     <input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.tecno_expires_at || ""} onChange={e => setEditing({...editing, tecno_expires_at: e.target.value})} />
                   </div>
-                  {/* NUEVO CAMPO GPS */}
                   <div>
                     <label className="block text-xs font-medium text-slate-700 mb-1">Renovación GPS</label>
                     <input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.gps_renewal_date || ""} onChange={e => setEditing({...editing, gps_renewal_date: e.target.value})} />

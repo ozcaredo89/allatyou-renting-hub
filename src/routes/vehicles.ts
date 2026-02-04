@@ -5,7 +5,7 @@ const r = Router();
 
 /**
  * GET /vehicles
- * Lista la flota completa con datos técnicos y el conductor asignado.
+ * Lista la flota completa con datos técnicos, conductor asignado E INVERSIONES.
  */
 r.get("/", async (req: Request, res: Response) => {
   try {
@@ -17,6 +17,11 @@ r.get("/", async (req: Request, res: Response) => {
           id,
           full_name,
           phone
+        ),
+        vehicle_investments (
+          amount,
+          date,
+          concept
         )
       `)
       .order("plate", { ascending: true });
@@ -30,7 +35,7 @@ r.get("/", async (req: Request, res: Response) => {
 
 /**
  * POST /vehicles
- * Registra un nuevo vehículo en la flota.
+ * Registra un nuevo vehículo en la flota e inserta la inversión inicial.
  */
 r.post("/", async (req: Request, res: Response) => {
   const body = req.body;
@@ -74,7 +79,7 @@ r.post("/", async (req: Request, res: Response) => {
       soat_expires_at: body.soat_expires_at,
       tecno_expires_at: body.tecno_expires_at,
       extinguisher_expiry: body.extinguisher_expiry,
-      gps_renewal_date: body.gps_renewal_date, // <--- NUEVO CAMPO GPS
+      gps_renewal_date: body.gps_renewal_date,
 
       // Mantenimiento
       timing_belt_last_date: body.timing_belt_last_date,
@@ -87,7 +92,7 @@ r.post("/", async (req: Request, res: Response) => {
       updated_at: new Date().toISOString(),
     };
 
-    // Eliminamos undefineds para que Postgres use defaults si aplica (o null)
+    // Eliminamos undefineds
     const cleanInsert = Object.fromEntries(
       Object.entries(newVehicle).filter(([_, v]) => v !== undefined)
     );
@@ -105,6 +110,23 @@ r.post("/", async (req: Request, res: Response) => {
       return res.status(500).json({ error: error.message });
     }
 
+    // --- NUEVA LÓGICA: Inversión Inicial (CREATE) ---
+    if (body.purchase_price && Number(body.purchase_price) > 0) {
+        const { error: errInv } = await supabase
+          .from("vehicle_investments")
+          .insert({
+            plate: cleanPlate,
+            date: body.purchase_date || new Date().toISOString().slice(0, 10),
+            concept: 'Inicial',
+            amount: Number(body.purchase_price)
+          });
+        
+        if (errInv) {
+            console.error("Error creando inversión inicial:", errInv.message);
+        }
+    }
+    // ---------------------------------------
+
     return res.status(201).json(data);
   } catch (err: any) {
     return res.status(500).json({ error: err?.message });
@@ -113,7 +135,7 @@ r.post("/", async (req: Request, res: Response) => {
 
 /**
  * PUT /vehicles/:plate
- * Actualiza la hoja de vida del vehículo y sincroniza el conductor.
+ * Actualiza vehículo E INVERSIÓN INICIAL.
  */
 r.put("/:plate", async (req: Request, res: Response) => {
   const { plate } = req.params;
@@ -132,7 +154,7 @@ r.put("/:plate", async (req: Request, res: Response) => {
       soat_expires_at: body.soat_expires_at,
       tecno_expires_at: body.tecno_expires_at,
       extinguisher_expiry: body.extinguisher_expiry,
-      gps_renewal_date: body.gps_renewal_date, // <--- NUEVO CAMPO GPS
+      gps_renewal_date: body.gps_renewal_date,
       
       // Mantenimiento
       timing_belt_last_date: body.timing_belt_last_date,
@@ -144,7 +166,7 @@ r.put("/:plate", async (req: Request, res: Response) => {
       updated_at: new Date().toISOString(),
     };
 
-    // 2. Lógica de Sincronización de nombre (Si cambia el driver)
+    // 2. Sincronización de nombre
     if (body.current_driver_id !== undefined) {
       if (body.current_driver_id === null) {
         updates.owner_name = "SIN CONDUCTOR ASIGNADO";
@@ -174,6 +196,39 @@ r.put("/:plate", async (req: Request, res: Response) => {
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    // --- NUEVA LÓGICA: Inversión Inicial (UPDATE) ---
+    // Si envían precio, actualizamos o insertamos el registro 'Inicial'
+    if (body.purchase_price && Number(body.purchase_price) > 0) {
+        // Primero intentamos actualizar si ya existe
+        const { data: existing } = await supabase
+            .from("vehicle_investments")
+            .select("id")
+            .eq("plate", plate)
+            .eq("concept", "Inicial")
+            .maybeSingle();
+
+        if (existing) {
+            // Update
+            await supabase.from("vehicle_investments")
+                .update({
+                    amount: Number(body.purchase_price),
+                    date: body.purchase_date || new Date().toISOString().slice(0, 10)
+                })
+                .eq("id", existing.id);
+        } else {
+            // Insert (Caso raro: vehículo viejo sin inversión registrada que se edita por primera vez)
+            await supabase.from("vehicle_investments")
+                .insert({
+                    plate: plate,
+                    date: body.purchase_date || new Date().toISOString().slice(0, 10),
+                    concept: 'Inicial',
+                    amount: Number(body.purchase_price)
+                });
+        }
+    }
+    // ---------------------------------------
+
     return res.json(data);
   } catch (err: any) {
     return res.status(500).json({ error: err?.message });
