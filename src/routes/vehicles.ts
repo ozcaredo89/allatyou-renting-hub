@@ -70,7 +70,6 @@ r.post("/", async (req: Request, res: Response) => {
       brand: body.brand,
       line: body.line,
       model_year: body.model_year,
-      
       current_driver_id: body.current_driver_id || null, 
       owner_name: ownerName, 
 
@@ -88,6 +87,10 @@ r.post("/", async (req: Request, res: Response) => {
       battery_install_date: body.battery_install_date,
       tires_notes: body.tires_notes,
       
+      // Documentos
+      ownership_card_front: body.ownership_card_front,
+      ownership_card_back: body.ownership_card_back,
+
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -162,6 +165,10 @@ r.put("/:plate", async (req: Request, res: Response) => {
       battery_brand: body.battery_brand,
       battery_install_date: body.battery_install_date,
       tires_notes: body.tires_notes,
+
+      // Documentos
+      ownership_card_front: body.ownership_card_front,
+      ownership_card_back: body.ownership_card_back,
       
       updated_at: new Date().toISOString(),
     };

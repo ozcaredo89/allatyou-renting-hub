@@ -20,6 +20,11 @@ type Vehicle = {
   extinguisher_expiry: string | null;
   battery_install_date: string | null;
   tires_notes: string | null;
+  
+  // CAMPOS DE DOCUMENTOS
+  ownership_card_front: string | null;
+  ownership_card_back: string | null;
+
   // CAMPOS DE INVERSIÓN (Mapeados desde vehicle_investments)
   purchase_price?: string; 
   purchase_date?: string;
@@ -42,6 +47,8 @@ const EMPTY_VEHICLE: Vehicle = {
   extinguisher_expiry: null,
   battery_install_date: null,
   tires_notes: "",
+  ownership_card_front: null,
+  ownership_card_back: null,
   // Inicialización de campos nuevos
   purchase_price: "",
   purchase_date: new Date().toISOString().slice(0, 10)
@@ -61,6 +68,7 @@ export default function AdminVehicles() {
   const [items, setItems] = useState<Vehicle[]>([]);
   const [drivers, setDrivers] = useState<DriverSimple[]>([]);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false); // <--- AGREGADO: Faltaba este estado
   
   // Estado del Modal
   const [editing, setEditing] = useState<Vehicle | null>(null);
@@ -127,6 +135,27 @@ export default function AdminVehicles() {
   function handleEdit(v: Vehicle) {
     setEditing({ ...v });
     setIsCreating(false);
+  }
+
+  async function handleUpload(file: File, field: 'ownership_card_front' | 'ownership_card_back') {
+    if (!editing) return;
+    setUploading(true);
+    try {
+        const fd = new FormData();
+        fd.append("file", file);
+        // Usamos el endpoint de uploads existente
+        const res = await fetch(`${API}/uploads`, { method: "POST", body: fd });
+        if (!res.ok) throw new Error("Error subiendo imagen");
+        const data = await res.json();
+        
+        // Actualizamos el estado con la URL recibida
+        setEditing(prev => prev ? ({ ...prev, [field]: data.url }) : null);
+    } catch (error) {
+        console.error(error);
+        alert("No se pudo subir la imagen.");
+    } finally {
+        setUploading(false);
+    }
   }
 
   async function saveChanges(e: React.FormEvent) {
@@ -221,7 +250,7 @@ export default function AdminVehicles() {
                   <th className="px-4 py-3">Conductor Actual</th>
                   <th className="px-4 py-3 text-center">SOAT</th>
                   <th className="px-4 py-3 text-center">Tecno</th>
-                  <th className="px-4 py-3">Mantenimientos</th>
+                  <th className="px-4 py-3">Docs</th>
                   <th className="px-4 py-3 text-right">Acción</th>
                 </tr>
               </thead>
@@ -255,14 +284,8 @@ export default function AdminVehicles() {
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.soat_expires_at)}`}>{v.soat_expires_at || "—"}</td>
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.tecno_expires_at)}`}>{v.tecno_expires_at || "—"}</td>
                       <td className="px-4 py-3 text-slate-500 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] uppercase tracking-wide text-slate-400 w-12">Correa</span>
-                          <span className="font-mono">{v.timing_belt_last_date || "—"}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] uppercase tracking-wide text-slate-400 w-12">Extintor</span>
-                          <span className="font-mono">{v.extinguisher_expiry || "—"}</span>
-                        </div>
+                         {/* Indicador visual si tiene tarjeta de propiedad */}
+                         {v.ownership_card_front ? <span className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-600 text-[10px] border border-emerald-100">TP OK</span> : <span className="text-[10px] text-slate-300">Sin TP</span>}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <button
@@ -303,7 +326,7 @@ export default function AdminVehicles() {
                 
                 <div className="md:col-span-2 space-y-4">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-600 border-b border-emerald-100 pb-2">
-                    Identificación y Asignación
+                    Identificación y Documentos
                   </h3>
                   
                   {isCreating && (
@@ -320,6 +343,43 @@ export default function AdminVehicles() {
                     </div>
                   )}
 
+                  {/* --- AGREGADO: UPLOADERS TARJETA DE PROPIEDAD --- */}
+                  <div className="grid grid-cols-2 gap-4">
+                     {/* FRENTE */}
+                     <div className="rounded-xl border border-dashed border-slate-300 p-4 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-slate-50 transition-colors relative group">
+                        <p className="text-xs font-bold text-slate-600 mb-2 uppercase">Tarjeta Propiedad (Frente)</p>
+                        {editing.ownership_card_front ? (
+                            <div className="relative w-full h-24 rounded-lg overflow-hidden border border-slate-200">
+                                <img src={editing.ownership_card_front} alt="TP Frente" className="w-full h-full object-cover" />
+                                <button type="button" onClick={() => setEditing({...editing, ownership_card_front: null})} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 text-xs">✕</button>
+                            </div>
+                        ) : (
+                            <label className="cursor-pointer flex flex-col items-center gap-2 w-full">
+                                <span className="bg-white border border-slate-300 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition-all">Subir Imagen</span>
+                                <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0], 'ownership_card_front')} disabled={uploading} />
+                            </label>
+                        )}
+                     </div>
+
+                     {/* REVERSO */}
+                     <div className="rounded-xl border border-dashed border-slate-300 p-4 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-slate-50 transition-colors relative group">
+                        <p className="text-xs font-bold text-slate-600 mb-2 uppercase">Tarjeta Propiedad (Reverso)</p>
+                        {editing.ownership_card_back ? (
+                            <div className="relative w-full h-24 rounded-lg overflow-hidden border border-slate-200">
+                                <img src={editing.ownership_card_back} alt="TP Reverso" className="w-full h-full object-cover" />
+                                <button type="button" onClick={() => setEditing({...editing, ownership_card_back: null})} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 text-xs">✕</button>
+                            </div>
+                        ) : (
+                            <label className="cursor-pointer flex flex-col items-center gap-2 w-full">
+                                <span className="bg-white border border-slate-300 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition-all">Subir Imagen</span>
+                                <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0], 'ownership_card_back')} disabled={uploading} />
+                            </label>
+                        )}
+                     </div>
+                  </div>
+                  {uploading && <p className="text-center text-xs text-emerald-600 font-medium animate-pulse">Subiendo imagen...</p>}
+                  {/* ------------------------------------------------ */}
+
                   {/* CAMPOS DE INVERSIÓN (VISIBLES EN CREAR Y EDITAR) */}
                   <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-200 bg-slate-50/50 p-3 rounded-lg">
                       <div className="col-span-2">
@@ -330,14 +390,10 @@ export default function AdminVehicles() {
                         <div className="relative">
                             <span className="absolute left-3 top-2 text-slate-400">$</span>
                             <input
-                                type="text" // <--- CAMBIO 1: Text en lugar de number
+                                type="text"
                                 className="w-full pl-6 pr-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
                                 placeholder="0"
-                                
-                                // <--- CAMBIO 2: Formateo visual (Pone los puntos)
                                 value={formatMoneyInput(editing.purchase_price)} 
-                                
-                                // <--- CAMBIO 3: Al escribir, quitamos puntos para guardar solo el número limpio
                                 onChange={e => {
                                     const raw = e.target.value.replace(/\D/g, "");
                                     setEditing({...editing, purchase_price: raw});
@@ -465,8 +521,8 @@ export default function AdminVehicles() {
 
             <div className="p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-2xl">
               <button type="button" onClick={() => setEditing(null)} className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-white hover:border-slate-300 transition-all">Cancelar</button>
-              <button form="vehicleForm" type="submit" className="px-5 py-2.5 rounded-xl bg-slate-900 text-sm font-bold text-white shadow-lg shadow-slate-900/20 hover:bg-black hover:scale-[1.02] transition-all">
-                {isCreating ? "Registrar Vehículo" : "Guardar Cambios"}
+              <button form="vehicleForm" type="submit" disabled={uploading} className="px-5 py-2.5 rounded-xl bg-slate-900 text-sm font-bold text-white shadow-lg shadow-slate-900/20 hover:bg-black hover:scale-[1.02] transition-all disabled:opacity-50">
+                {uploading ? "Subiendo..." : (isCreating ? "Registrar Vehículo" : "Guardar Cambios")}
               </button>
             </div>
 
