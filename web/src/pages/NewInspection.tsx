@@ -15,8 +15,11 @@ const PHOTO_FIELDS = [
   { key: "interior_front", label: "Sillas Delanteras", section: "Interior" },
   { key: "interior_back", label: "Sillas Traseras", section: "Interior" },
   
-  { key: "tires_front", label: "Llantas Delanteras", section: "Llantas" },
-  { key: "tires_back", label: "Llantas Traseras", section: "Llantas" },
+  // CAMBIO 1: Desglose de 4 Llantas
+  { key: "tires_front_left", label: "Llanta Delantera Izq.", section: "Llantas" },
+  { key: "tires_front_right", label: "Llanta Delantera Der.", section: "Llantas" },
+  { key: "tires_back_left", label: "Llanta Trasera Izq.", section: "Llantas" },
+  { key: "tires_back_right", label: "Llanta Trasera Der.", section: "Llantas" },
 ];
 
 export default function NewInspection() {
@@ -28,8 +31,8 @@ export default function NewInspection() {
   const [form, setForm] = useState({
     vehicle_plate: "",
     driver_id: "",
-    type: "general", // <--- CAMBIO 2: Default General
-    comments: "",
+    type: "general", 
+    comments: "", // CAMBIO 2: Este campo servirá para el reporte escrito
     inspector_name: "",
     photos: {} as Record<string, string> 
   });
@@ -69,13 +72,12 @@ export default function NewInspection() {
     try {
        const auth = ensureBasicAuth();
        
-       // Intentamos buscar el ID del conductor asociado al vehículo seleccionado para guardarlo
        const selectedVehicle = vehicles.find(v => v.plate === form.vehicle_plate);
        const driverId = selectedVehicle?.driver?.id || null;
 
        const payload = {
            ...form,
-           driver_id: driverId // Guardamos quién lo tenía en ese momento
+           driver_id: driverId 
        };
 
        const res = await fetch(`${API}/inspections`, {
@@ -121,7 +123,6 @@ export default function NewInspection() {
                   required
                 >
                     <option value="">-- Seleccionar --</option>
-                    {/* CAMBIO 1: Mostrar NOMBRE - PLACA */}
                     {vehicles.map(v => (
                         <option key={v.plate} value={v.plate}>
                             {v.driver?.full_name || "LIBRE"} - {v.plate}
@@ -183,7 +184,6 @@ export default function NewInspection() {
                              <span className="text-2xl text-slate-400 mb-1">📷</span>
                              <span className="text-[10px] text-slate-500 font-medium">Foto / Archivo</span>
                              
-                             {/* CAMBIO 3: Quitamos capture="environment" para que el cel pregunte */}
                              <input 
                                type="file" 
                                accept="image/*" 
@@ -199,12 +199,12 @@ export default function NewInspection() {
             </div>
           ))}
 
-          {/* OBSERVACIONES */}
+          {/* OBSERVACIONES (CAMBIO 2: Título más claro) */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">Observaciones</label>
+            <label className="block text-xs font-bold text-slate-700 mb-1">Reporte de Inspección / Observaciones</label>
             <textarea 
-                className="w-full p-3 rounded-lg border border-slate-300 h-24 resize-none focus:ring-2 focus:ring-emerald-500 outline-none"
-                placeholder="Describe rayones, golpes o novedades..."
+                className="w-full p-3 rounded-lg border border-slate-300 h-32 resize-none focus:ring-2 focus:ring-emerald-500 outline-none"
+                placeholder="Describe aquí el estado general, daños encontrados, nivel de combustible, kilometraje, etc..."
                 value={form.comments}
                 onChange={e => setForm({...form, comments: e.target.value})}
             />
