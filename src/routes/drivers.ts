@@ -56,6 +56,9 @@ r.post("/", async (req: Request, res: Response) => {
         notes: body.notes || null,
         status: body.status || "active",
         
+        // --- NUEVO CAMPO ---
+        photo_url: body.photo_url || null, 
+
         // Documentación (URLs)
         cv_url: body.cv_url || null,
         id_front_url: body.id_front_url || null,
@@ -98,6 +101,9 @@ r.put("/:id", async (req: Request, res: Response) => {
       notes: body.notes,
       status: body.status,
       
+      // --- NUEVO CAMPO ---
+      photo_url: body.photo_url,
+
       // Documentación (URLs)
       cv_url: body.cv_url,
       id_front_url: body.id_front_url,
@@ -143,9 +149,7 @@ r.post("/promote/:applicationId", async (req: Request, res: Response) => {
 
     if (appErr || !app) return res.status(404).json({ error: "Application not found" });
 
-    // Al promover, copiamos también los documentos si existieran en la postulación
-    // (Asumiendo que driver_applications tiene campos similares o se mapean aquí)
-    // Por ahora mapeamos lo básico que existía.
+    // Al promover, copiamos también los documentos si existieran
     const { data: driver, error: createErr } = await supabase
       .from("drivers")
       .insert({
@@ -157,8 +161,8 @@ r.post("/promote/:applicationId", async (req: Request, res: Response) => {
         address: app.address,
         application_id: app.id,
         status: "active"
-        // Si driver_applications tuviera PDF, aquí se mapearían:
-        // cv_url: app.cv_url ...
+        // Nota: Si en el futuro 'driver_applications' tiene foto, mapeala aquí también:
+        // photo_url: app.photo_url 
       })
       .select()
       .single();
