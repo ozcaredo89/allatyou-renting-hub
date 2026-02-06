@@ -26,6 +26,9 @@ import depositsRoutes from "./routes/deposits";
 // --- MÓDULO MARKETING (NUEVO) ---
 import marketingRoutes from "./routes/marketing";
 
+// --- MÓDULO INSPECCIONES (NUEVO) ---
+import inspectionsRoutes from "./routes/inspections"; 
+
 const app = express();
 
 /** CORS: WEB_ORIGIN (puede ser lista separada por comas) + localhost + *.vercel.app */
@@ -92,6 +95,7 @@ app.use("/vehicles", basicAuth, vehiclesRoutes);
 app.use("/collections", basicAuth, collectionsRoutes);
 app.use("/app-users", basicAuth, appUsersRoutes);
 app.use("/deposits", basicAuth, depositsRoutes);
+app.use("/inspections", basicAuth, inspectionsRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

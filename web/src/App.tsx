@@ -7,9 +7,9 @@ import PublicLayout from "./components/PublicLayout";
 // Páginas Públicas / Operativas
 import Landing from "./pages/Landing";
 import Pay from "./pages/Pay";
-import Reports from "./pages/Reports"; // Se mantiene el import
+import Reports from "./pages/Reports";
 import Expenses from "./pages/Expenses";
-import Assistance from "./pages/Assistance"; // <--- NUEVO IMPORT
+import Assistance from "./pages/Assistance";
 
 // Páginas Administrativas
 import AdminAdvances from "./pages/AdminAdvances";
@@ -20,6 +20,9 @@ import AdminVehicles from "./pages/AdminVehicles";
 import AdminProfit from "./pages/AdminProfit";
 import AdminRecruitment from "./pages/AdminRecruitment";
 import RemindersLog from "./pages/RemindersLog";
+
+// <--- NUEVO IMPORT: MÓDULO DE INSPECCIONES
+import NewInspection from "./pages/NewInspection";
 
 export default function App() {
   const hostname = window.location.hostname;
@@ -49,7 +52,7 @@ export default function App() {
           <Route path="/pay" element={<Pay />} />
           <Route path="/expenses" element={<Expenses />} />
           
-          {/* NUEVA RUTA DE ASISTENCIA */}
+          {/* RUTA DE ASISTENCIA */}
           <Route path="/assistance" element={<Assistance />} />
         </Route>
 
@@ -79,6 +82,9 @@ export default function App() {
 
           {/* RUTA DE LOG DE RECORDATORIOS */}
           <Route path="reminders-log" element={<RemindersLog />} />
+
+          {/* <--- NUEVA RUTA: INSPECCIONES */}
+          <Route path="inspections/new" element={<NewInspection />} />
 
           {/* Redirección por defecto */}
           <Route index element={<Navigate to="vehicles" replace />} />
