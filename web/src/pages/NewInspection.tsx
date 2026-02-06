@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { ensureBasicAuth } from "../lib/auth";
-import { Camera, Upload, X, Check, Plus, Image as ImageIcon } from "lucide-react";
+import { Camera, X, Check, Plus, Image as ImageIcon } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
