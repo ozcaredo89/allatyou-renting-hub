@@ -21,8 +21,9 @@ import AdminProfit from "./pages/AdminProfit";
 import AdminRecruitment from "./pages/AdminRecruitment";
 import RemindersLog from "./pages/RemindersLog";
 
-// <--- NUEVO IMPORT: MÓDULO DE INSPECCIONES
+// <--- NUEVOS IMPORTS: MÓDULO DE INSPECCIONES
 import NewInspection from "./pages/NewInspection";
+import AdminInspections from "./pages/AdminInspections"; // <--- NUEVO
 
 export default function App() {
   const hostname = window.location.hostname;
@@ -83,8 +84,9 @@ export default function App() {
           {/* RUTA DE LOG DE RECORDATORIOS */}
           <Route path="reminders-log" element={<RemindersLog />} />
 
-          {/* <--- NUEVA RUTA: INSPECCIONES */}
-          <Route path="inspections/new" element={<NewInspection />} />
+          {/* <--- INSPECCIONES */}
+          <Route path="inspections" element={<AdminInspections />} />     {/* Historial (Tabla) */}
+          <Route path="inspections/new" element={<NewInspection />} />    {/* Formulario (Fotos) */}
 
           {/* Redirección por defecto */}
           <Route index element={<Navigate to="vehicles" replace />} />

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { Menu, X } from "lucide-react"; // Necesitas tener instalado lucide-react
+import { Menu, X } from "lucide-react"; 
 import { clearBasicAuth } from "../lib/auth";
 
 export default function AdminLayout() {
@@ -39,9 +39,6 @@ export default function AdminLayout() {
       )}
 
       {/* 2. SIDEBAR RESPONSIVO */}
-      {/* - Mobile: fixed, z-50, controla visibilidad con translate-x
-         - Desktop (md): relative, siempre visible (translate-x-0)
-      */}
       <aside 
         className={`
           fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white flex flex-col shrink-0 transition-transform duration-300 ease-in-out shadow-2xl
@@ -86,9 +83,17 @@ export default function AdminLayout() {
             <NavLink to="/admin/collections" className={navItemClass}>
               <span>📲</span> Gestión Cobros
             </NavLink>
-            <NavLink to="/admin/inspections/new" className={navItemClass}>
-              <span>🔍</span> Inspección
-            </NavLink>
+            
+            {/* --- SECCIÓN INSPECCIONES --- */}
+            <div className="mt-4 pt-4 border-t border-slate-800/50">
+                <p className="px-4 text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-2">Auditoría</p>
+                <NavLink to="/admin/inspections/new" className={navItemClass}>
+                  <span>📷</span> Nueva Inspección
+                </NavLink>
+                <NavLink to="/admin/inspections" end className={navItemClass}>
+                  <span>📋</span> Historial Insp.
+                </NavLink>
+            </div>
           </div>
 
           {/* GRUPO: FINANCIERO */}
