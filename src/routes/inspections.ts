@@ -57,6 +57,8 @@ r.post("/", async (req: Request, res: Response) => {
 r.get("/:plate", async (req: Request, res: Response) => {
     const plate = String(req.params.plate || "");
 
+    // Validación simple para evitar colisión con rutas que no sean placas
+    // (Aunque por la estructura de URL no debería chocar con /logs si se llama bien)
     if (!plate) return res.status(400).json({ error: "Plate required" });
     
     try {
@@ -66,6 +68,67 @@ r.get("/:plate", async (req: Request, res: Response) => {
             .eq("vehicle_plate", plate.toUpperCase())
             .order("created_at", { ascending: false });
             
+        if (error) throw new Error(error.message);
+        return res.json(data);
+    } catch (err: any) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// 4. PUT /inspections/:id - Editar una inspección y generar log de auditoría
+r.put("/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const body = req.body;
+
+  try {
+    // A. Preparamos los datos a actualizar en la tabla principal
+    const updates = {
+      photos: body.photos,
+      comments: body.comments,
+      type: body.type, // Por si cambiaron el tipo (Entrega/Recepción)
+      // Nota: No permitimos cambiar vehicle_plate o driver_id para no romper la integridad histórica
+    };
+
+    // B. Ejecutamos la actualización
+    const { data: updatedInspection, error: updateError } = await supabase
+      .from("inspections")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (updateError) throw new Error(updateError.message);
+
+    // C. Insertamos el LOG de auditoría (Bitácora)
+    const logEntry = {
+      inspection_id: id,
+      actor_name: body.editor_name || "Admin", // Nombre de quien edita
+      change_summary: body.change_summary || "Actualización de datos (Edición manual)",
+    };
+
+    const { error: logError } = await supabase
+      .from("inspection_logs")
+      .insert(logEntry);
+
+    // No bloqueamos la respuesta si falla el log, pero lo reportamos en consola
+    if (logError) console.error("Error creating log:", logError.message); 
+
+    return res.json({ success: true, inspection: updatedInspection });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. GET /inspections/:id/logs - Ver el historial de cambios (Logs)
+r.get("/:id/logs", async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const { data, error } = await supabase
+            .from("inspection_logs")
+            .select("*")
+            .eq("inspection_id", id)
+            .order("created_at", { ascending: false });
+
         if (error) throw new Error(error.message);
         return res.json(data);
     } catch (err: any) {
