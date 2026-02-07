@@ -22,7 +22,7 @@ export default function PublicLayout() {
             AllAtYou
           </div>
           
-          <nav className="flex gap-2">
+          <nav className="flex gap-2 items-center">
             <NavLink
               to="/"
               end
@@ -31,7 +31,24 @@ export default function PublicLayout() {
               Inicio
             </NavLink>
 
-            {/* NUEVO LINK DE ASISTENCIA */}
+            {/* CATÁLOGO (DEMANDA) */}
+            <NavLink
+              to="/rent"
+              className={({ isActive }) => `${link} ${isActive ? active : inactive}`}
+            >
+              Rentar un Carro 🚗
+            </NavLink>
+
+            {/* MERCADO (OFERTA) */}
+            <NavLink
+              to="/rent-your-car"
+              className={({ isActive }) => 
+                `${link} ${isActive ? active : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'}`
+              }
+            >
+              Sube tu Carro 💸
+            </NavLink>
+
             <NavLink
               to="/assistance"
               className={({ isActive }) => `${link} ${isActive ? active : inactive}`}
@@ -51,7 +68,7 @@ export default function PublicLayout() {
         </div>
       </header>
 
-      {/* CONTENIDO PÚBLICO (Landing, Pay, Assistance, etc.) */}
+      {/* CONTENIDO PÚBLICO (Landing, Pay, Assistance, RentYourCar, etc.) */}
       <main className="flex-1">
         <Outlet />
       </main>

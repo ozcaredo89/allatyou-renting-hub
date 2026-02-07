@@ -83,6 +83,9 @@ export default function AdminLayout() {
             <NavLink to="/admin/collections" className={navItemClass}>
               <span>📲</span> Gestión Cobros
             </NavLink>
+            <NavLink to="/admin/marketplace" className={navItemClass}>
+              <span>🏪</span> Marketplace
+            </NavLink>
             
             {/* --- SECCIÓN INSPECCIONES --- */}
             <div className="mt-4 pt-4 border-t border-slate-800/50">

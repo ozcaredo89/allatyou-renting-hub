@@ -10,6 +10,8 @@ import Pay from "./pages/Pay";
 import Reports from "./pages/Reports";
 import Expenses from "./pages/Expenses";
 import Assistance from "./pages/Assistance";
+import RentYourCar from "./pages/RentYourCar"; 
+import RentCatalog from "./pages/RentCatalog";
 
 // Páginas Administrativas
 import AdminAdvances from "./pages/AdminAdvances";
@@ -20,10 +22,11 @@ import AdminVehicles from "./pages/AdminVehicles";
 import AdminProfit from "./pages/AdminProfit";
 import AdminRecruitment from "./pages/AdminRecruitment";
 import RemindersLog from "./pages/RemindersLog";
+import AdminMarketplace from "./pages/AdminMarketplace"; // <--- Importado
 
-// <--- NUEVOS IMPORTS: MÓDULO DE INSPECCIONES
+// MÓDULO DE INSPECCIONES
 import NewInspection from "./pages/NewInspection";
-import AdminInspections from "./pages/AdminInspections"; // <--- NUEVO
+import AdminInspections from "./pages/AdminInspections";
 
 export default function App() {
   const hostname = window.location.hostname;
@@ -55,6 +58,12 @@ export default function App() {
           
           {/* RUTA DE ASISTENCIA */}
           <Route path="/assistance" element={<Assistance />} />
+
+          {/* <--- FORMULARIO DE CAPTACIÓN (MARKETPLACE) */}
+          <Route path="/rent-your-car" element={<RentYourCar />} />
+
+          {/* CATÁLOGO DE RENTA (DEMANDA) */}
+          <Route path="/rent" element={<RentCatalog />} />
         </Route>
 
         {/* =======================================================
@@ -87,6 +96,9 @@ export default function App() {
           {/* <--- INSPECCIONES */}
           <Route path="inspections" element={<AdminInspections />} />     {/* Historial (Tabla) */}
           <Route path="inspections/new" element={<NewInspection />} />    {/* Formulario (Fotos) */}
+
+          {/* <--- MARKETPLACE ADMIN (MODERACIÓN) */}
+          <Route path="marketplace" element={<AdminMarketplace />} />
 
           {/* Redirección por defecto */}
           <Route index element={<Navigate to="vehicles" replace />} />

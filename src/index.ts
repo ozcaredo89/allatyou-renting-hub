@@ -23,11 +23,14 @@ import collectionsRoutes from "./routes/collections";
 import appUsersRoutes from "./routes/app-users";
 import depositsRoutes from "./routes/deposits";
 
-// --- MÓDULO MARKETING (NUEVO) ---
+// --- MÓDULO MARKETING ---
 import marketingRoutes from "./routes/marketing";
 
-// --- MÓDULO INSPECCIONES (NUEVO) ---
+// --- MÓDULO INSPECCIONES ---
 import inspectionsRoutes from "./routes/inspections"; 
+
+// --- MÓDULO MARKETPLACE (TURO CRIOLLO) ---
+import marketplaceRoutes from "./routes/marketplace"; // <--- NUEVO IMPORT
 
 const app = express();
 
@@ -84,6 +87,9 @@ app.use("/reminders", remindersRoutes);
 
 // --- RUTA DE MARKETING (PÚBLICA PARA LA LANDING) ---
 app.use("/marketing", marketingRoutes);
+
+// --- RUTA MARKETPLACE (PÚBLICA: CATÁLOGO Y UPLOAD) ---
+app.use("/marketplace", marketplaceRoutes); // <--- NUEVA RUTA CONECTADA
 
 /** Rutas protegidas con Basic Auth (monta el middleware en la misma línea) */
 app.use("/companies", basicAuth, companiesRoutes); 
