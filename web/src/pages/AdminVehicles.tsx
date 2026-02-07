@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
+import { Camera, Image as ImageIcon, X, UploadCloud } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -25,14 +26,12 @@ type Vehicle = {
   ownership_card_front: string | null;
   ownership_card_back: string | null;
 
-  // CAMPOS DE INVERSIÓN (Mapeados desde vehicle_investments)
+  // CAMPOS DE INVERSIÓN
   purchase_price?: string; 
   purchase_date?: string;
-  // Raw data del backend para mapeo interno
   vehicle_investments?: any[];
 };
 
-// Objeto vacío para inicializar el formulario de creación
 const EMPTY_VEHICLE: Vehicle = {
   plate: "",
   brand: "",
@@ -49,18 +48,14 @@ const EMPTY_VEHICLE: Vehicle = {
   tires_notes: "",
   ownership_card_front: null,
   ownership_card_back: null,
-  // Inicialización de campos nuevos
   purchase_price: "",
   purchase_date: new Date().toISOString().slice(0, 10)
 };
 
-// Helper para formatear visualmente (solo visual)
 const formatMoneyInput = (value: string | undefined) => {
   if (!value) return "";
-  // Quitamos cualquier cosa que no sea número para limpiar
   const clean = value.replace(/\D/g, "");
   if (!clean) return "";
-  // Formateamos como moneda COP (sin decimales para inputs manuales)
   return new Intl.NumberFormat("es-CO").format(Number(clean));
 };
 
@@ -68,11 +63,20 @@ export default function AdminVehicles() {
   const [items, setItems] = useState<Vehicle[]>([]);
   const [drivers, setDrivers] = useState<DriverSimple[]>([]);
   const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false); // <--- AGREGADO: Faltaba este estado
+  const [uploading, setUploading] = useState(false);
   
-  // Estado del Modal
+  // Estado del Modal y Edición
   const [editing, setEditing] = useState<Vehicle | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+
+  // --- ESTADOS PARA CÁMARA (NUEVO) ---
+  const [activeField, setActiveField] = useState<'ownership_card_front' | 'ownership_card_back' | null>(null);
+  const [showCamera, setShowCamera] = useState(false);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadData();
@@ -91,16 +95,12 @@ export default function AdminVehicles() {
         return;
       }
       const rawVehicles = await rsV.json();
-
       const rsD = await fetch(`${API}/drivers`, { headers }); 
       const jsonD = await rsD.json();
 
-      // Procesar vehículos para extraer la inversión inicial "Inicial" si existe
       const processedVehicles = Array.isArray(rawVehicles) ? rawVehicles.map((v: any) => {
         let price = "";
         let date = "";
-        
-        // Buscamos si el backend nos devolvió las inversiones
         if (v.vehicle_investments && Array.isArray(v.vehicle_investments)) {
             const initial = v.vehicle_investments.find((inv: any) => inv.concept === 'Inicial');
             if (initial) {
@@ -108,11 +108,9 @@ export default function AdminVehicles() {
                 date = initial.date;
             }
         }
-
         return {
             ...v,
             purchase_price: price,
-            // Si no tiene fecha guardada, sugerimos hoy, pero si tiene, usamos esa
             purchase_date: date || new Date().toISOString().slice(0, 10)
         };
       }) : [];
@@ -137,26 +135,81 @@ export default function AdminVehicles() {
     setIsCreating(false);
   }
 
-  async function handleUpload(file: File, field: 'ownership_card_front' | 'ownership_card_back') {
+  // --- LÓGICA DE SUBIDA UNIFICADA ---
+  async function performUpload(file: File, field: 'ownership_card_front' | 'ownership_card_back') {
     if (!editing) return;
     setUploading(true);
     try {
         const fd = new FormData();
         fd.append("file", file);
-        // Usamos el endpoint de uploads existente
         const res = await fetch(`${API}/uploads`, { method: "POST", body: fd });
         if (!res.ok) throw new Error("Error subiendo imagen");
         const data = await res.json();
         
-        // Actualizamos el estado con la URL recibida
         setEditing(prev => prev ? ({ ...prev, [field]: data.url }) : null);
     } catch (error) {
         console.error(error);
         alert("No se pudo subir la imagen.");
     } finally {
         setUploading(false);
+        setActiveField(null); // Cerrar menú
     }
   }
+
+  // --- LÓGICA DE CÁMARA ---
+  const startCamera = async () => {
+    // No cerramos activeField aún porque lo necesitamos para saber dónde guardar
+    setShowCamera(true);
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: "environment" } 
+      });
+      setStream(mediaStream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+        videoRef.current.play();
+      }
+    } catch (err) {
+      console.error(err);
+      alert("No pudimos acceder a la cámara.");
+      setShowCamera(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+    setShowCamera(false);
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current || !canvasRef.current || !activeField) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext('2d');
+    
+    if (context) {
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const file = new File([blob], `tp_${activeField}_${Date.now()}.jpg`, { type: "image/jpeg" });
+          stopCamera();
+          performUpload(file, activeField);
+        }
+      }, 'image/jpeg', 0.8);
+    }
+  };
+
+  // Manejador del input de archivo oculto
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.[0] && activeField) {
+        performUpload(e.target.files[0], activeField);
+    }
+  };
 
   async function saveChanges(e: React.FormEvent) {
     e.preventDefault();
@@ -165,21 +218,16 @@ export default function AdminVehicles() {
     try {
       const auth = ensureBasicAuth();
       const headers = { "Content-Type": "application/json", Authorization: auth };
-      
-      // Limpiamos el objeto de campos internos (el array raw) que no necesitamos enviar
       const { vehicle_investments, ...bodyToSend } = editing;
 
       let res;
       if (isCreating) {
-        // MODO CREACIÓN (POST)
         res = await fetch(`${API}/vehicles`, {
           method: "POST",
           headers,
           body: JSON.stringify(bodyToSend),
         });
       } else {
-        // MODO EDICIÓN (PUT)
-        // Ahora SÍ enviamos purchase_price y purchase_date para que el backend actualice
         res = await fetch(`${API}/vehicles/${editing.plate}`, {
           method: "PUT",
           headers,
@@ -204,9 +252,7 @@ export default function AdminVehicles() {
     if (!dateStr) return "text-gray-300";
     const d = new Date(dateStr);
     const now = new Date();
-    const diffTime = d.getTime() - now.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
+    const diffDays = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
     if (diffDays < 0) return "bg-red-100 text-red-700 font-bold";
     if (diffDays < 30) return "bg-amber-100 text-amber-700 font-medium";
     return "text-gray-700";
@@ -215,31 +261,21 @@ export default function AdminVehicles() {
   return (
     <div className="min-h-screen p-6 bg-slate-50">
       <div className="mx-auto max-w-[1400px]">
+        {/* HEADER */}
         <div className="mb-6 flex items-end justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-              Gestión de Flota
-            </h1>
-            <p className="text-sm text-slate-500">
-              Hoja de vida, mantenimientos y asignación de conductores.
-            </p>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900">Gestión de Flota</h1>
+            <p className="text-sm text-slate-500">Hoja de vida, mantenimientos y asignación.</p>
           </div>
           <div className="flex gap-3">
-            <button
-              onClick={loadData}
-              className="text-sm text-emerald-600 hover:text-emerald-700 hover:underline font-medium px-3"
-            >
-              Refrescar
-            </button>
-            <button
-              onClick={handleCreate}
-              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-lg hover:bg-black transition-all"
-            >
+            <button onClick={loadData} className="text-sm text-emerald-600 hover:underline font-medium px-3">Refrescar</button>
+            <button onClick={handleCreate} className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-lg hover:bg-black transition-all">
               <span>+</span> Registrar Vehículo
             </button>
           </div>
         </div>
 
+        {/* TABLA */}
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
@@ -277,23 +313,15 @@ export default function AdminVehicles() {
                               {v.driver.full_name}
                             </span>
                           </div>
-                        ) : (
-                          <span className="text-slate-400 italic text-[11px]">Sin asignar</span>
-                        )}
+                        ) : <span className="text-slate-400 italic text-[11px]">Sin asignar</span>}
                       </td>
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.soat_expires_at)}`}>{v.soat_expires_at || "—"}</td>
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.tecno_expires_at)}`}>{v.tecno_expires_at || "—"}</td>
                       <td className="px-4 py-3 text-slate-500 space-y-1">
-                         {/* Indicador visual si tiene tarjeta de propiedad */}
-                         {v.ownership_card_front ? <span className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-600 text-[10px] border border-emerald-100">TP OK</span> : <span className="text-[10px] text-slate-300">Sin TP</span>}
+                          {v.ownership_card_front ? <span className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-600 text-[10px] border border-emerald-100">TP OK</span> : <span className="text-[10px] text-slate-300">Sin TP</span>}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => handleEdit(v)}
-                          className="rounded-lg border border-slate-200 px-3 py-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors font-medium"
-                        >
-                          Editar
-                        </button>
+                        <button onClick={() => handleEdit(v)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-slate-600 hover:bg-slate-100 font-medium">Editar</button>
                       </td>
                     </tr>
                   ))
@@ -304,7 +332,7 @@ export default function AdminVehicles() {
         </div>
       </div>
 
-      {/* MODAL (CREAR / EDITAR) */}
+      {/* --- MODAL EDICIÓN --- */}
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="w-full max-w-3xl rounded-2xl bg-white p-0 shadow-2xl max-h-[90vh] flex flex-col">
@@ -325,9 +353,7 @@ export default function AdminVehicles() {
               <form id="vehicleForm" onSubmit={saveChanges} className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 
                 <div className="md:col-span-2 space-y-4">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-600 border-b border-emerald-100 pb-2">
-                    Identificación y Documentos
-                  </h3>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-600 border-b border-emerald-100 pb-2">Identificación y Documentos</h3>
                   
                   {isCreating && (
                     <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4">
@@ -339,48 +365,57 @@ export default function AdminVehicles() {
                           onChange={e => setEditing({...editing, plate: e.target.value.toUpperCase().replace(/\s/g, '')})}
                           required
                         />
-                        <p className="text-[10px] text-slate-500 mt-1">Debe ser única. No se puede cambiar después.</p>
+                        <p className="text-[10px] text-slate-500 mt-1">Debe ser única.</p>
                     </div>
                   )}
 
-                  {/* --- AGREGADO: UPLOADERS TARJETA DE PROPIEDAD --- */}
+                  {/* --- TARJETAS DE PROPIEDAD CON SELECTOR INTELIGENTE --- */}
                   <div className="grid grid-cols-2 gap-4">
-                     {/* FRENTE */}
-                     <div className="rounded-xl border border-dashed border-slate-300 p-4 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-slate-50 transition-colors relative group">
-                        <p className="text-xs font-bold text-slate-600 mb-2 uppercase">Tarjeta Propiedad (Frente)</p>
-                        {editing.ownership_card_front ? (
-                            <div className="relative w-full h-24 rounded-lg overflow-hidden border border-slate-200">
-                                <img src={editing.ownership_card_front} alt="TP Frente" className="w-full h-full object-cover" />
-                                <button type="button" onClick={() => setEditing({...editing, ownership_card_front: null})} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 text-xs">✕</button>
-                            </div>
-                        ) : (
-                            <label className="cursor-pointer flex flex-col items-center gap-2 w-full">
-                                <span className="bg-white border border-slate-300 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition-all">Subir Imagen</span>
-                                <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0], 'ownership_card_front')} disabled={uploading} />
-                            </label>
-                        )}
-                     </div>
+                      
+                      {/* FRENTE */}
+                      <div className="relative group">
+                          <p className="text-xs font-bold text-slate-600 mb-2 uppercase">Tarjeta Propiedad (Frente)</p>
+                          <div 
+                             onClick={() => setActiveField('ownership_card_front')}
+                             className="rounded-xl border border-dashed border-slate-300 p-1 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-slate-100 transition-colors cursor-pointer h-32 overflow-hidden"
+                          >
+                             {editing.ownership_card_front ? (
+                                <img src={editing.ownership_card_front} alt="TP Frente" className="w-full h-full object-cover rounded-lg" />
+                             ) : (
+                                <div className="text-center">
+                                    <UploadCloud className="w-8 h-8 text-slate-300 mx-auto mb-1" />
+                                    <span className="text-[10px] text-slate-500 font-bold">Tocar para subir</span>
+                                </div>
+                             )}
+                          </div>
+                          {editing.ownership_card_front && (
+                              <button type="button" onClick={(e) => { e.stopPropagation(); setEditing({...editing, ownership_card_front: null}); }} className="absolute top-8 right-1 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 text-xs z-10">✕</button>
+                          )}
+                      </div>
 
-                     {/* REVERSO */}
-                     <div className="rounded-xl border border-dashed border-slate-300 p-4 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-slate-50 transition-colors relative group">
-                        <p className="text-xs font-bold text-slate-600 mb-2 uppercase">Tarjeta Propiedad (Reverso)</p>
-                        {editing.ownership_card_back ? (
-                            <div className="relative w-full h-24 rounded-lg overflow-hidden border border-slate-200">
-                                <img src={editing.ownership_card_back} alt="TP Reverso" className="w-full h-full object-cover" />
-                                <button type="button" onClick={() => setEditing({...editing, ownership_card_back: null})} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 text-xs">✕</button>
-                            </div>
-                        ) : (
-                            <label className="cursor-pointer flex flex-col items-center gap-2 w-full">
-                                <span className="bg-white border border-slate-300 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition-all">Subir Imagen</span>
-                                <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0], 'ownership_card_back')} disabled={uploading} />
-                            </label>
-                        )}
-                     </div>
+                      {/* REVERSO */}
+                      <div className="relative group">
+                          <p className="text-xs font-bold text-slate-600 mb-2 uppercase">Tarjeta Propiedad (Reverso)</p>
+                          <div 
+                             onClick={() => setActiveField('ownership_card_back')}
+                             className="rounded-xl border border-dashed border-slate-300 p-1 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-slate-100 transition-colors cursor-pointer h-32 overflow-hidden"
+                          >
+                             {editing.ownership_card_back ? (
+                                <img src={editing.ownership_card_back} alt="TP Reverso" className="w-full h-full object-cover rounded-lg" />
+                             ) : (
+                                <div className="text-center">
+                                    <UploadCloud className="w-8 h-8 text-slate-300 mx-auto mb-1" />
+                                    <span className="text-[10px] text-slate-500 font-bold">Tocar para subir</span>
+                                </div>
+                             )}
+                          </div>
+                          {editing.ownership_card_back && (
+                              <button type="button" onClick={(e) => { e.stopPropagation(); setEditing({...editing, ownership_card_back: null}); }} className="absolute top-8 right-1 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 text-xs z-10">✕</button>
+                          )}
+                      </div>
                   </div>
-                  {uploading && <p className="text-center text-xs text-emerald-600 font-medium animate-pulse">Subiendo imagen...</p>}
                   {/* ------------------------------------------------ */}
 
-                  {/* CAMPOS DE INVERSIÓN (VISIBLES EN CREAR Y EDITAR) */}
                   <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-200 bg-slate-50/50 p-3 rounded-lg">
                       <div className="col-span-2">
                         <p className="text-xs font-bold text-slate-500 uppercase">Datos de Inversión (Inicial)</p>
@@ -394,10 +429,7 @@ export default function AdminVehicles() {
                                 className="w-full pl-6 pr-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
                                 placeholder="0"
                                 value={formatMoneyInput(editing.purchase_price)} 
-                                onChange={e => {
-                                    const raw = e.target.value.replace(/\D/g, "");
-                                    setEditing({...editing, purchase_price: raw});
-                                }}
+                                onChange={e => setEditing({...editing, purchase_price: e.target.value.replace(/\D/g, "")})}
                             />
                         </div>
                       </div>
@@ -415,64 +447,35 @@ export default function AdminVehicles() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
                       <label className="block text-xs font-medium text-slate-700 mb-1">Marca</label>
-                      <input 
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                        placeholder="Ej: Kia"
-                        value={editing.brand || ""}
-                        onChange={e => setEditing({...editing, brand: e.target.value})}
-                      />
+                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Ej: Kia" value={editing.brand || ""} onChange={e => setEditing({...editing, brand: e.target.value})} />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 mb-1">Línea</label>
-                      <input 
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                        placeholder="Ej: Picanto"
-                        value={editing.line || ""}
-                        onChange={e => setEditing({...editing, line: e.target.value})}
-                      />
+                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Ej: Picanto" value={editing.line || ""} onChange={e => setEditing({...editing, line: e.target.value})} />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 mb-1">Modelo (Año)</label>
-                      <input 
-                        type="number"
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                        placeholder="2024"
-                        value={editing.model_year || ""}
-                        onChange={e => setEditing({...editing, model_year: Number(e.target.value)})}
-                      />
+                      <input type="number" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="2024" value={editing.model_year || ""} onChange={e => setEditing({...editing, model_year: Number(e.target.value)})} />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 mb-1">Clave Alarma</label>
-                      <input 
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
-                        placeholder="****"
-                        value={editing.alarm_code || ""}
-                        onChange={e => setEditing({...editing, alarm_code: e.target.value})}
-                      />
+                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono" placeholder="****" value={editing.alarm_code || ""} onChange={e => setEditing({...editing, alarm_code: e.target.value})} />
                     </div>
                   </div>
 
                   <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-100">
-                    <label className="block text-xs font-bold text-emerald-800 mb-2">
-                      Conductor Asignado (Responsable)
-                    </label>
+                    <label className="block text-xs font-bold text-emerald-800 mb-2">Conductor Asignado</label>
                     <div className="relative">
-                      <select 
-                        className="w-full appearance-none rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none"
-                        value={editing.current_driver_id || ""}
-                        onChange={e => setEditing({...editing, current_driver_id: Number(e.target.value) || null})}
-                      >
+                      <select className="w-full appearance-none rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none" value={editing.current_driver_id || ""} onChange={e => setEditing({...editing, current_driver_id: Number(e.target.value) || null})}>
                         <option value="">-- Vehículo sin asignar --</option>
-                        {drivers.map(d => (
-                          <option key={d.id} value={d.id}>{d.full_name}</option>
-                        ))}
+                        {drivers.map(d => (<option key={d.id} value={d.id}>{d.full_name}</option>))}
                       </select>
                       <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-emerald-600">▼</div>
                     </div>
                   </div>
                 </div>
 
-                {/* SECCIÓN 2: LEGAL */}
+                {/* SECCIÓN 2 y 3 (Legal y Mantenimiento) */}
                 <div className="space-y-4">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 pb-2">Documentación</h3>
                   <div>
@@ -489,11 +492,10 @@ export default function AdminVehicles() {
                   </div>
                 </div>
 
-                {/* SECCIÓN 3: MANTENIMIENTO */}
                 <div className="space-y-4">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 pb-2">Mantenimiento</h3>
                   <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">Cambio Correa (Fecha)</label>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Cambio Correa</label>
                     <input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.timing_belt_last_date || ""} onChange={e => setEditing({...editing, timing_belt_last_date: e.target.value})} />
                   </div>
                   <div>
@@ -508,27 +510,72 @@ export default function AdminVehicles() {
 
                 <div className="md:col-span-2">
                   <label className="block text-xs font-medium text-slate-700 mb-1">Notas Llantas / Observaciones</label>
-                  <textarea 
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm h-20 resize-none"
-                    placeholder="Estado de las llantas, rayones, etc..."
-                    value={editing.tires_notes || ""}
-                    onChange={e => setEditing({...editing, tires_notes: e.target.value})}
-                  />
+                  <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm h-20 resize-none" placeholder="Estado de las llantas..." value={editing.tires_notes || ""} onChange={e => setEditing({...editing, tires_notes: e.target.value})} />
                 </div>
-
               </form>
             </div>
 
             <div className="p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-2xl">
-              <button type="button" onClick={() => setEditing(null)} className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-white hover:border-slate-300 transition-all">Cancelar</button>
-              <button form="vehicleForm" type="submit" disabled={uploading} className="px-5 py-2.5 rounded-xl bg-slate-900 text-sm font-bold text-white shadow-lg shadow-slate-900/20 hover:bg-black hover:scale-[1.02] transition-all disabled:opacity-50">
+              <button type="button" onClick={() => setEditing(null)} className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-white transition-all">Cancelar</button>
+              <button form="vehicleForm" type="submit" disabled={uploading} className="px-5 py-2.5 rounded-xl bg-slate-900 text-sm font-bold text-white shadow-lg hover:bg-black transition-all">
                 {uploading ? "Subiendo..." : (isCreating ? "Registrar Vehículo" : "Guardar Cambios")}
               </button>
             </div>
-
           </div>
         </div>
       )}
+
+      {/* --- SELECTOR (ACTION SHEET / MODAL) --- */}
+      {activeField && !showCamera && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="w-full max-w-sm bg-white rounded-t-3xl sm:rounded-3xl p-6 pb-10 sm:pb-6 space-y-4 animate-in slide-in-from-bottom sm:slide-in-from-bottom-10 duration-300 shadow-2xl">
+                <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-lg font-bold text-slate-800">Seleccionar Imagen</h3>
+                    <button onClick={() => setActiveField(null)} className="p-1 bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                    <button onClick={startCamera} className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-100 transition-colors group">
+                        <div className="w-12 h-12 bg-white text-emerald-600 rounded-full flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
+                            <Camera className="w-6 h-6" />
+                        </div>
+                        <span className="text-sm font-bold text-emerald-800">Usar Cámara</span>
+                    </button>
+
+                    <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl bg-blue-50 hover:bg-blue-100 border border-blue-100 transition-colors group">
+                        <div className="w-12 h-12 bg-white text-blue-600 rounded-full flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
+                            <ImageIcon className="w-6 h-6" />
+                        </div>
+                        <span className="text-sm font-bold text-blue-800">Galería / Archivo</span>
+                    </button>
+                </div>
+            </div>
+            <div className="absolute inset-0 -z-10" onClick={() => setActiveField(null)} />
+        </div>
+      )}
+
+      {/* INPUT OCULTO */}
+      <input type="file" accept="image/*" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
+
+      {/* --- MODAL DE CÁMARA FULLSCREEN (Z-70 para tapar todo) --- */}
+      {showCamera && (
+        <div className="fixed inset-0 z-[70] bg-black flex flex-col animate-in fade-in duration-300">
+            <div className="p-4 flex justify-between items-center bg-black/50 absolute top-0 w-full z-10 backdrop-blur-sm">
+                <span className="text-white font-bold text-sm">Tomar Foto</span>
+                <button onClick={stopCamera} className="text-white bg-white/20 p-2 rounded-full"><X className="w-6 h-6" /></button>
+            </div>
+            <div className="flex-1 relative flex items-center justify-center bg-black">
+                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-contain" />
+                <canvas ref={canvasRef} className="hidden" />
+            </div>
+            <div className="p-8 bg-black flex justify-center pb-12">
+                <button onClick={capturePhoto} className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center bg-white/20 active:bg-white active:scale-95 transition-all">
+                    <div className="w-16 h-16 bg-white rounded-full" />
+                </button>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 }

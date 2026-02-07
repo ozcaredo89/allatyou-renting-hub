@@ -1,37 +1,64 @@
-# Especificación Técnica: Módulo de Inspecciones (Revisión de Vehículos)
+# Especificación Técnica: Sistema de Inspecciones y Auditoría
 
-**Fecha:** 06-Feb-2026
+**Fecha:** 07-Feb-2026
 **Autor:** AllAtYou Renting Hub
 **Estado:** Implementado ✅
 
 ---
 
 ## 1. Resumen Ejecutivo
-Este módulo permite realizar una auditoría visual y detallada del estado del vehículo en momentos clave (Entrega al conductor, Recepción, o Control General). Su objetivo es generar evidencia fotográfica inmutable y reportes escritos para resolver disputas sobre daños, aseo o faltantes.
+Este módulo gestiona el ciclo de vida de la revisión de activos.
+1.  **Captura (Mobile):** Auditoría visual detallada en momentos clave (Entrega, Recepción, General) para generar evidencia inmutable.
+2.  **Gestión (Admin):** Interfaz para visualizar, auditar y corregir registros mediante un sistema de trazas (Logs) que garantiza la integridad de los datos ante ediciones posteriores.
 
 ---
 
-## 2. Modelo de Datos (Base de Datos)
+## 2. Alcance Funcional
 
-Se utiliza una tabla relacional con capacidad semi-estructurada (JSONB) para flexibilidad en las fotos.
+### 2.1 Captura en Campo
+* Formulario móvil optimizado con acceso a cámara nativa.
+* Carga de evidencia fotográfica obligatoria según el protocolo.
 
-**Tabla:** `public.inspections`
+### 2.2 Dashboard Administrativo
+* **Listado Maestro:** Visualización tabular cronológica.
+* **Visor de Detalle:** Renderizado de fotos con etiquetas legibles ("Llanta Delantera" vs `tires_front`).
+
+### 2.3 Edición y Auditoría (NUEVO)
+* **Corrección:** Permite editar observaciones y tipo de inspección en caso de error humano.
+* **Logs de Cambios:** Cada edición requiere una justificación obligatoria y se registra en una tabla histórica inmutable (`inspection_logs`).
+
+---
+
+## 3. Modelo de Datos (Base de Datos)
+
+### 3.1 Tabla Principal: `public.inspections`
+Almacena el estado actual "vivo" de la inspección.
 
 | Columna | Tipo | Descripción | Restricciones |
 | :--- | :--- | :--- | :--- |
 | `id` | `bigint` | Identificador único | PK, Auto-incremental |
 | `vehicle_plate` | `text` | Placa del vehículo | FK -> `vehicles(plate)` |
-| `driver_id` | `bigint` | Conductor responsable en ese momento | FK -> `drivers(id)`, Nullable |
-| `created_at` | `timestamptz` | Fecha y hora exacta de la revisión | Default `now()` |
-| `type` | `text` | Motivo de la revisión | `entrega`, `recepcion`, `general` |
-| `photos` | `jsonb` | URLs de las imágenes almacenadas | Default `'{}'` |
-| `comments` | `text` | Observaciones escritas / Reporte de daños | Nullable |
-| `inspector_name`| `text` | Nombre de quien realizó la revisión | Nullable |
+| `driver_id` | `bigint` | Conductor responsable | FK -> `drivers(id)`, Nullable |
+| `created_at` | `timestamptz` | Fecha de la revisión | Default `now()` |
+| `type` | `text` | Motivo | `entrega`, `recepcion`, `general` |
+| `photos` | `jsonb` | URLs de las imágenes | Estructura JSON (Ver 3.3) |
+| `comments` | `text` | Reporte escrito | Nullable |
+| `inspector_name`| `text` | Quien realizó la revisión | Nullable |
 
-### Estructura del Objeto JSON (`photos`)
-El campo `photos` almacena pares clave-valor donde la clave es la posición y el valor es la URL pública en Supabase Storage.
+### 3.2 Tabla de Auditoría: `public.inspection_logs` (NUEVO)
+Almacena el historial de cambios para trazabilidad.
 
-**Ejemplo de Estructura:**
+| Columna | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `id` | `bigint` | PK |
+| `inspection_id` | `bigint` | FK -> `inspections(id)` |
+| `actor_name` | `text` | Quién realizó el cambio (Admin) |
+| `change_summary` | `text` | Justificación del cambio (Obligatorio) |
+| `created_at` | `timestamptz` | Fecha del cambio |
+
+### 3.3 Estructura del Objeto JSON (`photos`)
+Pares clave-valor donde la clave es la posición técnica y el valor la URL pública.
+
 ```json
 {
   "front": "https://supabase.../front.jpg",
