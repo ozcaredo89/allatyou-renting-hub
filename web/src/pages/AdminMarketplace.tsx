@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { CheckCircle, XCircle, Clock, MapPin, Phone, Car } from "lucide-react";
+import { CheckCircle, XCircle, Clock, MapPin, Phone } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 

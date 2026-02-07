@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { MessageCircle, Fuel, Gauge, Calendar, MapPin } from "lucide-react";
+import { MessageCircle, Gauge, MapPin } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
-const WHATSAPP_PHONE = "573001234567"; // <--- ¡CAMBIA ESTO POR TU NÚMERO DE VENTAS!
+const WHATSAPP_PHONE = "573113738912"; // <--- ¡CAMBIA ESTO POR TU NÚMERO DE VENTAS!
 
 type Car = {
   id: number;
