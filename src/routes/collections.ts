@@ -36,7 +36,7 @@ const getColTime = () => {
 /**
  * GET /collections/pending
  * Devuelve la lista de conductores para notificar hoy.
- * Regla: Hora > 15:45 (3:45 PM)
+ * Regla: Hora > 15:45 (3:45 PM) -> DESHABILITADA TEMPORALMENTE
  */
 r.get("/pending", async (req: Request, res: Response) => {
   try {
@@ -44,7 +44,8 @@ r.get("/pending", async (req: Request, res: Response) => {
     const force = req.query.force === "true"; // Backdoor para pruebas
 
     // 1. Validación de Hora (3:45 PM)
-    // Si es antes de las 15:45 y no se fuerza, bloqueamos.
+    // --- BLOQUEO SUSPENDIDO PARA PERMITIR GESTIÓN A CUALQUIER HORA ---
+    /*
     if (!force) {
       if (hour < 15 || (hour === 15 && minute < 45)) {
         return res.json({
@@ -54,6 +55,7 @@ r.get("/pending", async (req: Request, res: Response) => {
         });
       }
     }
+    */
 
     // 2. Obtener morosos (Reusando la vista vehicle_last_payment)
     // Buscamos solo los que tienen is_overdue = true
@@ -76,60 +78,66 @@ r.get("/pending", async (req: Request, res: Response) => {
     const notificadosSet = new Set(notificados?.map(n => n.vehicle_plate) || []);
 
     // 4. Filtrar y buscar datos adicionales (Teléfono conductor)
-    // La vista vehicle_last_payment a veces no tiene el teléfono actualizado del driver,
-    // así que hacemos un join manual o confiamos en la vista si la actualizamos.
-    // Para asegurar, vamos a cruzar con la tabla drivers para tener el phone fresco.
-    
     const pendingList = [];
 
-    for (const item of (morosos || [])) {
-      // Si ya se notificó hoy, saltar
-      if (notificadosSet.has(item.plate)) continue;
+    // Usamos un bucle for-of para poder usar await dentro (consultas secuenciales)
+    // Podría optimizarse con Promise.all si la lista crece mucho.
+    if (morosos && morosos.length > 0) {
+        for (const item of morosos) {
+          // Si ya se notificó hoy, saltar
+          if (notificadosSet.has(item.plate)) continue;
 
-      // Buscar teléfono real del conductor actual (Prioridad Driver > Vehicle)
-      // Nota: Esto podría optimizarse con un join SQL, pero por ahora loop está bien para <100 items.
-      let phone = null;
-      let driverId = null;
+          // Buscar teléfono real del conductor actual (Prioridad Driver > Vehicle)
+          let phone = null;
+          let driverId = null;
+          let ownerName = item.driver_name; // Default de la vista
 
-      // Buscar en tabla vehicles para sacar el driver_id actual
-      const { data: v } = await supabase
-        .from("vehicles")
-        .select("current_driver_id, owner_whatsapp, company_id")
-        .eq("plate", item.plate)
-        .single();
-
-      if (v) {
-        // Filtrar por empresa (Punto 3: Por ahora AllAtYou = 1, o lo que venga)
-        // Si quieres filtrar por query param ?company_id=1, agrégalo aquí.
-        
-        if (v.current_driver_id) {
-          driverId = v.current_driver_id;
-          const { data: d } = await supabase
-            .from("drivers")
-            .select("phone")
-            .eq("id", driverId)
+          // Buscar en tabla vehicles para sacar el driver_id actual
+          const { data: v } = await supabase
+            .from("vehicles")
+            .select("current_driver_id, owner_whatsapp, company_id")
+            .eq("plate", item.plate)
             .single();
-          if (d && d.phone) phone = d.phone;
-        }
-        
-        // Fallback al del vehículo
-        if (!phone && v.owner_whatsapp) phone = v.owner_whatsapp;
-      }
 
-      pendingList.push({
-        ...item,
-        driver_id: driverId,
-        contact_phone: phone,
-        days_overdue: item.days_since // Dato crítico para el mensaje
-      });
+          if (v) {
+            // Aquí podrías filtrar por company_id si lo recibes en el query
+
+            if (v.current_driver_id) {
+              driverId = v.current_driver_id;
+              const { data: d } = await supabase
+                .from("drivers")
+                .select("phone, full_name")
+                .eq("id", driverId)
+                .single();
+              
+              if (d) {
+                  if (d.phone) phone = d.phone;
+                  if (d.full_name) ownerName = d.full_name; // Actualizamos nombre si tenemos el driver real
+              }
+            }
+            
+            // Fallback al whatsapp del dueño del vehículo si no hay conductor o no tiene tel
+            if (!phone && v.owner_whatsapp) phone = v.owner_whatsapp;
+          }
+
+          pendingList.push({
+            plate: item.plate,
+            owner_name: ownerName,
+            driver_id: driverId,
+            contact_phone: phone,
+            days_overdue: item.days_since, // Dato crítico para el mensaje
+            amount: null // Podríamos calcularlo si tuviéramos la tarifa diaria a mano
+          });
+        }
     }
 
     return res.json({
-      locked: false,
+      locked: false, // Siempre desbloqueado
       items: pendingList
     });
 
   } catch (err: any) {
+    console.error("Error en pending:", err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -160,7 +168,6 @@ r.post("/send", async (req: Request, res: Response) => {
         days_overdue,
         message_snapshot,
         generated_date: dateStr,
-        // status: "sent", // Por ahora asumimos que se envió si se hizo click
         resend_count: 0
       });
 
@@ -178,8 +185,13 @@ r.post("/send", async (req: Request, res: Response) => {
  */
 r.get("/history", async (req: Request, res: Response) => {
   try {
+    // Si envían fecha por query, la usamos. Si no, usamos la de hoy.
+    const queryDate = req.query.date as string;
     const { dateStr } = getColTime();
+    const targetDate = queryDate || dateStr;
 
+    // Nota: La relacion "vehicle:vehicles!vehicle_plate" asume que tienes FK o relacion configurada en Supabase
+    // Si no existe, fallará. Asegúrate de que las FKs existan o ajusta el select.
     const { data, error } = await supabase
       .from("payment_notifications")
       .select(`
@@ -188,7 +200,7 @@ r.get("/history", async (req: Request, res: Response) => {
         vehicle:vehicles!vehicle_plate(owner_name, owner_whatsapp),
         driver:drivers!driver_id(phone)
       `)
-      .eq("generated_date", dateStr)
+      .eq("generated_date", targetDate)
       .order("sent_at", { ascending: false });
 
     if (error) throw new Error(error.message);
@@ -206,9 +218,6 @@ r.get("/history", async (req: Request, res: Response) => {
 r.post("/resend/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
-    // RPC o raw update incrementando
-    // Como es simple, hacemos fetch + update o usamos una funcion RPC si existiera.
-    // Haremos fetch + update simple por ahora.
     const { data: current } = await supabase
       .from("payment_notifications")
       .select("resend_count")
@@ -234,7 +243,7 @@ r.get("/templates", async (req: Request, res: Response) => {
     .from("reminder_templates")
     .select("*")
     .eq("is_default", true)
-    .single(); // Por ahora solo manejamos una default
+    .single(); 
   
   if (error) return res.status(500).json({ error: error.message });
   return res.json(data);
