@@ -154,7 +154,6 @@ export default function AdminCollections() {
               tab === "history" ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"
             }`}
           >
-            {/* CAMBIO: Se eliminó "(Hoy)" del texto */}
             Historial de Envíos
           </button>
         </div>
@@ -187,7 +186,7 @@ export default function AdminCollections() {
   );
 }
 
-// --- PENDING VIEW (Sin cambios) ---
+// --- PENDING VIEW (MODIFICADO PARA IGNORAR BLOQUEO) ---
 function PendingView({ currentUser, template, companyId, onSent }: { currentUser: AppUser | null, template: string, companyId: string, onSent: () => void }) {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -202,8 +201,22 @@ function PendingView({ currentUser, template, companyId, onSent }: { currentUser
       const auth = ensureBasicAuth();
       const res = await fetch(`${API}/collections/pending?companyId=${companyId}`, { headers: { Authorization: auth } });
       const json = await res.json();
+      
+      // --- MODIFICACIÓN: SUSPENDER BLOQUEO ---
+      // Ignoramos json.locked y forzamos la carga de items siempre.
+      // Si quieres volver a activar el bloqueo, descomenta el bloque IF original abajo.
+      
+      /* LÓGICA ORIGINAL (BLOQUEADA):
       if (json.locked) { setLockedData(json); setItems([]); } 
       else { setLockedData(null); setItems(json.items || []); }
+      */
+
+      // NUEVA LÓGICA (DESBLOQUEADA):
+      setLockedData(null); 
+      // Nota: Si el backend no envía 'items' cuando está bloqueado, esto saldrá vacío, 
+      // pero ya no mostrará la pantalla de bloqueo.
+      setItems(json.items || []); 
+
     } catch (e) { alert("Error cargando pendientes"); } 
     finally { setLoading(false); }
   }
@@ -303,19 +316,17 @@ function PendingView({ currentUser, template, companyId, onSent }: { currentUser
   );
 }
 
-// --- HISTORY VIEW (ACTUALIZADO CON FILTRO DE FECHA) ---
+// --- HISTORY VIEW (Sin cambios) ---
 function HistoryView({ companyId }: { companyId: string }) {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   
-  // Estado para la fecha: Por defecto HOY (ajustado a zona horaria local simple)
   const [selectedDate, setSelectedDate] = useState(() => {
     const d = new Date();
     d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
     return d.toISOString().split('T')[0];
   });
 
-  // Se recarga cuando cambia la empresa O la fecha
   useEffect(() => { 
     if (companyId) loadHistory(); 
   }, [companyId, selectedDate]);
@@ -324,7 +335,6 @@ function HistoryView({ companyId }: { companyId: string }) {
     setLoading(true);
     try {
       const auth = ensureBasicAuth();
-      // Se envía el parámetro date al backend
       const res = await fetch(`${API}/collections/history?companyId=${companyId}&date=${selectedDate}`, { headers: { Authorization: auth } });
       const json = await res.json();
       setItems(json || []);
@@ -332,22 +342,19 @@ function HistoryView({ companyId }: { companyId: string }) {
   }
 
   async function handleResend(item: HistoryItem) {
-    // Lógica inteligente: Prioridad Driver > Dueño
     const phone = item.driver?.phone || item.vehicle?.owner_whatsapp;
 
     if (!phone) {
       return alert("No se encontró un número de teléfono para reenviar este mensaje.");
     }
 
-    // 1. Abrir WhatsApp (Igual que en pendientes)
     const whatsappUrl = `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(item.message_snapshot)}`;
     window.open(whatsappUrl, "_blank");
 
-    // 2. Registrar el reenvío en el backend
     try {
       const auth = ensureBasicAuth();
       await fetch(`${API}/collections/resend/${item.id}`, { method: "POST", headers: { Authorization: auth } });
-      loadHistory(); // Recargar contador
+      loadHistory(); 
     } catch (e) { console.error(e); }
   }
 
@@ -403,7 +410,7 @@ function HistoryView({ companyId }: { companyId: string }) {
   );
 }
 
-// ... CreateUserModal y PhoneEditModal se mantienen igual ...
+// --- MODALS (Sin cambios) ---
 function CreateUserModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) {
   const [form, setForm] = useState({ full_name: "", document_number: "", phone: "" });
   const [saving, setSaving] = useState(false);
