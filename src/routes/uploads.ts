@@ -11,8 +11,14 @@ r.post("/", upload.single("file"), async (req: Request, res: Response) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: "file is required" });
 
-    if (!file.mimetype.startsWith("image/")) return res.status(400).json({ error: "Only image files are allowed" });
-    
+    // --- CORRECCIÓN: Permitir imágenes O PDFs ---
+    const isImage = file.mimetype.startsWith("image/");
+    const isPdf = file.mimetype === "application/pdf";
+
+    if (!isImage && !isPdf) {
+        return res.status(400).json({ error: "Only image files and PDFs are allowed" });
+    }
+    // ---------------------------------------------
 
     const ext = (file.originalname.split(".").pop() || "jpg").toLowerCase();
     const name = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
