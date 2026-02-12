@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Calendar, Bell, Calculator, Info } from "lucide-react";
+import { Calendar, Bell, Calculator, Info, X } from "lucide-react"; // Agregué 'X' para el botón de cerrar
 import { DriverApplicationForm } from "../components/DriverApplicationForm";
 import { VehicleApplicationForm } from "../components/VehicleApplicationForm";
 import { ShareButton } from "../components/ShareButton";
@@ -11,7 +11,7 @@ import { AssistanceBanner } from "../components/AssistanceBanner";
 import { PicoPlacaModal, ReminderModal } from "../components/UtilitiesModals";
 import { TrustSection } from "../components/TrustSection";
 import AssistanceQuiz from "../components/AssistanceQuiz";
-import Logo from "../components/Logo"; // <--- 1. IMPORTAR EL LOGO
+import Logo from "../components/Logo";
 
 const WHATSAPP_URL = "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20vengo%20de%20la%20web%20y%20quiero%20m%C3%A1s%20info.";
 
@@ -19,7 +19,10 @@ export default function Landing() {
   const [searchParams] = useSearchParams();
   const [referralCode, setReferralCode] = useState<string | null>(null);
   
-  // Estados para Modals
+  // --- 1. NUEVO ESTADO PARA EL MODAL DE REGISTRO ---
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  
+  // Estados para Modals de utilidades
   const [showPicoPlaca, setShowPicoPlaca] = useState(false);
   const [showReminders, setShowReminders] = useState(false);
   const [reminderPlate, setReminderPlate] = useState<string | undefined>(undefined);
@@ -60,14 +63,10 @@ export default function Landing() {
            `
          }}>
 
-      {/* 1. NAVBAR */}
+      {/* NAVBAR */}
       <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0b1220]/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          
-          {/* AQUÍ ESTÁ EL CAMBIO DEL LOGO */}
           <div className="flex items-center">
-             {/* Reemplazamos el div "AY" y el texto por el componente SVG */}
-             {/* h-8 a h-10 es un buen tamaño para navbar */}
              <Logo className="h-9 md:h-10 w-auto" />
           </div>
 
@@ -84,7 +83,7 @@ export default function Landing() {
         </div>
       </header>
 
-      {/* 2. HERO SECTION */}
+      {/* HERO SECTION */}
       <main className="pb-20 pt-10">
         
         <div className="mx-auto max-w-6xl px-4">
@@ -179,7 +178,8 @@ export default function Landing() {
             {/* Right: Simulador */}
             <div id="simulador" className="relative z-10">
               <ModelOverview /> 
-              <IncomeSimulator />
+              {/* --- 2. AQUÍ CONECTAMOS EL BOTÓN DEL SIMULADOR CON EL MODAL --- */}
+              <IncomeSimulator onAction={() => setShowRegisterModal(true)} />
             </div>
           </section>
         </div>
@@ -242,6 +242,23 @@ export default function Landing() {
       
         </div>
       </main>
+
+      {/* --- 3. MODAL DE REGISTRO DE VEHÍCULO --- */}
+      {showRegisterModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300 overflow-y-auto">
+          <div className="relative w-full max-w-lg my-8"> {/* my-8 para dar margen si es muy alto */}
+             <button 
+              onClick={() => setShowRegisterModal(false)}
+              className="absolute -top-12 right-0 p-2 text-white/50 hover:text-white hover:bg-white/10 rounded-full transition-all"
+            >
+              <X className="w-8 h-8" />
+            </button>
+            
+            {/* Reutilizamos el formulario existente */}
+            <VehicleApplicationForm />
+          </div>
+        </div>
+      )}
 
       <PicoPlacaModal isOpen={showPicoPlaca} onClose={() => setShowPicoPlaca(false)} />
       <ReminderModal isOpen={showReminders} onClose={() => setShowReminders(false)} initialPlate={reminderPlate} />

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export function IncomeSimulator() {
+export function IncomeSimulator({ onAction }: { onAction: () => void }) {
   const [vehicles, setVehicles] = useState(1);
   const [dailyRent, setDailyRent] = useState(55000); // Base solicitada
   const [daysPerWeek, setDaysPerWeek] = useState(6);
@@ -8,6 +8,7 @@ export function IncomeSimulator() {
   // Cálculo: (Diario * DíasSemana * 4.34 semanas promedio) * Vehículos
   const monthlyIncome = dailyRent * daysPerWeek * 4.34 * vehicles;
 
+  // Función helper para formatear moneda dentro del componente
   function formatMoney(amount: number) {
     return new Intl.NumberFormat("es-CO", {
       style: "currency",
@@ -38,7 +39,8 @@ export function IncomeSimulator() {
               className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
             >
               {[1, 2, 3, 5, 10].map((n) => (
-                <option key={n} value={n}>
+                // CORRECCIÓN: Agregado 'text-slate-900' para que sea legible en el dropdown blanco
+                <option key={n} value={n} className="text-slate-900">
                   {n} {n === 1 ? "Carro" : "Carros"}
                 </option>
               ))}
@@ -51,9 +53,10 @@ export function IncomeSimulator() {
               onChange={(e) => setDaysPerWeek(Number(e.target.value))}
               className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
             >
-              <option value="6">6 Días (Lunes-Sábado)</option>
-              <option value="7">7 Días (Full time)</option>
-              <option value="5">5 Días (Lunes-Viernes)</option>
+              {/* CORRECCIÓN: Agregado 'text-slate-900' a las opciones */}
+              <option value="6" className="text-slate-900">6 Días (Lunes-Sábado)</option>
+              <option value="7" className="text-slate-900">7 Días (Full time)</option>
+              <option value="5" className="text-slate-900">5 Días (Lunes-Viernes)</option>
             </select>
           </div>
         </div>
@@ -62,13 +65,16 @@ export function IncomeSimulator() {
           <label className="mb-1.5 block text-xs text-slate-400">
             Entrega Diaria Estimada (Conductor)
           </label>
-          <input
-            type="number"
-            value={dailyRent}
-            onChange={(e) => setDailyRent(Number(e.target.value))}
-            step={1000}
-            className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none font-mono"
-          />
+          <div className="relative">
+             <span className="absolute left-3 top-2 text-slate-400 text-sm">$</span>
+             <input
+                type="number"
+                value={dailyRent}
+                onChange={(e) => setDailyRent(Number(e.target.value))}
+                step={1000}
+                className="w-full rounded-xl border border-white/10 bg-white/5 pl-6 pr-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none font-mono"
+              />
+          </div>
           <p className="mt-1 text-[10px] text-slate-500">
             * Promedio base sugerido: $55.000 libre de gasolina.
           </p>
@@ -83,8 +89,9 @@ export function IncomeSimulator() {
             *Cifra antes de gastos de mantenimiento y comisión de administración (50% sobre utilidad).
           </p>
         </div>
-
-        <button className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-900/20 hover:bg-emerald-500 transition-all hover:-translate-y-0.5">
+        <button onClick={onAction}
+          className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-900/20 hover:bg-emerald-500 transition-all hover:-translate-y-0.5 mt-4"
+        >
           Quiero esta rentabilidad
         </button>
       </div>
