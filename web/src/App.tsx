@@ -22,7 +22,7 @@ import AdminVehicles from "./pages/AdminVehicles";
 import AdminProfit from "./pages/AdminProfit";
 import AdminRecruitment from "./pages/AdminRecruitment";
 import RemindersLog from "./pages/RemindersLog";
-import AdminMarketplace from "./pages/AdminMarketplace"; // <--- Importado
+import AdminMarketplace from "./pages/AdminMarketplace"; 
 
 // MÓDULO DE INSPECCIONES
 import NewInspection from "./pages/NewInspection";
