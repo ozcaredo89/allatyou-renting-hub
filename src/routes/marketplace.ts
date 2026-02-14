@@ -36,12 +36,17 @@ r.post("/upload", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Faltan datos obligatorios." });
     }
 
+    // --- NUEVO: Validar correo ---
+    if (!body.owner_email || !body.owner_email.includes("@")) {
+        return res.status(400).json({ error: "El correo electrónico es obligatorio para notificaciones." });
+    }
+
     const { data, error } = await supabase
       .from("marketplace_cars")
       .insert({
         owner_name: body.owner_name,
         owner_phone: body.owner_phone,
-        owner_email: body.owner_email,
+        owner_email: body.owner_email, // <--- GUARDAMOS EL EMAIL
         owner_city: body.owner_city,
         brand: body.brand,
         model: body.model,
@@ -49,7 +54,7 @@ r.post("/upload", async (req: Request, res: Response) => {
         transmission: body.transmission,
         fuel_type: body.fuel_type,
         plate: body.plate.toUpperCase(),
-        price_per_day: body.price_per_day || 0, // Se puede ajustar luego
+        price_per_day: body.price_per_day || 0, 
         photo_exterior_url: body.photo_exterior_url,
         photo_interior_url: body.photo_interior_url,
         status: "pending" // Siempre entra como pendiente
@@ -58,6 +63,10 @@ r.post("/upload", async (req: Request, res: Response) => {
       .single();
 
     if (error) throw new Error(error.message);
+
+    // --- NOTIFICACIÓN (SIMULACIÓN) ---
+    console.log(`[EMAIL] Enviando confirmación a ${body.owner_email} por vehículo ${body.brand} ${body.plate}`);
+    // Aquí iría el código real de Resend/Nodemailer
 
     return res.status(201).json({ success: true, car: data });
   } catch (err: any) {

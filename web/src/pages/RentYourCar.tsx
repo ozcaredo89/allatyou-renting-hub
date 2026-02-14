@@ -9,7 +9,7 @@ export default function RentYourCar() {
   const [loading, setLoading] = useState(false);
   
   // --- ESTADOS PARA CÁMARA Y MENÚ ---
-  const [activeField, setActiveField] = useState<string | null>(null); // Qué campo estamos editando
+  const [activeField, setActiveField] = useState<string | null>(null); 
   const [showCamera, setShowCamera] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   
@@ -60,17 +60,11 @@ export default function RentYourCar() {
 
   // --- LÓGICA DE CÁMARA (WEBRTC) ---
   const startCamera = async () => {
-    setActiveField(null); // Cerrar sheet, dejar solo activeField en memoria si fuera necesario, pero aqui usamos el state
-    // Nota: Necesitamos mantener el activeField en un ref o state temporal si el sheet lo cierra. 
-    // En este flujo: activeField ya tiene el valor (ej: 'photo_exterior_url').
-    // Al cerrar el sheet (setActiveField(null)) perdemos la referencia. 
-    // TRUCO: Usaremos un estado intermedio 'cameraTarget' o simplemente no cerramos 'activeField' hasta terminar.
-    // Vamos a usar una variable auxiliar: 'showCamera' es true, 'activeField' sigue siendo el campo.
-    
+    setActiveField(null); 
     setShowCamera(true);
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: "environment" } // Cámara trasera preferiblemente para carros
+        video: { facingMode: "environment" } 
       });
       setStream(mediaStream);
       if (videoRef.current) {
@@ -90,7 +84,6 @@ export default function RentYourCar() {
       setStream(null);
     }
     setShowCamera(false);
-    // No limpiamos activeField aún para poder guardar la foto
   };
 
   const capturePhoto = () => {
@@ -106,7 +99,7 @@ export default function RentYourCar() {
       canvas.toBlob(async (blob) => {
         if (blob) {
           const file = new File([blob], `car_${Date.now()}.jpg`, { type: "image/jpeg" });
-          stopCamera(); // Cerramos cámara visualmente
+          stopCamera(); 
           setLoading(true);
           try {
              const url = await uploadFile(file);
@@ -115,7 +108,7 @@ export default function RentYourCar() {
              alert("Error guardando la foto");
           } finally {
              setLoading(false);
-             setActiveField(null); // Ahora sí limpiamos el campo activo
+             setActiveField(null); 
           }
         }
       }, 'image/jpeg', 0.8);
@@ -156,9 +149,9 @@ export default function RentYourCar() {
           </div>
           <h2 className="text-3xl font-black text-slate-900 mb-4">¡Solicitud Recibida!</h2>
           <p className="text-slate-600 mb-8 text-lg">
-            Gracias por confiar en <strong>AllAtYou</strong>. Nuestro equipo de expertos revisará la información.
+            Gracias por confiar en <strong>AllAtYou</strong>. Hemos enviado un correo de confirmación a <strong>{form.owner_email}</strong>.
             <br/><br/>
-            Te contactaremos al <strong>{form.owner_phone}</strong> en las próximas 24 horas.
+            Nuestro equipo revisará tu vehículo y te contactaremos al <strong>{form.owner_phone}</strong> en las próximas 24 horas.
           </p>
           <Link to="/" className="block w-full py-4 bg-black text-white font-bold rounded-xl hover:bg-slate-800 transition-colors">
             Volver al Inicio
@@ -200,6 +193,14 @@ export default function RentYourCar() {
                   value={form.owner_phone} onChange={e => setForm({...form, owner_phone: e.target.value})}
                 />
               </div>
+              {/* --- CAMPO DE EMAIL OBLIGATORIO --- */}
+              <div className="col-span-2 md:col-span-1">
+                <label className="block text-sm font-bold text-slate-700 mb-2">Correo Electrónico (Notificaciones)</label>
+                <input required type="email" placeholder="ejemplo@email.com" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                  value={form.owner_email} onChange={e => setForm({...form, owner_email: e.target.value})}
+                />
+              </div>
+              {/* ---------------------------------- */}
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">Ciudad</label>
                 <div className="relative">
