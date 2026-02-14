@@ -1,6 +1,6 @@
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 
-// Layouts (Los Marcos Visuales)
+// Layouts
 import AdminLayout from "./components/AdminLayout";
 import PublicLayout from "./components/PublicLayout";
 
@@ -24,104 +24,79 @@ import AdminRecruitment from "./pages/AdminRecruitment";
 import RemindersLog from "./pages/RemindersLog";
 import AdminMarketplace from "./pages/AdminMarketplace"; 
 
-// MÓDULO DE INSPECCIONES
+// Inspecciones
 import NewInspection from "./pages/NewInspection";
 import AdminInspections from "./pages/AdminInspections";
 
 export default function App() {
   const hostname = window.location.hostname;
-  // Detectamos si estamos en el subdominio operativo
-  const isWebSubdomain = hostname === "web.allatyou.com";
+  
+  // 1. DETECCIÓN DE ENTORNO
+  // Si es el subdominio 'web' O estás en tu PC (localhost), mostramos la APP INTERNA.
+  const isApp = hostname === "web.allatyou.com" || hostname.includes("localhost");
 
   return (
     <BrowserRouter>
       <Routes>
         
         {/* =======================================================
-            MUNDO 1: PÚBLICO / OPERATIVO
-            Usa PublicLayout (Header Blanco).
+            ESCENARIO 1: APP INTERNA (ERP / Admin)
+            Dominio: web.allatyou.com ó localhost:5173
            ======================================================= */}
-        <Route element={<PublicLayout />}>
-          {/* Ruta Raíz: 
-              - Si es operativo (web.), redirige a pagar.
-              - Si es comercial (www. o localhost), muestra la Landing. 
-          */}
-          <Route
-            path="/"
-            element={
-              isWebSubdomain ? <Navigate to="/pay" replace /> : <Landing />
-            }
-          />
-          
-          <Route path="/pay" element={<Pay />} />
-          <Route path="/expenses" element={<Expenses />} />
-          
-          {/* RUTA DE ASISTENCIA */}
-          <Route path="/assistance" element={<Assistance />} />
+        {isApp ? (
+          <>
+            {/* --- A. Rutas Operativas "Sueltas" (Sin Sidebar) --- */}
+            <Route element={<PublicLayout />}>
+              {/* La home interna redirige a Pagos (Operativo rápido) */}
+              <Route path="/" element={<Navigate to="/pay" replace />} />
+              <Route path="/pay" element={<Pay />} />
+              <Route path="/assistance" element={<Assistance />} />
+            </Route>
 
-          {/* <--- FORMULARIO DE CAPTACIÓN (MARKETPLACE) */}
-          <Route path="/rent-your-car" element={<RentYourCar />} />
+            {/* --- B. Rutas Administrativas (CON Sidebar) --- */}
+            {/* Aquí vive toda la gestión. Sin prefijo /admin porque YA estamos en la app admin */}
+            <Route element={<AdminLayout />}>
+              
+              {/* FINANZAS */}
+              <Route path="/expenses" element={<Expenses />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/advances" element={<AdminAdvances />} />
+              <Route path="/profit" element={<AdminProfit />} />
+              <Route path="/deposits" element={<AdminDeposits />} />
+              <Route path="/collections" element={<AdminCollections />} />
 
-          {/* CATÁLOGO DE RENTA (DEMANDA) */}
-          <Route path="/rent" element={<RentCatalog />} />
-        </Route>
+              {/* ACTIVOS */}
+              <Route path="/vehicles" element={<AdminVehicles />} /> 
+              <Route path="/drivers" element={<AdminDrivers />} />
+              <Route path="/recruitment" element={<AdminRecruitment />} />
+              
+              {/* OPERACIONES */}
+              <Route path="/reminders-log" element={<RemindersLog />} />
+              <Route path="/inspections" element={<AdminInspections />} />
+              <Route path="/inspections/new" element={<NewInspection />} />
+              <Route path="/marketplace" element={<AdminMarketplace />} />
 
-        {/* =======================================================
-            MUNDO 2: ADMINISTRATIVO
-            Usa AdminLayout (Sidebar Oscuro).
-            Las páginas internas validan sus credenciales.
-           ======================================================= */}
-        <Route path="/admin" element={<AdminLayout />}>
-          {/* GESTIÓN DE ACTIVOS (Lo principal) */}
-          <Route path="vehicles" element={<AdminVehicles />} /> 
-          <Route path="drivers" element={<AdminDrivers />} />
-
-          {/* GESTIÓN DE TALENTO */}
-          <Route path="recruitment" element={<AdminRecruitment />} />
-
-          {/* FINANZAS Y UTILIDADES */}
-          <Route path="advances" element={<AdminAdvances />} />
-          <Route path="profit" element={<AdminProfit />} />
-          <Route path="deposits" element={<AdminDeposits />} />
-          
-          {/* NUEVA UBICACIÓN DE REPORTES (Mora/Cobros) */}
-          <Route path="reports" element={<Reports />} /> 
-
-          {/* GESTIÓN DE COBRANZAS */}
-          <Route path="collections" element={<AdminCollections />} />
-
-          {/* RUTA DE LOG DE RECORDATORIOS */}
-          <Route path="reminders-log" element={<RemindersLog />} />
-
-          {/* <--- INSPECCIONES */}
-          <Route path="inspections" element={<AdminInspections />} />     {/* Historial (Tabla) */}
-          <Route path="inspections/new" element={<NewInspection />} />    {/* Formulario (Fotos) */}
-
-          {/* <--- MARKETPLACE ADMIN (MODERACIÓN) */}
-          <Route path="marketplace" element={<AdminMarketplace />} />
-
-          {/* Redirección por defecto */}
-          <Route index element={<Navigate to="vehicles" replace />} />
-        </Route>
-
-        {/* =======================================================
-            404 - RUTA NO ENCONTRADA
-           ======================================================= */}
-        <Route
-          path="*"
-          element={
-            <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 p-4 text-center">
-              <h1 className="text-4xl font-bold text-gray-900">404</h1>
-              <p className="mt-2 text-gray-600">Lo sentimos, esta página no existe.</p>
-              <a 
-                href="/" 
-                className="mt-6 rounded-xl bg-black px-6 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
-              >
-                Volver al Inicio
-              </a>
-            </div>
-          }
-        />
+              {/* 404 Interno */}
+              <Route path="*" element={<div className="p-10 text-center text-slate-500">Página no encontrada en Admin</div>} />
+            </Route>
+          </>
+        ) : (
+          /* =======================================================
+             ESCENARIO 2: LANDING PAGE (Marketing)
+             Dominio: www.allatyou.com
+             ======================================================= */
+          <Route element={<PublicLayout />}>
+            <Route path="/" element={<Landing />} />
+            <Route path="/rent-your-car" element={<RentYourCar />} />
+            <Route path="/rent" element={<RentCatalog />} />
+            
+            {/* Permitimos /pay también en la landing por comodidad de conductores */}
+            <Route path="/pay" element={<Pay />} /> 
+            
+            {/* Cualquier otra cosa en la landing va al home */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        )}
 
       </Routes>
     </BrowserRouter>

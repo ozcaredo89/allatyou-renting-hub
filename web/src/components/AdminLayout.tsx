@@ -68,32 +68,33 @@ export default function AdminLayout() {
           <div className="mb-6">
             <p className="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Operación</p>
             
-            <NavLink to="/admin/vehicles" className={navItemClass}>
+            {/* NOTA: Quitamos '/admin' de todos los to="..." */}
+            <NavLink to="/vehicles" className={navItemClass}>
               <span>🚗</span> Flota
             </NavLink>
-            <NavLink to="/admin/drivers" className={navItemClass}>
+            <NavLink to="/drivers" className={navItemClass}>
               <span>🧢</span> Conductores
             </NavLink>
-            <NavLink to="/admin/recruitment" className={navItemClass}>
+            <NavLink to="/recruitment" className={navItemClass}>
               <span>👥</span> Reclutamiento
             </NavLink>
-            <NavLink to="/admin/advances" className={navItemClass}>
+            <NavLink to="/advances" className={navItemClass}>
               <span>💸</span> Anticipos
             </NavLink>
-            <NavLink to="/admin/collections" className={navItemClass}>
+            <NavLink to="/collections" className={navItemClass}>
               <span>📲</span> Gestión Cobros
             </NavLink>
-            <NavLink to="/admin/marketplace" className={navItemClass}>
+            <NavLink to="/marketplace" className={navItemClass}>
               <span>🏪</span> Marketplace
             </NavLink>
             
             {/* --- SECCIÓN INSPECCIONES --- */}
             <div className="mt-4 pt-4 border-t border-slate-800/50">
                 <p className="px-4 text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-2">Auditoría</p>
-                <NavLink to="/admin/inspections/new" className={navItemClass}>
+                <NavLink to="/inspections/new" className={navItemClass}>
                   <span>📷</span> Nueva Inspección
                 </NavLink>
-                <NavLink to="/admin/inspections" end className={navItemClass}>
+                <NavLink to="/inspections" end className={navItemClass}>
                   <span>📋</span> Historial Insp.
                 </NavLink>
             </div>
@@ -102,13 +103,20 @@ export default function AdminLayout() {
           {/* GRUPO: FINANCIERO */}
           <div className="mb-6">
             <p className="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Financiero</p>
-            <NavLink to="/admin/deposits" className={navItemClass}>
+            
+            {/* --- AQUÍ ESTÁ EL NUEVO ENLACE DE GASTOS --- */}
+            <NavLink to="/expenses" className={navItemClass}>
+              <span>🧾</span> Gastos Operativos
+            </NavLink>
+            {/* ------------------------------------------- */}
+
+            <NavLink to="/deposits" className={navItemClass}>
               <span>💰</span> Depósitos
             </NavLink>
-            <NavLink to="/admin/profit" className={navItemClass}>
+            <NavLink to="/profit" className={navItemClass}>
               <span>📈</span> Utilidad Mensual
             </NavLink>
-            <NavLink to="/admin/reports" className={navItemClass}>
+            <NavLink to="/reports" className={navItemClass}>
               <span>📑</span> Reportes
             </NavLink>
           </div>
@@ -116,7 +124,7 @@ export default function AdminLayout() {
           {/* GRUPO: SISTEMA */}
           <div>
             <p className="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Sistema</p>
-            <NavLink to="/admin/reminders-log" className={navItemClass}>
+            <NavLink to="/reminders-log" className={navItemClass}>
               <span>🔔</span> Logs Recordatorios
             </NavLink>
           </div>

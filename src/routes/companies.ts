@@ -10,10 +10,15 @@ const generateCode = () => Math.floor(100000 + Math.random() * 900000).toString(
 
 /**
  * GET /companies
- * Lista las empresas disponibles para el selector.
+ * Lista las empresas disponibles con sus datos fiscales para cuentas de cobro.
  */
 r.get("/", async (req: Request, res: Response) => {
-  const { data, error } = await supabase.from("companies").select("id, name");
+  // --- CAMBIO AQUÍ: Agregamos nit, address, phone al select ---
+  const { data, error } = await supabase
+    .from("companies")
+    .select("id, name, nit, address, phone") 
+    .order("name");
+
   if (error) return res.status(500).json({ error: error.message });
   return res.json(data);
 });
