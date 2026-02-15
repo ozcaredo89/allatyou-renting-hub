@@ -14,7 +14,7 @@ import {
   HeadingLevel 
 } from "docx";
 import { saveAs } from "file-saver";
-import { X, Plus, FileText, Download, Check, ChevronRight, ChevronLeft } from "lucide-react";
+import { X, Plus, FileText, Download, ChevronRight, ChevronLeft } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
