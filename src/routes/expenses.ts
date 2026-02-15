@@ -20,13 +20,13 @@ type NormalizedAttachment = {
 
 /** POST /expenses
  * body: {
- *   date,
- *   item,
- *   description,
- *   total_amount,
- *   plates: string[],
- *   attachment_url?,                  // LEGACY
- *   attachments?: { kind, url }[]     // NUEVO
+ * date,
+ * item,
+ * description,
+ * total_amount,
+ * plates: string[],
+ * attachment_url?,                  // LEGACY
+ * attachments?: { kind, url }[]     // NUEVO
  * }
  */
 r.post("/", async (req: Request, res: Response) => {
@@ -327,6 +327,36 @@ r.post("/:id/attachments", async (req: Request, res: Response) => {
   ]);
 
   res.status(201).json({ attachments: inserted });
+});
+
+/** PUT /expenses/:id
+ * Actualiza los datos básicos de un gasto.
+ * (No recalcula prorrateo histórico por simplicidad operativa)
+ */
+r.put("/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const { date, item, description, total_amount } = req.body;
+
+  if (!id) return res.status(400).json({ error: "Invalid ID" });
+
+  try {
+    const { data, error } = await supabase
+      .from("expenses")
+      .update({
+        date,
+        item,
+        description,
+        total_amount // Se actualiza el total, pero ojo: no recalcula share_amount en expense_vehicles
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 export default r;
