@@ -1,8 +1,11 @@
 import { useState, useRef } from "react";
-import { UploadCloud, CheckCircle, Car, DollarSign, Camera, MapPin, X, Image as ImageIcon } from "lucide-react";
+import { UploadCloud, CheckCircle, Car, DollarSign, Camera, MapPin, X, Image as ImageIcon, MessageCircle, AlertCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
+
+// Número para el servicio de GPS
+const GPS_SERVICE_PHONE = "573238035356";
 
 export default function RentYourCar() {
   const [success, setSuccess] = useState(false);
@@ -30,6 +33,7 @@ export default function RentYourCar() {
     fuel_type: "Gasolina",
     plate: "",
     price_per_day: "",
+    has_gps: "Sí", // <--- NUEVO CAMPO
     photo_exterior_url: "",
     photo_interior_url: ""
   });
@@ -151,6 +155,11 @@ export default function RentYourCar() {
           <p className="text-slate-600 mb-8 text-lg">
             Gracias por confiar en <strong>AllAtYou</strong>. Hemos enviado un correo de confirmación a <strong>{form.owner_email}</strong>.
             <br/><br/>
+            {form.has_gps === "No" && (
+                <span className="block bg-blue-50 text-blue-800 p-3 rounded-xl text-sm font-medium mb-4">
+                    📢 Nota: Vimos que tu carro no tiene GPS. Un asesor te contactará para coordinar la instalación antes de activarlo.
+                </span>
+            )}
             Nuestro equipo revisará tu vehículo y te contactaremos al <strong>{form.owner_phone}</strong> en las próximas 24 horas.
           </p>
           <Link to="/" className="block w-full py-4 bg-black text-white font-bold rounded-xl hover:bg-slate-800 transition-colors">
@@ -193,14 +202,12 @@ export default function RentYourCar() {
                   value={form.owner_phone} onChange={e => setForm({...form, owner_phone: e.target.value})}
                 />
               </div>
-              {/* --- CAMPO DE EMAIL OBLIGATORIO --- */}
               <div className="col-span-2 md:col-span-1">
                 <label className="block text-sm font-bold text-slate-700 mb-2">Correo Electrónico (Notificaciones)</label>
                 <input required type="email" placeholder="ejemplo@email.com" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
                   value={form.owner_email} onChange={e => setForm({...form, owner_email: e.target.value})}
                 />
               </div>
-              {/* ---------------------------------- */}
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">Ciudad</label>
                 <div className="relative">
@@ -260,8 +267,46 @@ export default function RentYourCar() {
                 />
               </div>
 
+              {/* --- PREGUNTA GPS --- */}
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">Precio Esperado</label>
+                <label className="block text-sm font-bold text-slate-700 mb-2">¿Tiene GPS Satelital?</label>
+                <select className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                  value={form.has_gps} onChange={e => setForm({...form, has_gps: e.target.value})}
+                >
+                  <option value="Sí">Sí, ya tiene</option>
+                  <option value="No">No tiene</option>
+                </select>
+              </div>
+
+              {/* --- CARD DE SERVICIO GPS (SOLO SI DICE NO) --- */}
+              {form.has_gps === "No" && (
+                 <div className="col-span-1 md:col-span-3 bg-blue-50 border border-blue-100 rounded-2xl p-4 flex flex-col sm:flex-row items-center gap-4 animate-in fade-in slide-in-from-top-2">
+                    <div className="bg-blue-100 p-3 rounded-full text-blue-600 shrink-0">
+                       <MapPin className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 text-center sm:text-left">
+                       <h4 className="font-bold text-slate-800 text-sm flex items-center justify-center sm:justify-start gap-2">
+                          <AlertCircle className="w-4 h-4 text-orange-500"/> Requisito Obligatorio
+                       </h4>
+                       <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                          Para rentar en AllAtYou es <strong>obligatorio</strong> tener GPS. <br/>
+                          No te preocupes, nosotros recogemos tu carro, lo instalamos y te lo devolvemos listo.
+                       </p>
+                    </div>
+                    <a 
+                       href={`https://wa.me/${GPS_SERVICE_PHONE}?text=${encodeURIComponent("Necesito ayuda para poner GPS en mi carro.")}`}
+                       target="_blank"
+                       rel="noreferrer"
+                       className="whitespace-nowrap px-5 py-3 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-colors flex items-center gap-2 shadow-lg shadow-emerald-200"
+                    >
+                       <MessageCircle className="w-4 h-4" />
+                       Solicitar Instalación
+                    </a>
+                 </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">Precio Esperado / Día</label>
                 <div className="relative">
                     <DollarSign className="absolute left-3 top-3.5 w-4 h-4 text-slate-400" />
                     <input type="number" placeholder="120000" className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
@@ -278,11 +323,10 @@ export default function RentYourCar() {
               <Camera className="w-4 h-4" /> 3. Fotos del Vehículo
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-               
                {/* FOTO EXTERIOR */}
                <div 
-                  onClick={() => setActiveField('photo_exterior_url')}
-                  className={`border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center transition-colors cursor-pointer active:scale-95 ${form.photo_exterior_url ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 hover:border-emerald-400 hover:bg-slate-50'}`}
+                 onClick={() => setActiveField('photo_exterior_url')}
+                 className={`border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center transition-colors cursor-pointer active:scale-95 ${form.photo_exterior_url ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 hover:border-emerald-400 hover:bg-slate-50'}`}
                >
                   {form.photo_exterior_url ? (
                       <div className="text-center">
@@ -300,8 +344,8 @@ export default function RentYourCar() {
 
                {/* FOTO INTERIOR */}
                <div 
-                  onClick={() => setActiveField('photo_interior_url')}
-                  className={`border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center transition-colors cursor-pointer active:scale-95 ${form.photo_interior_url ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 hover:border-emerald-400 hover:bg-slate-50'}`}
+                 onClick={() => setActiveField('photo_interior_url')}
+                 className={`border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center transition-colors cursor-pointer active:scale-95 ${form.photo_interior_url ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 hover:border-emerald-400 hover:bg-slate-50'}`}
                >
                   {form.photo_interior_url ? (
                       <div className="text-center">
