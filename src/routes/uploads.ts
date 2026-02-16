@@ -1,39 +1,50 @@
-// src/routes/uploads.ts
 import { Router, Request, Response } from "express";
 import multer from "multer";
-import { supabase } from "../lib/supabase";
+import { uploadToR2 } from "../lib/r2";
 
 const r = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB
+
+// Configuración de Multer (Subida en memoria)
+// Aumenté un poco el límite a 10MB por si las fotos de los carros son pesadas
+const upload = multer({ 
+  storage: multer.memoryStorage(), 
+  limits: { fileSize: 10 * 1024 * 1024 } 
+});
 
 r.post("/", upload.single("file"), async (req: Request, res: Response) => {
   try {
     const file = req.file;
     if (!file) return res.status(400).json({ error: "file is required" });
 
-    // --- CORRECCIÓN: Permitir imágenes O PDFs ---
+    // --- 1. VALIDACIÓN (Mantenemos tu lógica original) ---
+    // Esto es muy bueno, evita que suban .exe o scripts raros
     const isImage = file.mimetype.startsWith("image/");
     const isPdf = file.mimetype === "application/pdf";
 
     if (!isImage && !isPdf) {
         return res.status(400).json({ error: "Only image files and PDFs are allowed" });
     }
-    // ---------------------------------------------
+    // ----------------------------------------------------
 
-    const ext = (file.originalname.split(".").pop() || "jpg").toLowerCase();
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    const path = `proofs/${name}`;
+    // 2. Decidir carpeta
+    // Si el frontend manda un campo "folder", lo usamos. Si no, va a "proofs" por defecto.
+    // Esto mantiene la compatibilidad con lo que ya tenías.
+    const folder = req.body.folder || "proofs";
 
-    const { error: upErr } = await supabase
-      .storage
-      .from("proofs")
-      .upload(path, file.buffer, { contentType: file.mimetype });
+    console.log(`📤 Subiendo a R2 [${folder}]: ${file.originalname}`);
 
-    if (upErr) return res.status(500).json({ error: upErr.message });
+    // --- 3. SUBIDA A CLOUDFLARE R2 ---
+    // Esta función hace toda la magia y nos devuelve la URL pública final
+    const publicUrl = await uploadToR2(file, folder);
 
-    const { data } = supabase.storage.from("proofs").getPublicUrl(path);
-    return res.status(201).json({ url: data.publicUrl });
+    console.log(`✅ Éxito: ${publicUrl}`);
+
+    // 4. Respuesta al Frontend
+    // El frontend recibe { url: "..." } tal como antes. ¡No se dará ni cuenta del cambio!
+    return res.status(201).json({ url: publicUrl });
+
   } catch (e: any) {
+    console.error("❌ Error en upload:", e);
     return res.status(500).json({ error: e.message || "upload failed" });
   }
 });
