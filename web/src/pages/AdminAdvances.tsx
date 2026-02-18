@@ -529,7 +529,7 @@ function AdvancesList() {
   const [items, setItems] = useState<Advance[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [filters, setFilters] = useState({ status: "", person: "", plate: "" });
+  const [filters, setFilters] = useState({ status: "active", person: "", plate: "" });
   const [offset, setOffset] = useState(0);
   const limit = 20;
 
@@ -705,7 +705,14 @@ function AdvancesList() {
         </div>
       </div>
 
-      <ScheduleModal advance={selected} open={!!selected} onClose={() => setSelected(null)} />
+      <ScheduleModal 
+        advance={selected} 
+        open={!!selected} 
+        onClose={() => {
+          setSelected(null);
+          load(offset);
+        }} 
+      />
     </div>
   );
 }
