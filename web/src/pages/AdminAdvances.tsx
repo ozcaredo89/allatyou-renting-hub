@@ -365,6 +365,114 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
 }
 
 /* =========================
+   Edit Row Modal (Pequeño formulario)
+   ========================= */
+function EditRowModal({
+  advanceId,
+  row,
+  onClose,
+  onSuccess,
+}: {
+  advanceId: number;
+  row: ScheduleRow;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  // Estado inicial basado en la fila actual
+  const [amount, setAmount] = useState(row.installment_amount);
+  const [status, setStatus] = useState<"pending" | "paid">(row.status === "paid" ? "paid" : "pending");
+  // Si está pagada, usamos paid_date, si no, due_date como referencia
+  const [date, setDate] = useState(row.paid_date || row.due_date);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const auth = ensureBasicAuth();
+      const res = await fetch(`${API}/advances/${advanceId}/schedule/${row.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: auth },
+        body: JSON.stringify({
+          status,
+          amount,
+          date, 
+        }),
+      });
+      
+      if (!res.ok) {
+        const json = await res.json();
+        throw new Error(json.error || "Error al actualizar");
+      }
+      
+      onSuccess(); // Recarga la tabla
+      onClose(); // Cierra el modal
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="mb-4 text-lg font-bold">Editar Cuota #{row.installment_no}</h3>
+        
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium">Estado</label>
+            <select
+              className="w-full rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as "pending" | "paid")}
+            >
+              <option value="pending">Pendiente</option>
+              <option value="paid">Pagada</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Monto</label>
+            <input
+              type="number"
+              className="w-full rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
+              value={amount}
+              onChange={(e) => setAmount(Number(e.target.value))}
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">
+              {status === "paid" ? "Fecha de Pago" : "Fecha de Vencimiento"}
+            </label>
+            <input
+              type="date"
+              className="w-full rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm hover:bg-gray-100">
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+            >
+              {loading ? "Guardando..." : "Guardar Cambios"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* =========================
    Schedule Modal (con scroll)
    ========================= */
 function ScheduleModal({
@@ -379,7 +487,9 @@ function ScheduleModal({
   const [rows, setRows] = useState<ScheduleRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [payingId, setPayingId] = useState<number | null>(null);
+  
+  // ESTADO PARA LA FILA QUE SE ESTÁ EDITANDO
+  const [editingRow, setEditingRow] = useState<ScheduleRow | null>(null);
 
   useEffect(() => {
     if (!open || !advance) return;
@@ -406,119 +516,106 @@ function ScheduleModal({
     })();
   }, [open, advance]);
 
-  async function markPaid(row: ScheduleRow) {
-    if (!advance) return;
-    setPayingId(row.id);
-    try {
-      const auth = ensureBasicAuth();
-      const rs = await fetch(`${API}/advances/${advance.id}/payments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: auth },
-        body: JSON.stringify({ installment_no: row.installment_no }),
-      });
-      if (rs.status === 401 || rs.status === 403) {
-        clearBasicAuth();
-        throw new Error("Unauthorized");
-      }
-      const json = await rs.json();
-      if (!rs.ok) throw new Error(json?.error || "No se pudo pagar la cuota");
-
-      const rs2 = await fetch(`${API}/advances/${advance.id}/schedule`, {
-        headers: { Authorization: ensureBasicAuth() },
-      });
-      const json2 = await rs2.json();
-      if (rs2.ok) setRows(json2.items as ScheduleRow[]);
-    } catch (e: any) {
-      alert(e?.message || "Error");
-    } finally {
-      setPayingId(null);
-    }
-  }
+  // Función para recargar tras edición
+  const reload = async () => {
+     if(!advance) return;
+     const auth = ensureBasicAuth();
+     const rs = await fetch(`${API}/advances/${advance.id}/schedule`, { headers: { Authorization: auth } });
+     const json = await rs.json();
+     if (rs.ok) setRows(json.items);
+  };
 
   if (!open || !advance) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-    >
+    <>
       <div
-        className="w-full max-w-4xl max-h-[85vh] rounded-2xl border bg-white shadow-xl overflow-hidden flex flex-col"
-        onClick={(e) => e.stopPropagation()}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        onClick={onClose}
       >
-        <div className="px-5 pt-5 pb-3 flex items-center justify-between shrink-0">
-          <h3 className="text-lg font-semibold">Cronograma — Anticipo #{advance.id}</h3>
-          <button className="h-8 w-8 rounded-xl hover:bg-gray-100" onClick={onClose}>
-            ✕
-          </button>
-        </div>
+        <div
+          className="w-full max-w-4xl max-h-[85vh] rounded-2xl border bg-white shadow-xl overflow-hidden flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-5 pt-5 pb-3 flex items-center justify-between shrink-0">
+            <h3 className="text-lg font-semibold">Cronograma — Anticipo #{advance.id}</h3>
+            <button className="h-8 w-8 rounded-xl hover:bg-gray-100" onClick={onClose}>
+              ✕
+            </button>
+          </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 pb-5">
-          {loading ? (
-            <div className="py-10 text-center">Cargando…</div>
-          ) : err ? (
-            <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-              {err}
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 text-left sticky top-0 z-10">
-                  <tr>
-                    <th className="px-4 py-2">#</th>
-                    <th className="px-4 py-2">Vence</th>
-                    <th className="px-4 py-2">Cuota</th>
-                    <th className="px-4 py-2">Interés</th>
-                    <th className="px-4 py-2">Capital</th>
-                    <th className="px-4 py-2">Estado</th>
-                    <th className="px-4 py-2" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => {
-                    const state = r.overdue && r.status !== "paid" ? "overdue" : r.status;
-                    return (
-                      <tr key={r.id} className="border-t">
-                        <td className="px-4 py-2">{r.installment_no}</td>
-                        <td className="px-4 py-2">{r.due_date}</td>
-                        <td className="px-4 py-2 font-medium">
-                          ${fmtCOP.format(r.installment_amount)}
-                        </td>
-                        <td className="px-4 py-2">${fmtCOP.format(r.interest_amount)}</td>
-                        <td className="px-4 py-2">${fmtCOP.format(r.principal_amount)}</td>
-                        <td className="px-4 py-2">
-                          <span className={`rounded-full px-3 py-1 text-xs ${badgeTone(state)}`}>
-                            {state}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2">
-                          {r.status !== "paid" && (
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 pb-5">
+            {loading ? (
+              <div className="py-10 text-center">Cargando…</div>
+            ) : err ? (
+              <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+                {err}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 text-left sticky top-0 z-10">
+                    <tr>
+                      <th className="px-4 py-2">#</th>
+                      <th className="px-4 py-2">Fecha</th>
+                      <th className="px-4 py-2">Cuota</th>
+                      <th className="px-4 py-2">Estado</th>
+                      <th className="px-4 py-2">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => {
+                      const state = r.overdue && r.status !== "paid" ? "overdue" : r.status;
+                      const displayDate = r.status === 'paid' && r.paid_date ? r.paid_date : r.due_date;
+                      
+                      return (
+                        <tr key={r.id} className="border-t hover:bg-gray-50">
+                          <td className="px-4 py-2">{r.installment_no}</td>
+                          <td className="px-4 py-2 text-gray-600">{displayDate}</td>
+                          <td className="px-4 py-2 font-medium">
+                            ${fmtCOP.format(r.installment_amount)}
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className={`rounded-full px-3 py-1 text-xs ${badgeTone(state)}`}>
+                              {state === 'paid' ? 'Pagada' : state === 'overdue' ? 'Vencida' : 'Pendiente'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
                             <button
-                              className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
-                              onClick={() => markPaid(r)}
-                              disabled={payingId === r.id}
-                            >
-                              {payingId === r.id ? "Pagando…" : "Marcar pagada"}
+                                className="text-blue-600 hover:text-blue-800 font-medium text-xs underline decoration-blue-300 underline-offset-4"
+                                onClick={() => setEditingRow(r)}
+                              >
+                                Editar
                             </button>
-                          )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {rows.length === 0 && (
+                      <tr>
+                        <td className="px-4 py-6 text-gray-500" colSpan={7}>
+                          Sin cronograma.
                         </td>
                       </tr>
-                    );
-                  })}
-                  {rows.length === 0 && (
-                    <tr>
-                      <td className="px-4 py-6 text-gray-500" colSpan={7}>
-                        Sin cronograma.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* RENDERIZADO CONDICIONAL DEL MODAL DE EDICIÓN */}
+      {editingRow && (
+        <EditRowModal 
+          advanceId={advance.id}
+          row={editingRow}
+          onClose={() => setEditingRow(null)}
+          onSuccess={() => reload()} 
+        />
+      )}
+    </>
   );
 }
 
@@ -710,7 +807,7 @@ function AdvancesList() {
         open={!!selected} 
         onClose={() => {
           setSelected(null);
-          load(offset);
+          load(offset); // Recargamos lista al cerrar el modal principal
         }} 
       />
     </div>

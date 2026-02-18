@@ -182,7 +182,7 @@ r.get("/:id/schedule", async (req: Request, res: Response) => {
 });
 
 // --------- POST /advances/:id/payments -------------------
-// Aquí está la lógica crítica actualizada
+// NOTA: Mantenemos esta por compatibilidad, pero la edición real ahora se hace en PATCH abajo
 r.post("/:id/payments", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "invalid id" });
@@ -276,6 +276,82 @@ r.patch("/:id", async (req: Request, res: Response) => {
 
   if (error) return res.status(500).json({ error: error.message });
   res.json({ advance: data });
+});
+
+// --------- PATCH /advances/:id/schedule/:rowId (EDITAR CUOTA COMPLETA) ---------
+// Permite cambiar estado (pending/paid), fecha y monto, recalculando el avance
+r.patch("/:id/schedule/:rowId", async (req: Request, res: Response) => {
+  const advanceId = Number(req.params.id);
+  const rowId = Number(req.params.rowId);
+  
+  // Datos que queremos editar
+  const { status, date, amount } = req.body; // date puede ser due_date o paid_date según el status
+
+  if (!advanceId || !rowId) return res.status(400).json({ error: "Invalid IDs" });
+
+  try {
+    // 1. Validar estado válido
+    if (status && !["pending", "paid"].includes(status)) {
+      return res.status(400).json({ error: "Estado inválido" });
+    }
+
+    // 2. Preparar payload de actualización
+    const updates: any = {};
+    if (amount !== undefined) updates.installment_amount = Number(amount);
+    
+    if (status === "paid") {
+      updates.status = "paid";
+      updates.paid_date = date || new Date().toISOString().slice(0, 10); // Si es paid, necesitamos fecha de pago
+    } else if (status === "pending") {
+      updates.status = "pending";
+      updates.paid_date = null; // Si vuelve a pendiente, borramos fecha de pago
+      if (date) updates.due_date = date; // Opcional: permitir cambiar fecha de vencimiento
+    }
+
+    // 3. Actualizar la fila del cronograma
+    const { error: upErr } = await supabase
+      .from("operational_advance_schedule")
+      .update(updates)
+      .eq("id", rowId)
+      .eq("advance_id", advanceId); // Seguridad: que pertenezca al advance correcto
+
+    if (upErr) throw new Error(upErr.message);
+
+    // 4. RECALCULAR PROGRESO DEL PRÉSTAMO PADRE
+    // Contamos cuántas quedaron pagadas en total para este préstamo
+    const { count: paidCount, error: countErr } = await supabase
+      .from("operational_advance_schedule")
+      .select("*", { count: "exact", head: true })
+      .eq("advance_id", advanceId)
+      .eq("status", "paid");
+
+    if (!countErr && typeof paidCount === "number") {
+      // Traemos el total de cuotas para saber si cerramos o abrimos
+      const { data: adv } = await supabase
+        .from("operational_advances")
+        .select("installments, status")
+        .eq("id", advanceId)
+        .single();
+
+      if (adv) {
+        const isComplete = paidCount >= adv.installments;
+        const newStatus = isComplete ? "closed" : "active"; // Si estaba closed y le restamos pagos, vuelve a active
+
+        await supabase
+          .from("operational_advances")
+          .update({
+            current_installment: paidCount,
+            status: newStatus,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", advanceId);
+      }
+    }
+
+    return res.json({ ok: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 export default r;
