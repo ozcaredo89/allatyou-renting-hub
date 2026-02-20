@@ -18,22 +18,12 @@ type NormalizedAttachment = {
   url: string;
 };
 
-/** POST /expenses
- * body: {
- * date,
- * item,
- * description,
- * total_amount,
- * plates: string[],
- * attachment_url?,                  // LEGACY
- * attachments?: { kind, url }[]     // NUEVO
- * }
- */
 r.post("/", async (req: Request, res: Response) => {
   try {
     const {
       date,
       item,
+      category = "Otros", // NUEVO: Categoría por defecto
       description,
       total_amount,
       plates,
@@ -104,13 +94,14 @@ r.post("/", async (req: Request, res: Response) => {
 
     const firstAttachmentUrl = normAttachments[0]?.url ?? null;
 
-    // Inserta expense (dejamos attachment_url por compatibilidad, pero ya no es obligatorio)
+    // Inserta expense agregando el campo category
     const { data: exp, error: eErr } = await supabase
       .from("expenses")
       .insert([
         {
           date,
           item: item.trim(),
+          category, // NUEVO
           description: desc,
           total_amount: Number(total_amount.toFixed(2)),
           attachment_url: firstAttachmentUrl,
@@ -152,7 +143,8 @@ r.post("/", async (req: Request, res: Response) => {
         changed_fields: {
           plates: normPlates,
           shares,
-          attachments: normAttachments
+          attachments: normAttachments,
+          category // NUEVO
         },
         actor: null
       }
@@ -164,7 +156,7 @@ r.post("/", async (req: Request, res: Response) => {
   }
 });
 
-// Listar gastos (incluye detalle y adjuntos; con placa usa INNER)
+// Listar gastos (incluye categoría)
 r.get("/", async (req: Request, res: Response) => {
   const limit  = Math.min(Math.max(parseInt(String(req.query.limit || 20), 10) || 20, 1), 100);
   const offset = Math.max(parseInt(String(req.query.offset || 0), 10) || 0, 0);
@@ -176,8 +168,9 @@ r.get("/", async (req: Request, res: Response) => {
   const last7 = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
   const last7Str = last7.toISOString().slice(0, 10); // YYYY-MM-DD
 
+  // NUEVO: Agregamos "category" al select
   const selectStr = `
-    id, date, item, description, total_amount, attachment_url, created_at, updated_at,
+    id, date, item, category, description, total_amount, attachment_url, created_at, updated_at,
     expense_attachments(kind, url),
     ${
       plate
@@ -193,7 +186,6 @@ r.get("/", async (req: Request, res: Response) => {
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  // Rango por defecto o from/to
   if (!from && !to) {
     q = q.gte("date", last7Str);
   } else {
@@ -201,7 +193,6 @@ r.get("/", async (req: Request, res: Response) => {
     if (to)   q = q.lte("date", to);
   }
 
-  // Filtro por placa si viene
   if (plate) {
     q = q.eq("expense_vehicles.plate", plate);
   }
@@ -213,14 +204,12 @@ r.get("/", async (req: Request, res: Response) => {
   res.json({ items: data ?? [], total: count ?? 0, limit, offset });
 });
 
-/** PUT /expenses/:id/attachment  (LEGACY: aún soporta actualizar attachment_url) */
 r.put("/:id/attachment", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const { attachment_url } = req.body || {};
   if (!id || typeof attachment_url !== "string")
     return res.status(400).json({ error: "id and attachment_url required" });
 
-  // Lee actual (para log)
   const { data: prev, error: gErr } = await supabase
     .from("expenses")
     .select("attachment_url")
@@ -254,10 +243,6 @@ r.put("/:id/attachment", async (req: Request, res: Response) => {
   res.json(data);
 });
 
-/** POST /expenses/:id/attachments
- * body: { attachments: { kind: "evidence" | "invoice"; url: string }[] }
- * Agrega ADJUNTOS adicionales a un gasto ya existente.
- */
 r.post("/:id/attachments", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
 
@@ -271,7 +256,6 @@ r.post("/:id/attachments", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "attachments must be non-empty" });
   }
 
-  // Normalizar adjuntos
   const normalized: NormalizedAttachment[] = [];
   for (const raw of incoming) {
     if (!raw) continue;
@@ -286,7 +270,6 @@ r.post("/:id/attachments", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "valid attachments required" });
   }
 
-  // Obtener cuántos adjuntos tiene hoy el gasto
   const { data: current, error: curErr } = await supabase
     .from("expense_attachments")
     .select("id")
@@ -302,7 +285,6 @@ r.post("/:id/attachments", async (req: Request, res: Response) => {
     });
   }
 
-  // Insertar nuevos adjuntos
   const rows = normalized.map(a => ({
     expense_id: id,
     kind: a.kind,
@@ -316,7 +298,6 @@ r.post("/:id/attachments", async (req: Request, res: Response) => {
 
   if (insErr) return res.status(500).json({ error: insErr.message });
 
-  // Audit log
   await supabase.from("expense_audit_log").insert([
     {
       expense_id: id,
@@ -329,13 +310,9 @@ r.post("/:id/attachments", async (req: Request, res: Response) => {
   res.status(201).json({ attachments: inserted });
 });
 
-/** PUT /expenses/:id
- * Actualiza los datos básicos de un gasto.
- * (No recalcula prorrateo histórico por simplicidad operativa)
- */
 r.put("/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
-  const { date, item, description, total_amount } = req.body;
+  const { date, item, category, description, total_amount } = req.body; // NUEVO: recibe category
 
   if (!id) return res.status(400).json({ error: "Invalid ID" });
 
@@ -345,8 +322,9 @@ r.put("/:id", async (req: Request, res: Response) => {
       .update({
         date,
         item,
+        category, // NUEVO: actualiza category
         description,
-        total_amount // Se actualiza el total, pero ojo: no recalcula share_amount en expense_vehicles
+        total_amount
       })
       .eq("id", id)
       .select()

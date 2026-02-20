@@ -1,3 +1,4 @@
+// web/src/pages/Expenses.tsx
 import { useMemo, useState, useEffect } from "react";
 import { BillGeneratorModal } from "../components/BillGeneratorModal"; 
 import { Pencil, X, AlertCircle, ChevronDown, CheckCircle2 } from "lucide-react"; 
@@ -12,6 +13,7 @@ const SUPPORT_WA_NUMBER = "573113738912";
 type SavedExpensePreview = {
   date: string;
   item: string;
+  category: string;
   description: string;
   total: number;
   plates: string[];
@@ -22,6 +24,7 @@ type ExpenseRow = {
   id: number;
   date: string;
   item: string;
+  category?: string; // NUEVO
   description: string;
   total_amount: number;
   attachment_url: string | null;
@@ -48,7 +51,6 @@ export default function Expenses() {
     }
   }
 
-  // Cargar al inicio y cuando cambie el límite
   useEffect(() => { loadRecent(limit); }, [limit]);
 
   const handleLoadMore = () => {
@@ -72,6 +74,7 @@ export default function Expenses() {
   // --- FORMULARIO CREAR ---
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [item, setItem] = useState("");
+  const [category, setCategory] = useState("Mantenimiento");
   const [description, setDescription] = useState("");
   const [amountStr, setAmountStr] = useState(""); 
   const [plates, setPlates] = useState<string[]>([]);
@@ -82,9 +85,9 @@ export default function Expenses() {
 
   // --- FORMULARIO EDITAR ---
   const [editingExpense, setEditingExpense] = useState<ExpenseRow | null>(null);
-  // Estados temporales para el modal de edición
   const [editDate, setEditDate] = useState("");
   const [editItem, setEditItem] = useState("");
+  const [editCategory, setEditCategory] = useState("Mantenimiento"); 
   const [editDesc, setEditDesc] = useState("");
   const [editAmountStr, setEditAmountStr] = useState("");
   const [editEvidenceFiles, setEditEvidenceFiles] = useState<File[]>([]);
@@ -95,13 +98,14 @@ export default function Expenses() {
     setEditingExpense(e);
     setEditDate(e.date);
     setEditItem(e.item);
+    setEditCategory(e.category || "Mantenimiento"); 
     setEditDesc(e.description || "");
     setEditAmountStr(String(e.total_amount));
     setEditEvidenceFiles([]);
     setEditInvoiceFiles([]);
   };
 
-  // Lógica de Placas (Igual que antes)
+  // Lógica de Placas
   const normalizedPlate = useMemo(() => plateInput.toUpperCase().replace(/[^A-Z0-9]/g, ""), [plateInput]);
   const plateFormatValid = useMemo(() => PLATE_RE.test(normalizedPlate), [normalizedPlate]);
   const [checking, setChecking] = useState<"idle" | "checking" | "ok" | "missing">("idle");
@@ -161,18 +165,19 @@ export default function Expenses() {
         ...evUrls.map(u => ({ kind: "evidence" as const, url: u })),
         ...invUrls.map(u => ({ kind: "invoice" as const, url: u })),
       ];
-      const body = { date, item, description: description || null, total_amount: total, plates, attachments };
+      // Agregamos category al body
+      const body = { date, item, category, description: description || null, total_amount: total, plates, attachments };
       const rs = await fetch(`${API}/expenses`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       if (!rs.ok) throw new Error(await rs.text());
       
-      setSaved({ date, item, description, total, plates: [...plates], perVehicle: Math.floor(total / plates.length) });
+      setSaved({ date, item, category, description, total, plates: [...plates], perVehicle: Math.floor(total / plates.length) });
       setShowModal(true);
       await loadRecent(limit);
       
       // Reset form
-      setItem(""); setDescription(""); setAmountStr(""); setPlates([]); setEvidenceFiles([]); setInvoiceFiles([]);
+      setItem(""); setCategory("Otros"); setDescription(""); setAmountStr(""); setPlates([]); setEvidenceFiles([]); setInvoiceFiles([]);
     } catch { alert("Error creando gasto"); } 
     finally { setLoading(false); }
   }
@@ -187,6 +192,7 @@ export default function Expenses() {
       const updateBody = {
         date: editDate,
         item: editItem,
+        category: editCategory, // NUEVO
         description: editDesc,
         total_amount: Number(editAmountStr.replace(/[^\d]/g, ""))
       };
@@ -218,13 +224,13 @@ export default function Expenses() {
   // UTILIDADES
   function sendWhatsapp() {
     if (!saved) return;
-    const msg = `Gasto: ${saved.item} - $${fmtCOP.format(saved.total)}`;
+    const msg = `Gasto [${saved.category}]: ${saved.item} - $${fmtCOP.format(saved.total)}`;
     window.open(`https://wa.me/${SUPPORT_WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
   }
 
   function copyMessage() {
     if (!saved) return;
-    navigator.clipboard.writeText(`Gasto: ${saved.item} - $${fmtCOP.format(saved.total)}`).then(() => alert("Copiado!"));
+    navigator.clipboard.writeText(`Gasto [${saved.category}]: ${saved.item} - $${fmtCOP.format(saved.total)}`).then(() => alert("Copiado!"));
   }
 
   return (
@@ -233,23 +239,32 @@ export default function Expenses() {
         <h1 className="mb-6 text-3xl font-bold tracking-tight">Registrar gasto</h1>
 
         {/* FORMULARIO PRINCIPAL */}
-        <form onSubmit={onSubmit} className="rounded-2xl border bg-white p-5 shadow-sm grid gap-4 md:grid-cols-3">
+        <form onSubmit={onSubmit} className="rounded-2xl border bg-white p-5 shadow-sm grid gap-4 md:grid-cols-4">
           <div>
             <label className="mb-1 block text-sm font-medium">Fecha</label>
             <input className="w-full rounded-xl border px-3 py-2" type="date" value={date} onChange={e => setDate(e.target.value)} required />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium">Item</label>
-            <input className="w-full rounded-xl border px-3 py-2" placeholder="Ej: Aceite" value={item} onChange={e => setItem(e.target.value)} required />
+            <label className="mb-1 block text-sm font-medium">Categoría</label>
+            <select className="w-full rounded-xl border px-3 py-2 bg-white" value={category} onChange={e => setCategory(e.target.value)} required>
+              <option value="Mantenimiento">Mantenimiento</option>
+              <option value="Cambio de aceite">Cambio de aceite</option>
+              <option value="Otros">Otros</option>
+            </select>
           </div>
-          <div className="md:col-span-3">
-            <label className="mb-1 block text-sm font-medium">Descripción</label>
-            <input className="w-full rounded-xl border px-3 py-2" placeholder="Detalle opcional" value={description} onChange={e => setDescription(e.target.value)} />
+          <div>
+            <label className="mb-1 block text-sm font-medium">Item</label>
+            <input className="w-full rounded-xl border px-3 py-2" placeholder="Ej: Filtro de aire" value={item} onChange={e => setItem(e.target.value)} required />
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium">Monto</label>
             <input className="w-full rounded-xl border px-3 py-2" inputMode="numeric" placeholder="0" value={fmtCOP.format(total)} 
                    onChange={e => setAmountStr(e.target.value.replace(/[^\d]/g, ""))} required />
+          </div>
+
+          <div className="md:col-span-4">
+            <label className="mb-1 block text-sm font-medium">Descripción</label>
+            <input className="w-full rounded-xl border px-3 py-2" placeholder="Detalle opcional" value={description} onChange={e => setDescription(e.target.value)} />
           </div>
 
           <div className="md:col-span-2">
@@ -266,7 +281,7 @@ export default function Expenses() {
             </div>
           </div>
 
-          <div className="md:col-span-3 grid md:grid-cols-2 gap-4 bg-slate-50 p-3 rounded-xl">
+          <div className="md:col-span-4 grid md:grid-cols-2 gap-4 bg-slate-50 p-3 rounded-xl mt-2">
              <div>
                 <label className="text-sm font-bold text-slate-700">Evidencias 📷</label>
                 <input type="file" multiple className="w-full text-xs mt-1" onChange={e => setEvidenceFiles(Array.from(e.target.files || []))} />
@@ -277,7 +292,7 @@ export default function Expenses() {
              </div>
           </div>
 
-          <div className="md:col-span-3 flex justify-end gap-2 pt-2">
+          <div className="md:col-span-4 flex justify-end gap-2 pt-2">
             <button disabled={loading || !plates.length} className="rounded-xl bg-black px-5 py-2.5 text-white disabled:opacity-50 font-medium shadow-lg hover:bg-slate-800 transition-all">
               {loading ? "Guardando..." : "Guardar Gasto"}
             </button>
@@ -314,7 +329,9 @@ export default function Expenses() {
                     <div className="flex justify-between items-start mb-1">
                        <div>
                           <div className="font-bold text-lg text-slate-900">{e.item}</div>
-                          <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">{e.date}</div>
+                          <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                            {e.date} • <span className="text-blue-600">{e.category || "Otros"}</span>
+                          </div>
                        </div>
                        <div className="text-right">
                           <div className="font-black text-lg text-slate-800">${fmtCOP.format(Number(e.total_amount))}</div>
@@ -349,7 +366,7 @@ export default function Expenses() {
                         {e.expense_attachments.map((a, idx) => (
                            <a key={idx} href={a.url} target="_blank" rel="noreferrer" 
                               className={`text-xs px-2 py-1 rounded border flex items-center gap-1 hover:brightness-95 ${a.kind === "invoice" ? "bg-purple-50 text-purple-700 border-purple-100" : "bg-blue-50 text-blue-700 border-blue-100"}`}>
-                             {a.kind === "evidence" ? "📷 Foto" : "📄 Factura"}
+                              {a.kind === "evidence" ? "📷 Foto" : "📄 Factura"}
                            </a>
                         ))}
                       </div>
@@ -428,14 +445,24 @@ export default function Expenses() {
                     <input type="date" className="w-full p-3 bg-slate-50 border rounded-xl font-medium" value={editDate} onChange={e => setEditDate(e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase ml-1">Monto</label>
-                    <input className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-slate-900" value={fmtCOP.format(Number(editAmountStr.replace(/[^\d]/g, "")))} onChange={e => setEditAmountStr(e.target.value.replace(/[^\d]/g, ""))} />
+                    <label className="text-xs font-bold text-slate-500 uppercase ml-1">Categoría</label>
+                    <select className="w-full p-3 bg-slate-50 border rounded-xl font-medium" value={editCategory} onChange={e => setEditCategory(e.target.value)}>
+                      <option value="Mantenimiento">Mantenimiento</option>
+                      <option value="Cambio de aceite">Cambio de aceite</option>
+                      <option value="Otros">Otros</option>
+                    </select>
                   </div>
                </div>
                
-               <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase ml-1">Item</label>
-                  <input className="w-full p-3 bg-slate-50 border rounded-xl font-medium" value={editItem} onChange={e => setEditItem(e.target.value)} />
+               <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase ml-1">Item</label>
+                    <input className="w-full p-3 bg-slate-50 border rounded-xl font-medium" value={editItem} onChange={e => setEditItem(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase ml-1">Monto</label>
+                    <input className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-slate-900" value={fmtCOP.format(Number(editAmountStr.replace(/[^\d]/g, "")))} onChange={e => setEditAmountStr(e.target.value.replace(/[^\d]/g, ""))} />
+                  </div>
                </div>
 
                <div>
