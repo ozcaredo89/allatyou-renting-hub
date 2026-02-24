@@ -92,7 +92,7 @@ export default function App() {
             
             {/* Permitimos /pay también en la landing por comodidad de conductores */}
             <Route path="/pay" element={<Pay />} /> 
-            
+            <Route path="/assistance" element={<Assistance />} />
             {/* Cualquier otra cosa en la landing va al home */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

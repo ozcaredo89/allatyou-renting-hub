@@ -807,7 +807,7 @@ function AdvancesList() {
         open={!!selected} 
         onClose={() => {
           setSelected(null);
-          load(offset); // Recargamos lista al cerrar el modal principal
+          load(offset);
         }} 
       />
     </div>
