@@ -1,6 +1,4 @@
 // src/lib/email.ts
-import fetch from "node-fetch";
-
 type SendEmailOptions = {
   to: string;
   subject: string;
