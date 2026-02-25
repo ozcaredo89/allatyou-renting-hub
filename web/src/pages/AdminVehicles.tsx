@@ -1,20 +1,11 @@
 import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets } from "lucide-react";
+import { ImageViewer } from "../components/ImageViewer";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
 type DriverSimple = { id: number; full_name: string };
-
-type ExpenseVehicle = { plate: string; share_amount: string | number };
-type VehicleExpense = {
-  id: number;
-  date: string;
-  item: string;
-  category: string;
-  total_amount: string | number;
-  expense_vehicles: ExpenseVehicle[];
-};
 
 type Vehicle = {
   plate: string;
@@ -84,6 +75,7 @@ export default function AdminVehicles() {
   const [loadingExpenses, setLoadingExpenses] = useState(false);
   const [viewingHistory, setViewingHistory] = useState<{ plate: string; category: 'Mantenimiento' | 'Cambio de aceite' } | null>(null);
   const [viewingExpenseDetail, setViewingExpenseDetail] = useState<any | null>(null);
+  const [viewingImages, setViewingImages] = useState<{ urls: { url: string, title?: string }[]; startingIndex: number } | null>(null);
 
   // --- ESTADOS PARA CÁMARA (NUEVO) ---
   const [activeField, setActiveField] = useState<'ownership_card_front' | 'ownership_card_back' | null>(null);
@@ -708,19 +700,31 @@ export default function AdminVehicles() {
                   <div className="flex flex-wrap gap-2">
                     {/* Legacy support */}
                     {viewingExpenseDetail.attachment_url && !viewingExpenseDetail.expense_attachments?.length && (
-                      <a href={viewingExpenseDetail.attachment_url} target="_blank" rel="noreferrer"
-                        className="bg-blue-50 text-blue-700 border border-blue-100 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 hover:brightness-95 transition-all font-medium">
-                        📷 Ver Soporte (Legado)
-                      </a>
+                      <button
+                        onClick={() => setViewingImages({ urls: [{ url: viewingExpenseDetail.attachment_url, title: 'Evidencia (Legado)' }], startingIndex: 0 })}
+                        className="bg-blue-50 text-blue-700 border border-blue-100 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-blue-100 transition-all font-medium cursor-pointer"
+                      >
+                        📷 Ver Foto
+                      </button>
                     )}
 
                     {/* New attachments system */}
-                    {viewingExpenseDetail.expense_attachments?.map((a: any, idx: number) => (
-                      <a key={idx} href={a.url} target="_blank" rel="noreferrer"
-                        className={`text-xs px-3 py-1.5 rounded-lg border flex items-center gap-1 hover:brightness-95 transition-all font-medium ${a.kind === "invoice" ? "bg-purple-50 text-purple-700 border-purple-100" : "bg-blue-50 text-blue-700 border-blue-100"}`}>
-                        {a.kind === "evidence" ? "📷 Foto / Evidencia" : "📄 Factura"}
-                      </a>
-                    ))}
+                    {viewingExpenseDetail.expense_attachments?.map((a: any, idx: number) => {
+                      const allUrls = viewingExpenseDetail.expense_attachments.map((att: any) => ({
+                        url: att.url,
+                        title: att.kind === 'invoice' ? 'Factura' : 'Foto / Evidencia'
+                      }));
+
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => setViewingImages({ urls: allUrls, startingIndex: idx })}
+                          className={`text-xs px-3 py-1.5 rounded-lg border flex items-center gap-1 hover:brightness-95 transition-all font-medium cursor-pointer ${a.kind === "invoice" ? "bg-purple-50 text-purple-700 border-purple-100 hover:bg-purple-100" : "bg-blue-50 text-blue-700 border-blue-100 hover:bg-blue-100"}`}
+                        >
+                          {a.kind === "evidence" ? "📷 Foto / Evidencia" : "📄 Factura"}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -779,6 +783,15 @@ export default function AdminVehicles() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* --- VISOR GLOBAL DE IMÁGENES --- */}
+      {viewingImages && (
+        <ImageViewer
+          images={viewingImages.urls}
+          initialIndex={viewingImages.startingIndex}
+          onClose={() => setViewingImages(null)}
+        />
       )}
 
     </div>

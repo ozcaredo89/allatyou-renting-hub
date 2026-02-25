@@ -1,7 +1,8 @@
 // web/src/pages/Expenses.tsx
 import { useMemo, useState, useEffect } from "react";
-import { BillGeneratorModal } from "../components/BillGeneratorModal"; 
-import { Pencil, X, AlertCircle, ChevronDown, CheckCircle2 } from "lucide-react"; 
+import { BillGeneratorModal } from "../components/BillGeneratorModal";
+import { Pencil, X, AlertCircle, ChevronDown, CheckCircle2 } from "lucide-react";
+import { ImageViewer } from "../components/ImageViewer";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -33,7 +34,7 @@ type ExpenseRow = {
 };
 
 export default function Expenses() {
-  
+
   // --- ESTADO DE CARGA Y PAGINACIÓN ---
   const [limit, setLimit] = useState(20);
   const [recent, setRecent] = useState<ExpenseRow[]>([]);
@@ -42,7 +43,7 @@ export default function Expenses() {
   async function loadRecent(currentLimit: number) {
     setLoadingList(true);
     try {
-      const rs = await fetch(`${API}/expenses?limit=${currentLimit}`); 
+      const rs = await fetch(`${API}/expenses?limit=${currentLimit}`);
       if (!rs.ok) return;
       const json = await rs.json();
       setRecent(json.items);
@@ -62,13 +63,13 @@ export default function Expenses() {
   const [showBillModal, setShowBillModal] = useState(false);
 
   const toggleSelect = (id: number) => {
-     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
   const selectedTotal = useMemo(() => {
-     return recent
-        .filter(r => selectedIds.includes(r.id))
-        .reduce((sum, r) => sum + Number(r.total_amount), 0);
+    return recent
+      .filter(r => selectedIds.includes(r.id))
+      .reduce((sum, r) => sum + Number(r.total_amount), 0);
   }, [selectedIds, recent]);
 
   // --- FORMULARIO CREAR ---
@@ -76,18 +77,19 @@ export default function Expenses() {
   const [item, setItem] = useState("");
   const [category, setCategory] = useState("Mantenimiento");
   const [description, setDescription] = useState("");
-  const [amountStr, setAmountStr] = useState(""); 
+  const [amountStr, setAmountStr] = useState("");
   const [plates, setPlates] = useState<string[]>([]);
   const [plateInput, setPlateInput] = useState("");
   const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
   const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
+  const [viewingImages, setViewingImages] = useState<{ urls: { url: string; title?: string }[]; startingIndex: number } | null>(null);
 
   // --- FORMULARIO EDITAR ---
   const [editingExpense, setEditingExpense] = useState<ExpenseRow | null>(null);
   const [editDate, setEditDate] = useState("");
   const [editItem, setEditItem] = useState("");
-  const [editCategory, setEditCategory] = useState("Mantenimiento"); 
+  const [editCategory, setEditCategory] = useState("Mantenimiento");
   const [editDesc, setEditDesc] = useState("");
   const [editAmountStr, setEditAmountStr] = useState("");
   const [editEvidenceFiles, setEditEvidenceFiles] = useState<File[]>([]);
@@ -98,7 +100,7 @@ export default function Expenses() {
     setEditingExpense(e);
     setEditDate(e.date);
     setEditItem(e.item);
-    setEditCategory(e.category || "Mantenimiento"); 
+    setEditCategory(e.category || "Mantenimiento");
     setEditDesc(e.description || "");
     setEditAmountStr(String(e.total_amount));
     setEditEvidenceFiles([]);
@@ -109,7 +111,7 @@ export default function Expenses() {
   const normalizedPlate = useMemo(() => plateInput.toUpperCase().replace(/[^A-Z0-9]/g, ""), [plateInput]);
   const plateFormatValid = useMemo(() => PLATE_RE.test(normalizedPlate), [normalizedPlate]);
   const [checking, setChecking] = useState<"idle" | "checking" | "ok" | "missing">("idle");
-  
+
   useEffect(() => {
     let cancel = false;
     async function run() {
@@ -171,14 +173,14 @@ export default function Expenses() {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       if (!rs.ok) throw new Error(await rs.text());
-      
+
       setSaved({ date, item, category, description, total, plates: [...plates], perVehicle: Math.floor(total / plates.length) });
       setShowModal(true);
       await loadRecent(limit);
-      
+
       // Reset form
       setItem(""); setCategory("Otros"); setDescription(""); setAmountStr(""); setPlates([]); setEvidenceFiles([]); setInvoiceFiles([]);
-    } catch { alert("Error creando gasto"); } 
+    } catch { alert("Error creando gasto"); }
     finally { setLoading(false); }
   }
 
@@ -196,7 +198,7 @@ export default function Expenses() {
         description: editDesc,
         total_amount: Number(editAmountStr.replace(/[^\d]/g, ""))
       };
-      
+
       const updateRs = await fetch(`${API}/expenses/${editingExpense.id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updateBody)
       });
@@ -207,11 +209,11 @@ export default function Expenses() {
         const evUrls = await uploadMany(editEvidenceFiles);
         const invUrls = await uploadMany(editInvoiceFiles);
         const attachments = [
-            ...evUrls.map(u => ({ kind: "evidence" as const, url: u })),
-            ...invUrls.map(u => ({ kind: "invoice" as const, url: u })),
+          ...evUrls.map(u => ({ kind: "evidence" as const, url: u })),
+          ...invUrls.map(u => ({ kind: "invoice" as const, url: u })),
         ];
         await fetch(`${API}/expenses/${editingExpense.id}/attachments`, {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ attachments }),
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ attachments }),
         });
       }
 
@@ -258,8 +260,8 @@ export default function Expenses() {
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium">Monto</label>
-            <input className="w-full rounded-xl border px-3 py-2" inputMode="numeric" placeholder="0" value={fmtCOP.format(total)} 
-                   onChange={e => setAmountStr(e.target.value.replace(/[^\d]/g, ""))} required />
+            <input className="w-full rounded-xl border px-3 py-2" inputMode="numeric" placeholder="0" value={fmtCOP.format(total)}
+              onChange={e => setAmountStr(e.target.value.replace(/[^\d]/g, ""))} required />
           </div>
 
           <div className="md:col-span-4">
@@ -271,7 +273,7 @@ export default function Expenses() {
             <label className="mb-1 block text-sm font-medium">Placas</label>
             <div className="flex gap-2">
               <input className={`flex-1 rounded-xl border px-3 py-2 ${normalizedPlate && !plateFormatValid ? "border-red-500" : "border-gray-300"}`}
-                     placeholder="ABC123" value={plateInput} onChange={e => setPlateInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} maxLength={6} />
+                placeholder="ABC123" value={plateInput} onChange={e => setPlateInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} maxLength={6} />
               <button type="button" onClick={addPlate} disabled={!plateFormatValid || checking !== "ok"} className="rounded-xl border px-3 disabled:opacity-50">Agregar</button>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -282,14 +284,14 @@ export default function Expenses() {
           </div>
 
           <div className="md:col-span-4 grid md:grid-cols-2 gap-4 bg-slate-50 p-3 rounded-xl mt-2">
-             <div>
-                <label className="text-sm font-bold text-slate-700">Evidencias 📷</label>
-                <input type="file" multiple className="w-full text-xs mt-1" onChange={e => setEvidenceFiles(Array.from(e.target.files || []))} />
-             </div>
-             <div>
-                <label className="text-sm font-bold text-slate-700">Facturas 📄</label>
-                <input type="file" multiple className="w-full text-xs mt-1" onChange={e => setInvoiceFiles(Array.from(e.target.files || []))} />
-             </div>
+            <div>
+              <label className="text-sm font-bold text-slate-700">Evidencias 📷</label>
+              <input type="file" multiple className="w-full text-xs mt-1" onChange={e => setEvidenceFiles(Array.from(e.target.files || []))} />
+            </div>
+            <div>
+              <label className="text-sm font-bold text-slate-700">Facturas 📄</label>
+              <input type="file" multiple className="w-full text-xs mt-1" onChange={e => setInvoiceFiles(Array.from(e.target.files || []))} />
+            </div>
           </div>
 
           <div className="md:col-span-4 flex justify-end gap-2 pt-2">
@@ -304,19 +306,19 @@ export default function Expenses() {
           <span>Historial de Gastos</span>
           {selectedIds.length > 0 && <span className="text-sm bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full">{selectedIds.length} seleccionados</span>}
         </h2>
-        
+
         <div className="space-y-4">
           {recent.map((e) => {
             const isSelected = selectedIds.includes(e.id);
             const plates = e.expense_vehicles?.map((v) => v.plate) ?? [];
-            
+
             // Lógica de Documentos Faltantes
             const hasEvidence = e.expense_attachments?.some(a => a.kind === "evidence") || (e.attachment_url && !e.expense_attachments?.length); // Legacy support
             const hasInvoice = e.expense_attachments?.some(a => a.kind === "invoice");
 
             return (
               <div key={e.id} className={`group relative rounded-2xl border p-5 shadow-sm transition-all hover:shadow-md ${isSelected ? 'bg-emerald-50 border-emerald-300 ring-1 ring-emerald-300' : 'bg-white'}`}>
-                
+
                 <div className="flex gap-4 items-start">
                   {/* CHECKBOX */}
                   <div className="pt-1">
@@ -327,48 +329,61 @@ export default function Expenses() {
                   {/* INFO PRINCIPAL */}
                   <div className="flex-1">
                     <div className="flex justify-between items-start mb-1">
-                       <div>
-                          <div className="font-bold text-lg text-slate-900">{e.item}</div>
-                          <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-                            {e.date} • <span className="text-blue-600">{e.category || "Otros"}</span>
-                          </div>
-                       </div>
-                       <div className="text-right">
-                          <div className="font-black text-lg text-slate-800">${fmtCOP.format(Number(e.total_amount))}</div>
-                       </div>
+                      <div>
+                        <div className="font-bold text-lg text-slate-900">{e.item}</div>
+                        <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                          {e.date} • <span className="text-blue-600">{e.category || "Otros"}</span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-black text-lg text-slate-800">${fmtCOP.format(Number(e.total_amount))}</div>
+                      </div>
                     </div>
-                    
+
                     <div className="text-sm text-slate-600 mb-2">{e.description || <span className="italic text-slate-400">Sin descripción</span>}</div>
-                    
+
                     {/* PLACAS Y ALERTAS */}
                     <div className="flex flex-wrap items-center gap-3">
-                        {/* Placas */}
-                        <div className="flex gap-1">
-                           {plates.map(p => <span key={p} className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">{p}</span>)}
-                        </div>
+                      {/* Placas */}
+                      <div className="flex gap-1">
+                        {plates.map(p => <span key={p} className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">{p}</span>)}
+                      </div>
 
-                        {/* Alertas de Faltantes */}
-                        {!hasEvidence && (
-                           <span className="flex items-center gap-1 text-[10px] font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-100">
-                              <AlertCircle className="w-3 h-3" /> Falta Foto
-                           </span>
-                        )}
-                        {!hasInvoice && (
-                           <span className="flex items-center gap-1 text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-100">
-                              <AlertCircle className="w-3 h-3" /> Falta Factura
-                           </span>
-                        )}
+                      {/* Alertas de Faltantes */}
+                      {!hasEvidence && (
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-100">
+                          <AlertCircle className="w-3 h-3" /> Falta Foto
+                        </span>
+                      )}
+                      {!hasInvoice && (
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-100">
+                          <AlertCircle className="w-3 h-3" /> Falta Factura
+                        </span>
+                      )}
                     </div>
 
                     {/* LISTA DE ADJUNTOS EXISTENTES */}
-                    {e.expense_attachments && e.expense_attachments.length > 0 && (
+                    {((e.expense_attachments && e.expense_attachments.length > 0) || e.attachment_url) && (
                       <div className="mt-3 flex gap-2 flex-wrap pt-3 border-t border-slate-100 border-dashed">
-                        {e.expense_attachments.map((a, idx) => (
-                           <a key={idx} href={a.url} target="_blank" rel="noreferrer" 
-                              className={`text-xs px-2 py-1 rounded border flex items-center gap-1 hover:brightness-95 ${a.kind === "invoice" ? "bg-purple-50 text-purple-700 border-purple-100" : "bg-blue-50 text-blue-700 border-blue-100"}`}>
+
+                        {/* Legacy support */}
+                        {e.attachment_url && (!e.expense_attachments || e.expense_attachments.length === 0) && (
+                          <button onClick={() => setViewingImages({ urls: [{ url: e.attachment_url as string, title: 'Soporte (Legado)' }], startingIndex: 0 })}
+                            className="text-xs px-2 py-1 rounded border flex items-center gap-1 hover:brightness-95 bg-blue-50 text-blue-700 border-blue-100 cursor-pointer">
+                            📷 Foto (Legado)
+                          </button>
+                        )}
+
+                        {/* New attachments system */}
+                        {e.expense_attachments?.map((a, idx) => {
+                          const allUrls = e.expense_attachments!.map(att => ({ url: att.url, title: att.kind === 'invoice' ? 'Factura' : 'Foto / Evidencia' }));
+                          return (
+                            <button key={idx} onClick={() => setViewingImages({ urls: allUrls, startingIndex: idx })}
+                              className={`text-xs px-2 py-1 rounded border flex items-center gap-1 hover:brightness-95 cursor-pointer ${a.kind === "invoice" ? "bg-purple-50 text-purple-700 border-purple-100" : "bg-blue-50 text-blue-700 border-blue-100"}`}>
                               {a.kind === "evidence" ? "📷 Foto" : "📄 Factura"}
-                           </a>
-                        ))}
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -385,26 +400,26 @@ export default function Expenses() {
 
         {/* BOTÓN CARGAR MÁS */}
         <div className="mt-8 text-center">
-            <button 
-              onClick={handleLoadMore}
-              disabled={loadingList}
-              className="inline-flex items-center gap-2 px-6 py-2 bg-white border border-slate-200 rounded-full text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all font-medium text-sm shadow-sm"
-            >
-               {loadingList ? "Cargando..." : <>Cargar más antiguos <ChevronDown className="w-4 h-4" /></>}
-            </button>
+          <button
+            onClick={handleLoadMore}
+            disabled={loadingList}
+            className="inline-flex items-center gap-2 px-6 py-2 bg-white border border-slate-200 rounded-full text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all font-medium text-sm shadow-sm"
+          >
+            {loadingList ? "Cargando..." : <>Cargar más antiguos <ChevronDown className="w-4 h-4" /></>}
+          </button>
         </div>
       </div>
 
       {/* --- BARRA FLOTANTE (GENERAR COBRO) --- */}
       {selectedIds.length > 0 && (
-         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-6 py-4 rounded-full shadow-2xl flex items-center gap-6 z-40 animate-in slide-in-from-bottom duration-300">
-            <div className="text-sm">
-               <span className="font-bold block text-emerald-400">{selectedIds.length} Items</span>
-               <span className="text-slate-300">Total: ${fmtCOP.format(selectedTotal)}</span>
-            </div>
-            <button onClick={() => setShowBillModal(true)} className="bg-white text-slate-900 px-5 py-2 rounded-full font-bold hover:bg-emerald-50 transition-colors shadow-lg">Generar Cuenta de Cobro</button>
-            <button onClick={() => setSelectedIds([])} className="text-slate-400 hover:text-white p-1 rounded-full"><X className="w-5 h-5" /></button>
-         </div>
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-6 py-4 rounded-full shadow-2xl flex items-center gap-6 z-40 animate-in slide-in-from-bottom duration-300">
+          <div className="text-sm">
+            <span className="font-bold block text-emerald-400">{selectedIds.length} Items</span>
+            <span className="text-slate-300">Total: ${fmtCOP.format(selectedTotal)}</span>
+          </div>
+          <button onClick={() => setShowBillModal(true)} className="bg-white text-slate-900 px-5 py-2 rounded-full font-bold hover:bg-emerald-50 transition-colors shadow-lg">Generar Cuenta de Cobro</button>
+          <button onClick={() => setSelectedIds([])} className="text-slate-400 hover:text-white p-1 rounded-full"><X className="w-5 h-5" /></button>
+        </div>
       )}
 
       {/* --- MODALES --- */}
@@ -414,14 +429,14 @@ export default function Expenses() {
       {showModal && saved && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
-             <div className="mx-auto w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4 text-green-600"><CheckCircle2 className="w-8 h-8"/></div>
-             <h2 className="text-xl font-bold text-center mb-1">¡Gasto Guardado!</h2>
-             <p className="text-slate-500 text-center text-sm mb-6">¿Deseas enviar el reporte al grupo de WhatsApp?</p>
-             <div className="flex gap-2">
-                <button onClick={() => setShowModal(false)} className="flex-1 rounded-xl border px-4 py-3 font-medium hover:bg-slate-50">Cerrar</button>
-                <button onClick={copyMessage} className="flex-1 rounded-xl border px-4 py-3 font-medium hover:bg-slate-50">Copiar Texto</button>
-                <button onClick={sendWhatsapp} className="flex-1 rounded-xl bg-green-600 text-white px-4 py-3 font-bold hover:bg-green-700 shadow-lg shadow-green-200">WhatsApp</button>
-             </div>
+            <div className="mx-auto w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4 text-green-600"><CheckCircle2 className="w-8 h-8" /></div>
+            <h2 className="text-xl font-bold text-center mb-1">¡Gasto Guardado!</h2>
+            <p className="text-slate-500 text-center text-sm mb-6">¿Deseas enviar el reporte al grupo de WhatsApp?</p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowModal(false)} className="flex-1 rounded-xl border px-4 py-3 font-medium hover:bg-slate-50">Cerrar</button>
+              <button onClick={copyMessage} className="flex-1 rounded-xl border px-4 py-3 font-medium hover:bg-slate-50">Copiar Texto</button>
+              <button onClick={sendWhatsapp} className="flex-1 rounded-xl bg-green-600 text-white px-4 py-3 font-bold hover:bg-green-700 shadow-lg shadow-green-200">WhatsApp</button>
+            </div>
           </div>
         </div>
       )}
@@ -433,70 +448,80 @@ export default function Expenses() {
             <button onClick={() => setEditingExpense(null)} className="absolute top-5 right-5 text-slate-400 hover:text-slate-800 bg-slate-100 rounded-full p-1"><X className="w-5 h-5" /></button>
 
             <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-               <span className="bg-blue-100 text-blue-600 p-2 rounded-lg"><Pencil className="w-5 h-5" /></span>
-               Editar Gasto #{editingExpense.id}
+              <span className="bg-blue-100 text-blue-600 p-2 rounded-lg"><Pencil className="w-5 h-5" /></span>
+              Editar Gasto #{editingExpense.id}
             </h2>
 
             <form onSubmit={onSubmitEdit} className="space-y-4">
-               {/* Campos Básicos */}
-               <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase ml-1">Fecha</label>
-                    <input type="date" className="w-full p-3 bg-slate-50 border rounded-xl font-medium" value={editDate} onChange={e => setEditDate(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase ml-1">Categoría</label>
-                    <select className="w-full p-3 bg-slate-50 border rounded-xl font-medium" value={editCategory} onChange={e => setEditCategory(e.target.value)}>
-                      <option value="Mantenimiento">Mantenimiento</option>
-                      <option value="Cambio de aceite">Cambio de aceite</option>
-                      <option value="Otros">Otros</option>
-                    </select>
-                  </div>
-               </div>
-               
-               <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase ml-1">Item</label>
-                    <input className="w-full p-3 bg-slate-50 border rounded-xl font-medium" value={editItem} onChange={e => setEditItem(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase ml-1">Monto</label>
-                    <input className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-slate-900" value={fmtCOP.format(Number(editAmountStr.replace(/[^\d]/g, "")))} onChange={e => setEditAmountStr(e.target.value.replace(/[^\d]/g, ""))} />
-                  </div>
-               </div>
+              {/* Campos Básicos */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase ml-1">Fecha</label>
+                  <input type="date" className="w-full p-3 bg-slate-50 border rounded-xl font-medium" value={editDate} onChange={e => setEditDate(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase ml-1">Categoría</label>
+                  <select className="w-full p-3 bg-slate-50 border rounded-xl font-medium" value={editCategory} onChange={e => setEditCategory(e.target.value)}>
+                    <option value="Mantenimiento">Mantenimiento</option>
+                    <option value="Cambio de aceite">Cambio de aceite</option>
+                    <option value="Otros">Otros</option>
+                  </select>
+                </div>
+              </div>
 
-               <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase ml-1">Descripción</label>
-                  <textarea className="w-full p-3 bg-slate-50 border rounded-xl text-sm" rows={2} value={editDesc} onChange={e => setEditDesc(e.target.value)} />
-               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase ml-1">Item</label>
+                  <input className="w-full p-3 bg-slate-50 border rounded-xl font-medium" value={editItem} onChange={e => setEditItem(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase ml-1">Monto</label>
+                  <input className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-slate-900" value={fmtCOP.format(Number(editAmountStr.replace(/[^\d]/g, "")))} onChange={e => setEditAmountStr(e.target.value.replace(/[^\d]/g, ""))} />
+                </div>
+              </div>
 
-               {/* Sección Adjuntos */}
-               <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 mt-4">
-                  <h3 className="font-bold text-sm text-slate-700 mb-3">Agregar nuevos soportes</h3>
-                  <div className="space-y-3">
-                     <div>
-                        <label className="text-xs font-medium text-slate-500 mb-1 block">Evidencias (Fotos) 📷</label>
-                        <input type="file" multiple className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200"
-                           onChange={e => setEditEvidenceFiles(Array.from(e.target.files || []))} />
-                     </div>
-                     <div>
-                        <label className="text-xs font-medium text-slate-500 mb-1 block">Facturas (Imágenes) 📄</label>
-                        <input type="file" multiple className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-purple-100 file:text-purple-700 hover:file:bg-purple-200"
-                           onChange={e => setEditInvoiceFiles(Array.from(e.target.files || []))} />
-                     </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase ml-1">Descripción</label>
+                <textarea className="w-full p-3 bg-slate-50 border rounded-xl text-sm" rows={2} value={editDesc} onChange={e => setEditDesc(e.target.value)} />
+              </div>
+
+              {/* Sección Adjuntos */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 mt-4">
+                <h3 className="font-bold text-sm text-slate-700 mb-3">Agregar nuevos soportes</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-medium text-slate-500 mb-1 block">Evidencias (Fotos) 📷</label>
+                    <input type="file" multiple className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200"
+                      onChange={e => setEditEvidenceFiles(Array.from(e.target.files || []))} />
                   </div>
-               </div>
+                  <div>
+                    <label className="text-xs font-medium text-slate-500 mb-1 block">Facturas (Imágenes) 📄</label>
+                    <input type="file" multiple className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-purple-100 file:text-purple-700 hover:file:bg-purple-200"
+                      onChange={e => setEditInvoiceFiles(Array.from(e.target.files || []))} />
+                  </div>
+                </div>
+              </div>
 
-               <div className="flex gap-3 pt-4">
-                 <button type="button" onClick={() => setEditingExpense(null)} className="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100">Cancelar</button>
-                 <button type="submit" disabled={loading} className="flex-1 py-3 bg-black text-white rounded-xl font-bold shadow-lg hover:bg-slate-800 disabled:opacity-50">
-                    {loading ? "Guardando..." : "Guardar Cambios"}
-                 </button>
-               </div>
+              <div className="flex gap-3 pt-4">
+                <button type="button" onClick={() => setEditingExpense(null)} className="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100">Cancelar</button>
+                <button type="submit" disabled={loading} className="flex-1 py-3 bg-black text-white rounded-xl font-bold shadow-lg hover:bg-slate-800 disabled:opacity-50">
+                  {loading ? "Guardando..." : "Guardar Cambios"}
+                </button>
+              </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* --- VISOR GLOBAL DE IMÁGENES --- */}
+      {viewingImages && (
+        <ImageViewer
+          images={viewingImages.urls}
+          initialIndex={viewingImages.startingIndex}
+          onClose={() => setViewingImages(null)}
+        />
+      )}
+
     </div>
   );
 }
