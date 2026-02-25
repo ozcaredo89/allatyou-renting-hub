@@ -1,8 +1,17 @@
 import { useEffect, useState } from "react";
 import { ensureBasicAuth, requestWithBasicAuth } from "../lib/auth";
-import { ShieldAlert, TrendingDown, BellIcon, Settings, AlertTriangle, AlertCircle, CheckCircle } from "lucide-react";
+import { ShieldAlert, TrendingDown, BellIcon, Settings, AlertTriangle, AlertCircle, CheckCircle, X, Save, Edit2 } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
+
+type AuditRule = {
+    id: string;
+    item_name: string;
+    avg_price: number;
+    max_allowed_price: number | null;
+    expected_frequency_days: number | null;
+    is_active: boolean;
+};
 
 type TopItem = { name: string; amount: number; percentage: number };
 type WorstVehicle = { plate: string; total_expenses: number };
@@ -26,9 +35,194 @@ type AuditsDashboard = {
     active_alerts: AuditAlert[];
 };
 
+function formatCurrencyStr(val: number) {
+    return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(val);
+}
+
+// ==========================================
+// COMPONENTE MODAL DE REGLAS
+// ==========================================
+function RulesModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+    const [rules, setRules] = useState<AuditRule[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [editForm, setEditForm] = useState<Partial<AuditRule>>({});
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        if (isOpen) fetchRules();
+    }, [isOpen]);
+
+    const fetchRules = async () => {
+        setLoading(true);
+        try {
+            const res = await requestWithBasicAuth(`${API}/audits/rules`);
+            if (res.ok) {
+                const data = await res.json();
+                setRules(data);
+            }
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleEdit = (r: AuditRule) => {
+        setEditingId(r.id);
+        setEditForm({ max_allowed_price: r.max_allowed_price, expected_frequency_days: r.expected_frequency_days, is_active: r.is_active });
+    };
+
+    const handleSave = async (id: string) => {
+        setSaving(true);
+        try {
+            const res = await requestWithBasicAuth(`${API}/audits/rules/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(editForm)
+            });
+            if (res.ok) {
+                setRules(rules.map(r => r.id === id ? { ...r, ...editForm } : r));
+                setEditingId(null);
+            } else {
+                alert("Error al guardar la regla");
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Error de conexión");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95">
+                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                    <div>
+                        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                            <Settings className="w-5 h-5 text-emerald-600" />
+                            Reglas de Auditoría
+                        </h2>
+                        <p className="text-sm text-slate-500 mt-1">
+                            Ajusta el precio máximo tolerado y la frecuencia esperada en días para cada insumo.
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-700 bg-white rounded-full shadow-sm">
+                        <X className="w-5 h-5" />
+                    </button>
+                </div>
+
+                <div className="p-6 overflow-y-auto bg-slate-50/50 flex-1">
+                    {loading ? (
+                        <div className="flex justify-center py-10">
+                            <div className="w-8 h-8 rounded-full border-4 border-emerald-500 border-t-transparent animate-spin" />
+                        </div>
+                    ) : (
+                        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-slate-100 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                                        <th className="p-3 font-bold">Insumo</th>
+                                        <th className="p-3 font-bold">Precio Promed. Histórico</th>
+                                        <th className="p-3 font-bold">Tope Máx Permitido</th>
+                                        <th className="p-3 font-bold">Frecuencia (Días)</th>
+                                        <th className="p-3 font-bold text-center">Activa</th>
+                                        <th className="p-3 font-bold text-center">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {rules.map(r => {
+                                        const isEditing = editingId === r.id;
+                                        return (
+                                            <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">
+                                                <td className="p-3 font-semibold text-slate-700">{r.item_name}</td>
+                                                <td className="p-3 text-slate-500 font-medium">{formatCurrencyStr(r.avg_price)}</td>
+
+                                                <td className="p-3">
+                                                    {isEditing ? (
+                                                        <input
+                                                            type="number"
+                                                            value={editForm.max_allowed_price || ""}
+                                                            onChange={e => setEditForm({ ...editForm, max_allowed_price: Number(e.target.value) })}
+                                                            className="w-full p-2 border border-emerald-300 rounded font-medium text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500/20"
+                                                            placeholder="Ej: 150000"
+                                                        />
+                                                    ) : (
+                                                        <span className="font-semibold text-emerald-700">
+                                                            {r.max_allowed_price ? formatCurrencyStr(r.max_allowed_price) : <span className="text-slate-300 italic">No definido</span>}
+                                                        </span>
+                                                    )}
+                                                </td>
+
+                                                <td className="p-3">
+                                                    {isEditing ? (
+                                                        <input
+                                                            type="number"
+                                                            value={editForm.expected_frequency_days || ""}
+                                                            onChange={e => setEditForm({ ...editForm, expected_frequency_days: Number(e.target.value) })}
+                                                            className="w-full p-2 border border-emerald-300 rounded font-medium text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500/20"
+                                                            placeholder="Días mín."
+                                                        />
+                                                    ) : (
+                                                        <span className="text-slate-600 font-medium">
+                                                            {r.expected_frequency_days ? `${r.expected_frequency_days} días` : <span className="text-slate-300 italic">N/A</span>}
+                                                        </span>
+                                                    )}
+                                                </td>
+
+                                                <td className="p-3 text-center">
+                                                    {isEditing ? (
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={editForm.is_active}
+                                                            onChange={e => setEditForm({ ...editForm, is_active: e.target.checked })}
+                                                            className="w-5 h-5 accent-emerald-500 rounded"
+                                                        />
+                                                    ) : (
+                                                        <span className={`px-2 py-1 text-xs font-bold rounded-full ${r.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+                                                            {r.is_active ? "SÍ" : "NO"}
+                                                        </span>
+                                                    )}
+                                                </td>
+
+                                                <td className="p-3 text-center">
+                                                    {isEditing ? (
+                                                        <button
+                                                            onClick={() => handleSave(r.id)}
+                                                            disabled={saving}
+                                                            className="flex items-center gap-1 mx-auto bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                                                        >
+                                                            <Save className="w-4 h-4" /> Guardar
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => handleEdit(r)}
+                                                            className="p-2 text-slate-400 hover:text-emerald-600 bg-white hover:bg-emerald-50 border border-transparent hover:border-emerald-100 rounded-lg transition-all mx-auto"
+                                                        >
+                                                            <Edit2 className="w-4 h-4" />
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function AdminAudits() {
     const [dashboard, setDashboard] = useState<AuditsDashboard | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isRulesModalOpen, setRulesModalOpen] = useState(false);
 
     useEffect(() => {
         ensureBasicAuth();
@@ -96,13 +290,15 @@ export default function AdminAudits() {
                 </div>
                 {/* Botón hacia las configuraciones de auditoría (Reglas) en un futuro modal/pantalla */}
                 <button
-                    onClick={() => alert("Próximamente abriremos aquí el modal para que edites los precios máximos de los repuestos")}
+                    onClick={() => setRulesModalOpen(true)}
                     className="flex items-center gap-2 bg-white border border-slate-200 px-4 py-2 rounded-xl text-slate-600 hover:text-emerald-700 hover:border-emerald-300 transition-colors shadow-sm font-semibold"
                 >
                     <Settings className="w-5 h-5" />
                     Reglas y Precios
                 </button>
             </div>
+
+            <RulesModal isOpen={isRulesModalOpen} onClose={() => setRulesModalOpen(false)} />
 
             {/* SECCIÓN 1: KPI GLOBAL Y ALERTAS */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
