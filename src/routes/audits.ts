@@ -173,4 +173,138 @@ r.put("/alerts/:id/resolve", async (req: Request, res: Response) => {
     }
 });
 
+// ==========================================
+// 5. ANALIZAR INPUT DE GASTO (ASISTENCIA UI)
+// ==========================================
+r.post("/analyze-input", async (req: Request, res: Response) => {
+    const { item, plates } = req.body;
+    if (!item || !plates || !plates.length) return res.json({ suggestion: null });
+
+    try {
+        // 1. Buscar regla activa que coincida con el nombre
+        const { data: rules } = await supabase.from("expense_audit_rules").select("*").eq("is_active", true);
+        if (!rules) return res.json({ suggestion: null });
+
+        let normItem = item.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+        const matchedRule = rules.find(r => {
+            let rName = r.item_name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            if (normItem.includes(rName)) return true;
+            if (r.keywords && Array.isArray(r.keywords)) {
+                return r.keywords.some((kw: string) => normItem.includes(kw));
+            }
+            return false;
+        });
+
+        if (!matchedRule) return res.json({ suggestion: null });
+
+        // 2. Si hay regla, buscar el último cambio para cada placa para la advertencia de frecuencia
+        let lastChanges: Record<string, number> = {}; // plate -> days ago
+        let freqWarning = false;
+
+        if (matchedRule.expected_frequency_days) {
+            for (const plate of plates) {
+                // Buscamos manual en DB. Importante: usamos ilike con el item_name base de la regla
+                const { data: priorExpenses } = await supabase
+                    .from("expenses")
+                    .select("date, expense_vehicles!inner(plate)")
+                    .eq("expense_vehicles.plate", plate)
+                    .ilike("item", `%${matchedRule.item_name}%`)
+                    .order("date", { ascending: false })
+                    .limit(1);
+
+                if (priorExpenses && priorExpenses.length > 0) {
+                    const lastDate = new Date((priorExpenses as any)[0].date);
+                    const diffDays = Math.floor((new Date().getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
+                    lastChanges[plate] = diffDays;
+                    if (diffDays < matchedRule.expected_frequency_days) {
+                        freqWarning = true;
+                    }
+                }
+            }
+        }
+
+        return res.json({
+            suggestion: {
+                rule_id: matchedRule.id,
+                item_name: matchedRule.item_name,
+                max_allowed_price: matchedRule.max_allowed_price,
+                expected_frequency_days: matchedRule.expected_frequency_days,
+                last_changes: lastChanges,
+                freq_warning: freqWarning
+            }
+        });
+
+    } catch (err: any) {
+        console.error("Error analyze-input:", err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// ==========================================
+// 6. OBTENER ITEMS HISTÓRICOS (FASE 3)
+// ==========================================
+r.get("/historical-items", async (req: Request, res: Response) => {
+    try {
+        // Obtenemos todos los ítems de las reglas de auditoría primero
+        const { data: rules, error: rulesErr } = await supabase
+            .from("expense_audit_rules")
+            .select("item_name, max_allowed_price, avg_price, category")
+            .eq("is_active", true);
+
+        if (rulesErr) throw rulesErr;
+
+        // Formateamos como mapa para que la lista sea única
+        const itemsMap = new Map<string, any>();
+        (rules || []).forEach(r => {
+            itemsMap.set(r.item_name.toLowerCase().trim(), {
+                id: `rule-${r.item_name}`,
+                item_name: r.item_name,
+                category: r.category || 'Otros',
+                max_allowed_price: r.max_allowed_price,
+                avg_price: r.avg_price,
+                is_rule: true
+            });
+        });
+
+        // Ahora sacamos los históricos únicos puros desde la tabla expenses
+        // Agruparemos en JS ya que el endpoint base puede ser pesado, limitamos a la ventana útil de 1 año
+        const oneYearAgo = new Date(new Date().setFullYear(new Date().getFullYear() - 1)).toISOString().split('T')[0];
+
+        const { data: expenses, error: expErr } = await supabase
+            .from("expenses")
+            .select("item, category, total_amount")
+            .gte("date", oneYearAgo);
+
+        if (expErr) throw expErr;
+
+        (expenses || []).forEach(e => {
+            const rawName = (e.item || "").trim();
+            if (!rawName) return;
+            const key = rawName.toLowerCase();
+
+            // Si ya existe por la regla, lo saltamos
+            if (itemsMap.has(key)) return;
+
+            // Conservamos el item en el mapa marcándolo como NO regla
+            itemsMap.set(key, {
+                id: `hist-${rawName}`,
+                item_name: rawName,
+                category: e.category || 'Otros',
+                max_allowed_price: null,
+                avg_price: Number(e.total_amount),
+                is_rule: false
+            });
+        });
+
+        // Convertimos el map a array y devolvemos ordenado alfabéticamente
+        const combinedItems = Array.from(itemsMap.values()).sort((a, b) => a.item_name.localeCompare(b.item_name));
+
+        return res.json(combinedItems);
+    } catch (err: any) {
+        console.error("Error fetching historical items:", err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 export default r;

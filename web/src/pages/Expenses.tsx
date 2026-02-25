@@ -1,8 +1,8 @@
-// web/src/pages/Expenses.tsx
 import { useMemo, useState, useEffect } from "react";
 import { BillGeneratorModal } from "../components/BillGeneratorModal";
-import { Pencil, X, AlertCircle, ChevronDown, CheckCircle2 } from "lucide-react";
+import { Pencil, X, ChevronDown, AlertCircle, CheckCircle2 } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
+import { requestWithBasicAuth } from "../lib/auth";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -43,7 +43,7 @@ export default function Expenses() {
   async function loadRecent(currentLimit: number) {
     setLoadingList(true);
     try {
-      const rs = await fetch(`${API}/expenses?limit=${currentLimit}`);
+      const rs = await requestWithBasicAuth(`${API}/expenses?limit=${currentLimit}`);
       if (!rs.ok) return;
       const json = await rs.json();
       setRecent(json.items);
@@ -74,16 +74,47 @@ export default function Expenses() {
 
   // --- FORMULARIO CREAR ---
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [item, setItem] = useState("");
-  const [category, setCategory] = useState("Mantenimiento");
   const [description, setDescription] = useState("");
-  const [amountStr, setAmountStr] = useState("");
   const [plates, setPlates] = useState<string[]>([]);
   const [plateInput, setPlateInput] = useState("");
   const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
   const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewingImages, setViewingImages] = useState<{ urls: { url: string; title?: string }[]; startingIndex: number } | null>(null);
+
+  // --- CARRITO DE COMPRAS (FASE 3) ---
+  type CartItem = { item: string; category: string; amount: number; isNew?: boolean };
+  const [cart, setCart] = useState<CartItem[]>([]);
+
+  // Inputs temporales para añadir al carrito
+  const [item, setItem] = useState("");
+  const [category, setCategory] = useState("Mantenimiento");
+  const [amountStr, setAmountStr] = useState("");
+
+  // --- AUTOCOMPLETADO DE REGLAS E HISTORICOS ---
+  const [rules, setRules] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  useEffect(() => {
+    async function fetchRules() {
+      try {
+        const res = await requestWithBasicAuth(`${API}/audits/historical-items`);
+        if (res.ok) setRules(await res.json());
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    fetchRules();
+  }, []);
+
+  const filteredRules = useMemo(() => {
+    if (!item || item.length < 2) return [];
+    const lowerItem = item.toLowerCase();
+    return rules.filter(r => r.item_name.toLowerCase().includes(lowerItem));
+  }, [item, rules]);
+
+  // Validaciones en vivo
+  const total = useMemo(() => cart.reduce((sum, c) => sum + c.amount, 0), [cart]);
 
   // --- FORMULARIO EDITAR ---
   const [editingExpense, setEditingExpense] = useState<ExpenseRow | null>(null);
@@ -130,8 +161,6 @@ export default function Expenses() {
     return () => { cancel = true; };
   }, [normalizedPlate, plateFormatValid]);
 
-  const total = useMemo(() => Number((amountStr || "").replace(/[^\d]/g, "")) || 0, [amountStr]);
-
   function addPlate() {
     if (!plateFormatValid || checking !== "ok" || plates.includes(normalizedPlate)) return;
     setPlates([...plates, normalizedPlate]);
@@ -144,6 +173,7 @@ export default function Expenses() {
     for (const f of files) {
       const fd = new FormData();
       fd.append("file", f);
+      // No necesita basic auth upload a no ser que sea privado, pero es mejor usarlo si la API lo pide
       const rs = await fetch(`${API}/uploads`, { method: "POST", body: fd });
       if (!rs.ok) throw new Error("upload failed");
       const json = await rs.json();
@@ -158,7 +188,7 @@ export default function Expenses() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!item.trim() || !plates.length) return alert("Faltan datos");
+    if (cart.length === 0 || !plates.length) return alert("Agrega al menos un repuesto y una placa a la factura");
     setLoading(true);
     try {
       const evUrls = await uploadMany(evidenceFiles);
@@ -167,21 +197,38 @@ export default function Expenses() {
         ...evUrls.map(u => ({ kind: "evidence" as const, url: u })),
         ...invUrls.map(u => ({ kind: "invoice" as const, url: u })),
       ];
-      // Agregamos category al body
-      const body = { date, item, category, description: description || null, total_amount: total, plates, attachments };
-      const rs = await fetch(`${API}/expenses`, {
+
+      const body = { date, description: description || null, items: cart, plates, attachments };
+      const rs = await requestWithBasicAuth(`${API}/expenses`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       if (!rs.ok) throw new Error(await rs.text());
 
-      setSaved({ date, item, category, description, total, plates: [...plates], perVehicle: Math.floor(total / plates.length) });
+      const firstItemName = cart.length === 1 ? cart[0].item : `Factura Varia (${cart.length} items)`;
+      setSaved({ date, item: firstItemName, category: "Varios", description, total, plates: [...plates], perVehicle: Math.floor(total / plates.length) });
       setShowModal(true);
       await loadRecent(limit);
 
       // Reset form
-      setItem(""); setCategory("Otros"); setDescription(""); setAmountStr(""); setPlates([]); setEvidenceFiles([]); setInvoiceFiles([]);
-    } catch { alert("Error creando gasto"); }
+      setCart([]); setItem(""); setCategory("Mantenimiento"); setDescription(""); setAmountStr(""); setPlates([]); setEvidenceFiles([]); setInvoiceFiles([]);
+    } catch { alert("Error guardando factura"); }
     finally { setLoading(false); }
+  }
+
+  function handleAddToCart() {
+    if (!item.trim() || !amountStr || Number(amountStr) <= 0) {
+      alert("Ingresa un item válido y su monto");
+      return;
+    }
+    const isNew = !rules.find(r => r.item_name.toLowerCase() === item.toLowerCase().trim());
+    setCart([...cart, { item: item.trim(), category, amount: Number(amountStr), isNew }]);
+    setItem("");
+    setAmountStr("");
+    setCategory("Mantenimiento");
+  }
+
+  function handleRemoveFromCart(index: number) {
+    setCart(cart.filter((_, i) => i !== index));
   }
 
   // SUBMIT EDICIÓN
@@ -199,7 +246,7 @@ export default function Expenses() {
         total_amount: Number(editAmountStr.replace(/[^\d]/g, ""))
       };
 
-      const updateRs = await fetch(`${API}/expenses/${editingExpense.id}`, {
+      const updateRs = await requestWithBasicAuth(`${API}/expenses/${editingExpense.id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updateBody)
       });
       if (!updateRs.ok) throw new Error("Error actualizando datos");
@@ -212,7 +259,7 @@ export default function Expenses() {
           ...evUrls.map(u => ({ kind: "evidence" as const, url: u })),
           ...invUrls.map(u => ({ kind: "invoice" as const, url: u })),
         ];
-        await fetch(`${API}/expenses/${editingExpense.id}/attachments`, {
+        await requestWithBasicAuth(`${API}/expenses/${editingExpense.id}/attachments`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ attachments }),
         });
       }
@@ -242,48 +289,39 @@ export default function Expenses() {
 
         {/* FORMULARIO PRINCIPAL */}
         <form onSubmit={onSubmit} className="rounded-2xl border bg-white p-5 shadow-sm grid gap-4 md:grid-cols-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium">Fecha</label>
-            <input className="w-full rounded-xl border px-3 py-2" type="date" value={date} onChange={e => setDate(e.target.value)} required />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium">Categoría</label>
-            <select className="w-full rounded-xl border px-3 py-2 bg-white" value={category} onChange={e => setCategory(e.target.value)} required>
-              <option value="Mantenimiento">Mantenimiento</option>
-              <option value="Cambio de aceite">Cambio de aceite</option>
-              <option value="Otros">Otros</option>
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium">Item</label>
-            <input className="w-full rounded-xl border px-3 py-2" placeholder="Ej: Filtro de aire" value={item} onChange={e => setItem(e.target.value)} required />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium">Monto</label>
-            <input className="w-full rounded-xl border px-3 py-2" inputMode="numeric" placeholder="0" value={fmtCOP.format(total)}
-              onChange={e => setAmountStr(e.target.value.replace(/[^\d]/g, ""))} required />
-          </div>
 
-          <div className="md:col-span-4">
-            <label className="mb-1 block text-sm font-medium">Descripción</label>
-            <input className="w-full rounded-xl border px-3 py-2" placeholder="Detalle opcional" value={description} onChange={e => setDescription(e.target.value)} />
-          </div>
-
+          {/* Fila 1: Metadatos Compartidos */}
           <div className="md:col-span-2">
-            <label className="mb-1 block text-sm font-medium">Placas</label>
-            <div className="flex gap-2">
-              <input className={`flex-1 rounded-xl border px-3 py-2 ${normalizedPlate && !plateFormatValid ? "border-red-500" : "border-gray-300"}`}
+            <label className="mb-1 block text-sm font-medium">Fecha de la Factura</label>
+            <input className="w-full rounded-xl border px-3 py-2 bg-slate-50" type="date" value={date} onChange={e => setDate(e.target.value)} required />
+          </div>
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium">Descripción General</label>
+            <input className="w-full rounded-xl border px-3 py-2 bg-slate-50" placeholder="Detalle opcional para la factura completa" value={description} onChange={e => setDescription(e.target.value)} />
+          </div>
+
+          <div className="md:col-span-4 mt-2">
+            <label className="mb-1 block text-sm font-medium text-slate-700">Placas Asociadas al Gasto</label>
+            <div className="flex gap-2 max-w-sm">
+              <input className={`flex-1 rounded-xl border px-3 py-2 ${normalizedPlate && !plateFormatValid ? "border-red-500" : "bg-slate-50 border-gray-300"}`}
                 placeholder="ABC123" value={plateInput} onChange={e => setPlateInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} maxLength={6} />
-              <button type="button" onClick={addPlate} disabled={!plateFormatValid || checking !== "ok"} className="rounded-xl border px-3 disabled:opacity-50">Agregar</button>
+              <button type="button" onClick={addPlate} disabled={!plateFormatValid || checking !== "ok"} className="rounded-xl border px-3 disabled:opacity-50 font-medium">Agregar</button>
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {plates.length === 0 && <span className="text-sm text-slate-400">Ningún vehículo asociado</span>}
               {plates.map(p => (
-                <span key={p} className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm">{p} <button type="button" onClick={() => setPlates(plates.filter(x => x !== p))} className="text-gray-500">×</button></span>
+                <span key={p} className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm bg-slate-100 font-bold text-slate-700 shadow-sm border-slate-200">
+                  {p}
+                  <button type="button" onClick={() => setPlates(plates.filter(x => x !== p))} className="text-slate-400 hover:text-red-500 transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </span>
               ))}
             </div>
           </div>
 
-          <div className="md:col-span-4 grid md:grid-cols-2 gap-4 bg-slate-50 p-3 rounded-xl mt-2">
+          <div className="md:col-span-4 grid md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl mt-2 border border-slate-100">
             <div>
               <label className="text-sm font-bold text-slate-700">Evidencias 📷</label>
               <input type="file" multiple className="w-full text-xs mt-1" onChange={e => setEvidenceFiles(Array.from(e.target.files || []))} />
@@ -294,9 +332,135 @@ export default function Expenses() {
             </div>
           </div>
 
-          <div className="md:col-span-4 flex justify-end gap-2 pt-2">
-            <button disabled={loading || !plates.length} className="rounded-xl bg-black px-5 py-2.5 text-white disabled:opacity-50 font-medium shadow-lg hover:bg-slate-800 transition-all">
-              {loading ? "Guardando..." : "Guardar Gasto"}
+          {/* Fila 2: Componente Carrito de Compras (Gestor de Items) */}
+          <div className="md:col-span-4 border-t border-slate-200 pt-6 mt-4">
+            <h3 className="text-lg font-bold text-slate-800 mb-3">Agregar Repuestos / Servicios</h3>
+            <div className="grid md:grid-cols-12 gap-3 items-end bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <div className="md:col-span-3">
+                <label className="mb-1 block text-sm font-medium">Categoría</label>
+                <select className="w-full rounded-xl border px-3 py-2 bg-white" value={category} onChange={e => setCategory(e.target.value)}>
+                  <option value="Mantenimiento">Mantenimiento</option>
+                  <option value="Cambio de aceite">Cambio de aceite</option>
+                  <option value="Otros">Otros</option>
+                </select>
+              </div>
+              <div className="relative md:col-span-6">
+                <label className="mb-1 block text-sm font-medium">Item</label>
+                <input
+                  className="w-full rounded-xl border px-3 py-2"
+                  placeholder="Ej: Filtro de aire"
+                  value={item}
+                  onChange={e => { setItem(e.target.value); setShowSuggestions(true); }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                  autoComplete="off"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddToCart();
+                    }
+                  }}
+                />
+                {showSuggestions && item.length >= 2 && (
+                  <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 flex flex-col overflow-hidden">
+                    <div className="overflow-y-auto">
+                      {filteredRules.map(r => {
+                        const valToFill = Math.round(r.max_allowed_price && r.max_allowed_price > 0 ? r.max_allowed_price : (r.avg_price || 0));
+                        return (
+                          <div
+                            key={r.id}
+                            className="px-4 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0"
+                            onClick={() => {
+                              setItem(r.item_name);
+                              setCategory(r.category || 'Mantenimiento');
+                              setAmountStr(String(valToFill));
+                              setShowSuggestions(false);
+                            }}
+                          >
+                            <div className="font-bold text-slate-700 text-sm flex justify-between">
+                              <span className="flex items-center gap-2">
+                                {r.is_rule && <span className="bg-emerald-100 text-emerald-700 px-1 py-0.5 rounded text-[8px] uppercase tracking-wider font-bold">Auditado</span>}
+                                {r.item_name}
+                              </span>
+                              <span className="text-emerald-600">${fmtCOP.format(valToFill)}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{r.category}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Opción de crear nuevo si no hay match exacto */}
+                    {!filteredRules.find(r => r.item_name.toLowerCase() === item.toLowerCase().trim()) && (
+                      <div
+                        className="px-4 py-3 hover:bg-emerald-50 cursor-pointer bg-slate-50 border-t border-slate-200"
+                        onMouseDown={(e) => { e.preventDefault(); setShowSuggestions(false); }}
+                      >
+                        <div className="font-bold text-emerald-700 text-sm flex items-center gap-2">
+                          <span className="bg-emerald-200 text-emerald-800 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider">Nuevo</span>
+                          {item}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-1">Se documentará y aprenderá automáticamente</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="md:col-span-3">
+                <label className="mb-1 block text-sm font-medium">Monto</label>
+                <div className="flex gap-2">
+                  <input className="w-full rounded-xl border px-3 py-2" inputMode="numeric" placeholder="0" value={fmtCOP.format(Number(amountStr))}
+                    onChange={e => setAmountStr(e.target.value.replace(/[^\d]/g, ""))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddToCart();
+                      }
+                    }} />
+                  <button type="button" onClick={handleAddToCart} disabled={!item || !amountStr} className="bg-slate-900 text-white rounded-xl px-4 font-bold disabled:opacity-50 hover:bg-slate-800 transition-colors">
+                    +
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Lista del Carrito */}
+            <div className="mt-4 space-y-2">
+              {cart.length === 0 ? (
+                <div className="text-center py-6 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl text-sm italic">
+                  La factura está vacía. Busca y agrega repuestos o servicios arriba.
+                </div>
+              ) : (
+                cart.map((c, i) => (
+                  <div key={i} className="flex justify-between items-center bg-white border border-slate-200 p-3 rounded-xl shadow-sm">
+                    <div>
+                      <div className="font-bold text-slate-800 flex items-center gap-2">
+                        {c.item}
+                        {c.isNew && <span className="bg-amber-100 text-amber-700 text-[10px] uppercase px-1.5 py-0.5 rounded font-black">Nuevo</span>}
+                      </div>
+                      <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest">{c.category}</div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <span className="font-black text-slate-900">${fmtCOP.format(c.amount)}</span>
+                      <button type="button" onClick={() => handleRemoveFromCart(i)} className="text-slate-400 hover:text-red-500 p-1">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {cart.length > 0 && (
+              <div className="flex justify-between items-center mt-4 bg-emerald-50 border border-emerald-200 p-4 rounded-xl">
+                <span className="font-bold text-emerald-800">Total de la Factura:</span>
+                <span className="text-2xl font-black text-emerald-700">${fmtCOP.format(total)}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="md:col-span-4 flex justify-end gap-2 pt-4 border-t border-slate-100 mt-2">
+            <button disabled={loading || cart.length === 0 || !plates.length} className="rounded-xl bg-black px-8 py-3 text-white disabled:opacity-50 font-bold shadow-lg hover:bg-slate-800 transition-all text-sm uppercase tracking-wider">
+              {loading ? "Guardando..." : "Guardar Factura Completa"}
             </button>
           </div>
         </form>

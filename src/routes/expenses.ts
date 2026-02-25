@@ -20,9 +20,9 @@ type NormalizedAttachment = {
 
 /** 
  * NUEVO: Función para comprobar las reglas de auditoría y generar alertas preventivas.
- * No bloquea la creación del gasto, solo genera alarmas silenciosas asíncronamente.
+ * No bloquea la creación del gasto, solo genera alarmas silenciosas asíncronamente o aprende ítems nuevos.
  */
-async function checkExpenseAuditRules(expenseId: number, item: string, totalAmount: number, date: string, plates: string[]) {
+async function checkExpenseAuditRules(expenseId: number, item: string, category: string, totalAmount: number, date: string, plates: string[]) {
   try {
     // 1. Traer reglas activas
     const { data: rules } = await supabase.from("expense_audit_rules").select("*").eq("is_active", true);
@@ -40,7 +40,19 @@ async function checkExpenseAuditRules(expenseId: number, item: string, totalAmou
       return false;
     });
 
-    if (!matchedRule) return;
+    if (!matchedRule) {
+      // LEARNING MECHANISM: Auto-crear la regla para que esté disponible en el autocomplete inmediatamente
+      await supabase.from("expense_audit_rules").insert([{
+        item_name: item.trim(),
+        category: category || "Otros",
+        avg_price: totalAmount,
+        max_allowed_price: Math.round(totalAmount * 1.25 * 100) / 100, // 25% de holgura por defecto
+        expected_frequency_days: 60, // Frecuencia conservadora genérica
+        is_active: true,
+        keywords: [normItem.split(" ")[0]?.substring(0, 15) || ""]
+      }]);
+      return;
+    }
 
     const alertsToInsert: any[] = [];
     const expenseDate = new Date(date);
@@ -106,137 +118,123 @@ r.post("/", async (req: Request, res: Response) => {
     const {
       date,
       item,
-      category = "Otros", // NUEVO: Categoría por defecto
+      category = "Otros",
       description,
       total_amount,
+      items, // NUEVO: Fase 3, array de {item, category, amount}
       plates,
       attachment_url,     // legacy
       attachments         // nuevo
     } = req.body || {};
 
-    // Validaciones básicas
+    // 1. Validaciones Generales Compartidas
     if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date))
       return res.status(400).json({ error: "date must be YYYY-MM-DD" });
-
-    if (typeof item !== "string" || !item.trim())
-      return res.status(400).json({ error: "item required" });
-
-    // description opcional
-    let desc: string | null = null;
-    if (typeof description === "string" && description.trim()) {
-      desc = description.trim();
-    }
-
-    if (typeof total_amount !== "number" || !isFinite(total_amount) || total_amount <= 0)
-      return res.status(400).json({ error: "total_amount must be > 0" });
 
     if (!Array.isArray(plates) || plates.length === 0)
       return res.status(400).json({ error: "plates must be non-empty array" });
 
-    // Normaliza y valida formato de placas
-    const normPlates = Array.from(
-      new Set(plates.map((p: unknown) => String(p || "").toUpperCase().trim()))
-    );
+    const normPlates = Array.from(new Set(plates.map((p: unknown) => String(p || "").toUpperCase().trim())));
     if (normPlates.some((p) => !PLATE_RE.test(p)))
       return res.status(400).json({ error: "all plates must match ABC123 format" });
 
-    // Verifica que existan en vehicles
-    const { data: vdata, error: vErr } = await supabase
-      .from("vehicles")
-      .select("plate")
-      .in("plate", normPlates);
-
+    const { data: vdata, error: vErr } = await supabase.from("vehicles").select("plate").in("plate", normPlates);
     if (vErr) return res.status(500).json({ error: vErr.message });
+
     const found = new Set((vdata || []).map((r) => r.plate));
     const missing = normPlates.filter((p) => !found.has(p));
     if (missing.length) return res.status(400).json({ error: "unknown plates", missing });
 
-    // Prorrateo
-    const totalCents = Math.round(total_amount * 100);
-    const cents = splitEven(totalCents, normPlates.length);
-    const shares = cents.map((c) => Number((c / 100).toFixed(2))); // COP con 2 decimales
+    let desc: string | null = null;
+    if (typeof description === "string" && description.trim()) desc = description.trim();
 
-    // === Normalizar attachments (nuevo) ===
+    // 2. Normalizar Attachments
     const normAttachments: NormalizedAttachment[] = [];
-
     if (Array.isArray(attachments)) {
       for (const raw of attachments) {
         if (!raw) continue;
         const kind = String(raw.kind || "").toLowerCase();
         const url = String(raw.url || "").trim();
-        if (!url) continue;
-        if (kind !== "evidence" && kind !== "invoice") continue;
-        normAttachments.push({ kind, url });
+        if (url && (kind === "evidence" || kind === "invoice")) {
+          normAttachments.push({ kind: kind as "evidence" | "invoice", url });
+        }
       }
     }
-
-    // Compatibilidad: si viene attachment_url legacy y no hay attachments
     if (!normAttachments.length && typeof attachment_url === "string" && attachment_url.trim()) {
       normAttachments.push({ kind: "evidence", url: attachment_url.trim() });
     }
-
     const firstAttachmentUrl = normAttachments[0]?.url ?? null;
 
-    // Inserta expense agregando el campo category
-    const { data: exp, error: eErr } = await supabase
-      .from("expenses")
-      .insert([
-        {
-          date,
-          item: item.trim(),
-          category, // NUEVO
-          description: desc,
-          total_amount: Number(total_amount.toFixed(2)),
-          attachment_url: firstAttachmentUrl,
+    // 3. Normalizar Lista de Gastos a Crear
+    let expensesList: { item: string; category: string; amount: number }[] = [];
+
+    if (Array.isArray(items) && items.length > 0) {
+      for (const i of items) {
+        if (typeof i.item === "string" && i.item.trim() && typeof i.amount === "number" && isFinite(i.amount) && i.amount > 0) {
+          expensesList.push({ item: i.item.trim(), category: i.category || "Otros", amount: Number(i.amount.toFixed(2)) });
         }
-      ])
-      .select()
-      .single();
-
-    if (eErr) return res.status(500).json({ error: eErr.message });
-
-    // Inserta detalle por placa
-    const rows = normPlates.map((plate, i) => ({
-      expense_id: exp.id,
-      plate,
-      share_amount: shares[i]
-    }));
-
-    const { error: dErr } = await supabase.from("expense_vehicles").insert(rows);
-    if (dErr) return res.status(500).json({ error: dErr.message });
-
-    // Inserta adjuntos (si hay)
-    if (normAttachments.length) {
-      const attachRows = normAttachments.map((a) => ({
-        expense_id: exp.id,
-        kind: a.kind,
-        url: a.url
-      }));
-      const { error: aErr } = await supabase
-        .from("expense_attachments")
-        .insert(attachRows);
-      if (aErr) return res.status(500).json({ error: aErr.message });
+      }
+    } else if (typeof item === "string" && item.trim() && typeof total_amount === "number" && isFinite(total_amount) && total_amount > 0) {
+      expensesList.push({ item: item.trim(), category: category || "Otros", amount: Number(total_amount.toFixed(2)) });
     }
 
-    // Audit log
-    await supabase.from("expense_audit_log").insert([
-      {
+    if (expensesList.length === 0) {
+      return res.status(400).json({ error: "No valid items/amounts provided" });
+    }
+
+    // 4. Batch Insert de la tabla principal `expenses`
+    const { data: insertedExpenses, error: eErr } = await supabase
+      .from("expenses")
+      .insert(expensesList.map(e => ({
+        date,
+        item: e.item,
+        category: e.category,
+        description: desc,
+        total_amount: e.amount,
+        attachment_url: firstAttachmentUrl
+      })))
+      .select();
+
+    if (eErr || !insertedExpenses) return res.status(500).json({ error: eErr?.message || "Error inserting expenses" });
+
+    // 5. Bulk prepare de relaciones (Vehículos, Adjuntos, Logs)
+    const expenseVehiclesRows: any[] = [];
+    const expenseAttachmentsRows: any[] = [];
+    const expenseAuditLogRows: any[] = [];
+
+    for (let i = 0; i < insertedExpenses.length; i++) {
+      const exp = insertedExpenses[i];
+      const originalInput = expensesList[i]!;
+
+      // Prorrateo exacto para este gasto específico
+      const totalCents = Math.round(originalInput.amount * 100);
+      const centsArray = splitEven(totalCents, normPlates.length);
+      const shares = centsArray.map((c) => Number((c / 100).toFixed(2)));
+
+      normPlates.forEach((plate, idx) => {
+        expenseVehiclesRows.push({ expense_id: exp.id, plate, share_amount: shares[idx] });
+      });
+
+      normAttachments.forEach(a => {
+        expenseAttachmentsRows.push({ expense_id: exp.id, kind: a.kind, url: a.url });
+      });
+
+      expenseAuditLogRows.push({
         expense_id: exp.id,
         action: "created",
-        changed_fields: {
-          plates: normPlates,
-          shares,
-          attachments: normAttachments,
-          category // NUEVO
-        },
+        changed_fields: { plates: normPlates, shares, attachments: normAttachments, category: exp.category },
         actor: null
-      }
-    ]);
+      });
 
-    // NUEVO: Validar contra reglas de auditoría asíncronamente (sin await)
-    checkExpenseAuditRules(exp.id, item.trim(), Number(total_amount.toFixed(2)), date, normPlates);
+      // 6. TRIGGER background audit evaluation per item
+      checkExpenseAuditRules(exp.id, exp.item, exp.category || 'Otros', exp.total_amount, exp.date, normPlates);
+    }
 
-    return res.status(201).json({ expense: exp, detail: rows });
+    if (expenseVehiclesRows.length > 0) await supabase.from("expense_vehicles").insert(expenseVehiclesRows);
+    if (expenseAttachmentsRows.length > 0) await supabase.from("expense_attachments").insert(expenseAttachmentsRows);
+    if (expenseAuditLogRows.length > 0) await supabase.from("expense_audit_log").insert(expenseAuditLogRows);
+
+    return res.status(201).json({ expenses: insertedExpenses, success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || "internal error" });
   }
@@ -423,7 +421,7 @@ r.put("/:id", async (req: Request, res: Response) => {
     if (plates.length > 0) {
       // Borrar alertas viejas del gasto si lo están editando (para no duplicar)
       await supabase.from("expense_alerts").delete().eq("expense_id", id);
-      checkExpenseAuditRules(id, item, Number(total_amount), date, plates);
+      checkExpenseAuditRules(id, item, category || "Otros", Number(total_amount), date, plates);
     }
 
     return res.json(data);
