@@ -10,7 +10,7 @@ import Pay from "./pages/Pay";
 import Reports from "./pages/Reports";
 import Expenses from "./pages/Expenses";
 import Assistance from "./pages/Assistance";
-import RentYourCar from "./pages/RentYourCar"; 
+import RentYourCar from "./pages/RentYourCar";
 import RentCatalog from "./pages/RentCatalog";
 
 // Páginas Administrativas
@@ -22,15 +22,18 @@ import AdminVehicles from "./pages/AdminVehicles";
 import AdminProfit from "./pages/AdminProfit";
 import AdminRecruitment from "./pages/AdminRecruitment";
 import RemindersLog from "./pages/RemindersLog";
-import AdminMarketplace from "./pages/AdminMarketplace"; 
+import AdminMarketplace from "./pages/AdminMarketplace";
 
 // Inspecciones
 import NewInspection from "./pages/NewInspection";
 import AdminInspections from "./pages/AdminInspections";
 
+// Auditorías
+import AdminAudits from "./pages/AdminAudits";
+
 export default function App() {
   const hostname = window.location.hostname;
-  
+
   // 1. DETECCIÓN DE ENTORNO
   // Si es el subdominio 'web' O estás en tu PC (localhost), mostramos la APP INTERNA.
   const isApp = hostname === "web.allatyou.com" || hostname.includes("localhost");
@@ -38,7 +41,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        
+
         {/* =======================================================
             ESCENARIO 1: APP INTERNA (ERP / Admin)
             Dominio: web.allatyou.com ó localhost:5173
@@ -56,7 +59,7 @@ export default function App() {
             {/* --- B. Rutas Administrativas (CON Sidebar) --- */}
             {/* Aquí vive toda la gestión. Sin prefijo /admin porque YA estamos en la app admin */}
             <Route element={<AdminLayout />}>
-              
+
               {/* FINANZAS */}
               <Route path="/expenses" element={<Expenses />} />
               <Route path="/reports" element={<Reports />} />
@@ -66,15 +69,16 @@ export default function App() {
               <Route path="/collections" element={<AdminCollections />} />
 
               {/* ACTIVOS */}
-              <Route path="/vehicles" element={<AdminVehicles />} /> 
+              <Route path="/vehicles" element={<AdminVehicles />} />
               <Route path="/drivers" element={<AdminDrivers />} />
               <Route path="/recruitment" element={<AdminRecruitment />} />
-              
+
               {/* OPERACIONES */}
               <Route path="/reminders-log" element={<RemindersLog />} />
               <Route path="/inspections" element={<AdminInspections />} />
               <Route path="/inspections/new" element={<NewInspection />} />
               <Route path="/marketplace" element={<AdminMarketplace />} />
+              <Route path="/audits" element={<AdminAudits />} />
 
               {/* 404 Interno */}
               <Route path="*" element={<div className="p-10 text-center text-slate-500">Página no encontrada en Admin</div>} />
@@ -89,9 +93,9 @@ export default function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/rent-your-car" element={<RentYourCar />} />
             <Route path="/rent" element={<RentCatalog />} />
-            
+
             {/* Permitimos /pay también en la landing por comodidad de conductores */}
-            <Route path="/pay" element={<Pay />} /> 
+            <Route path="/pay" element={<Pay />} />
             <Route path="/assistance" element={<Assistance />} />
             {/* Cualquier otra cosa en la landing va al home */}
             <Route path="*" element={<Navigate to="/" replace />} />

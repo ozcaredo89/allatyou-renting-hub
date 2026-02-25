@@ -8,7 +8,7 @@ const r = Router();
 /** Util: prorrateo exacto en centavos */
 function splitEven(totalCents: number, n: number): number[] {
   const base = Math.floor(totalCents / n);
-  const rem  = totalCents % n;
+  const rem = totalCents % n;
   return Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0));
 }
 
@@ -17,6 +17,89 @@ type NormalizedAttachment = {
   kind: "evidence" | "invoice";
   url: string;
 };
+
+/** 
+ * NUEVO: Función para comprobar las reglas de auditoría y generar alertas preventivas.
+ * No bloquea la creación del gasto, solo genera alarmas silenciosas asíncronamente.
+ */
+async function checkExpenseAuditRules(expenseId: number, item: string, totalAmount: number, date: string, plates: string[]) {
+  try {
+    // 1. Traer reglas activas
+    const { data: rules } = await supabase.from("expense_audit_rules").select("*").eq("is_active", true);
+    if (!rules || !rules.length) return;
+
+    let normItem = item.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+    // 2. Buscar si el texto libre que ingresó el usuario coincide con alguna regla conocida
+    const matchedRule = rules.find(r => {
+      let rName = r.item_name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (normItem.includes(rName)) return true;
+      if (r.keywords && Array.isArray(r.keywords)) {
+        return r.keywords.some((kw: string) => normItem.includes(kw));
+      }
+      return false;
+    });
+
+    if (!matchedRule) return;
+
+    const alertsToInsert: any[] = [];
+    const expenseDate = new Date(date);
+
+    for (const plate of plates) {
+      // 3. Revisión de Precio: ¿Supera el umbral máximo tolerado?
+      if (matchedRule.max_allowed_price && totalAmount > matchedRule.max_allowed_price) {
+        alertsToInsert.push({
+          expense_id: expenseId,
+          vehicle_plate: plate,
+          rule_id: matchedRule.id,
+          alert_type: "PRICE_HIGH",
+          message: `El gasto de "${item}" ($${totalAmount}) excede el tope permitido esperado ($${matchedRule.max_allowed_price}).`,
+          actual_value: totalAmount,
+          expected_value: matchedRule.max_allowed_price
+        });
+      }
+
+      // 4. Revisión de Frecuencia: ¿Se cambió muy pronto este repuesto?
+      if (matchedRule.expected_frequency_days) {
+        // Buscar el último gasto en este vehículo que parezca ser el mismo ítem
+        const { data: priorExpenses } = await supabase
+          .from("expenses")
+          .select("date, expense_vehicles!inner(plate)")
+          .eq("expense_vehicles.plate", plate)
+          .lt("date", date) // Antes de la fecha reportada
+          .ilike("item", `%${matchedRule.item_name.substring(0, 5)}%`) // Aproximación básica al texto
+          .order("date", { ascending: false })
+          .limit(1);
+
+        if (priorExpenses && priorExpenses.length > 0) {
+          const lastDate = new Date((priorExpenses as any[])[0].date);
+          const diffTime = Math.abs(expenseDate.getTime() - lastDate.getTime());
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+          if (matchedRule.expected_frequency_days && diffDays < matchedRule.expected_frequency_days) {
+            alertsToInsert.push({
+              expense_id: expenseId,
+              vehicle_plate: plate,
+              rule_id: matchedRule.id,
+              alert_type: "FREQUENCY_HIGH",
+              message: `Recambio sospechosamente prematuro. Se cambió a los ${diffDays} días, pero lo normal son ${matchedRule.expected_frequency_days} días.`,
+              actual_value: diffDays,
+              expected_value: matchedRule.expected_frequency_days
+            });
+          }
+        }
+      }
+    }
+
+    if (alertsToInsert.length > 0) {
+      await supabase.from("expense_alerts").insert(alertsToInsert);
+    }
+
+  } catch (e) {
+    console.error("Auditoría Background - Error validando gasto:", e);
+  }
+}
+
 
 r.post("/", async (req: Request, res: Response) => {
   try {
@@ -70,8 +153,8 @@ r.post("/", async (req: Request, res: Response) => {
 
     // Prorrateo
     const totalCents = Math.round(total_amount * 100);
-    const cents      = splitEven(totalCents, normPlates.length);
-    const shares     = cents.map((c) => Number((c / 100).toFixed(2))); // COP con 2 decimales
+    const cents = splitEven(totalCents, normPlates.length);
+    const shares = cents.map((c) => Number((c / 100).toFixed(2))); // COP con 2 decimales
 
     // === Normalizar attachments (nuevo) ===
     const normAttachments: NormalizedAttachment[] = [];
@@ -80,7 +163,7 @@ r.post("/", async (req: Request, res: Response) => {
       for (const raw of attachments) {
         if (!raw) continue;
         const kind = String(raw.kind || "").toLowerCase();
-        const url  = String(raw.url || "").trim();
+        const url = String(raw.url || "").trim();
         if (!url) continue;
         if (kind !== "evidence" && kind !== "invoice") continue;
         normAttachments.push({ kind, url });
@@ -150,6 +233,9 @@ r.post("/", async (req: Request, res: Response) => {
       }
     ]);
 
+    // NUEVO: Validar contra reglas de auditoría asíncronamente (sin await)
+    checkExpenseAuditRules(exp.id, item.trim(), Number(total_amount.toFixed(2)), date, normPlates);
+
     return res.status(201).json({ expense: exp, detail: rows });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || "internal error" });
@@ -158,11 +244,11 @@ r.post("/", async (req: Request, res: Response) => {
 
 // Listar gastos (incluye categoría)
 r.get("/", async (req: Request, res: Response) => {
-  const limit  = Math.min(Math.max(parseInt(String(req.query.limit || 20), 10) || 20, 1), 100);
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit || 20), 10) || 20, 1), 100);
   const offset = Math.max(parseInt(String(req.query.offset || 0), 10) || 0, 0);
-  const from   = String(req.query.from || "");
-  const to     = String(req.query.to   || "");
-  const plate  = String(req.query.plate || "").toUpperCase().trim();
+  const from = String(req.query.from || "");
+  const to = String(req.query.to || "");
+  const plate = String(req.query.plate || "").toUpperCase().trim();
 
   const today = new Date();
   const last7 = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -172,10 +258,9 @@ r.get("/", async (req: Request, res: Response) => {
   const selectStr = `
     id, date, item, category, description, total_amount, attachment_url, created_at, updated_at,
     expense_attachments(kind, url),
-    ${
-      plate
-        ? "expense_vehicles!inner(plate, share_amount)"
-        : "expense_vehicles(plate, share_amount)"
+    ${plate
+      ? "expense_vehicles!inner(plate, share_amount)"
+      : "expense_vehicles(plate, share_amount)"
     }
   `;
 
@@ -190,7 +275,7 @@ r.get("/", async (req: Request, res: Response) => {
     q = q.gte("date", last7Str);
   } else {
     if (from) q = q.gte("date", from);
-    if (to)   q = q.lte("date", to);
+    if (to) q = q.lte("date", to);
   }
 
   if (plate) {
@@ -331,6 +416,16 @@ r.put("/:id", async (req: Request, res: Response) => {
       .single();
 
     if (error) throw new Error(error.message);
+
+    // NUEVO: Si cambian el monto, item o fecha, re-evaluar auditoría (asíncronamente) considerando las placas asociadas
+    const { data: evs } = await supabase.from("expense_vehicles").select("plate").eq("expense_id", id);
+    const plates = evs ? evs.map((ev: any) => ev.plate) : [];
+    if (plates.length > 0) {
+      // Borrar alertas viejas del gasto si lo están editando (para no duplicar)
+      await supabase.from("expense_alerts").delete().eq("expense_id", id);
+      checkExpenseAuditRules(id, item, Number(total_amount), date, plates);
+    }
+
     return res.json(data);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

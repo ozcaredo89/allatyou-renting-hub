@@ -27,13 +27,17 @@ import depositsRoutes from "./routes/deposits";
 import marketingRoutes from "./routes/marketing";
 
 // --- MÓDULO INSPECCIONES ---
-import inspectionsRoutes from "./routes/inspections"; 
+import inspectionsRoutes from "./routes/inspections";
 
 // --- MÓDULO MARKETPLACE (TURO CRIOLLO) ---
 import marketplaceRoutes from "./routes/marketplace";
 
 // --- NUEVO: MÓDULO PROVEEDORES (CUENTAS DE COBRO) ---
-import providersRoutes from "./routes/providers"; // <--- IMPORT NUEVO
+import providersRoutes from "./routes/providers";
+
+// --- NUEVO: MÓDULO AUDITORÍA DE GASTOS ---
+import auditsRoutes from "./routes/audits";
+
 
 const app = express();
 
@@ -95,17 +99,18 @@ app.use("/marketing", marketingRoutes);
 app.use("/marketplace", marketplaceRoutes);
 
 /** Rutas protegidas con Basic Auth (monta el middleware en la misma línea) */
-app.use("/companies", basicAuth, companiesRoutes); 
-app.use("/providers", basicAuth, providersRoutes); 
+app.use("/companies", basicAuth, companiesRoutes);
+app.use("/providers", basicAuth, providersRoutes);
 app.use("/reports", basicAuth, profitRoutes);
 app.use("/reports", basicAuth, reports);
-app.use("/ledger",  basicAuth, ledgerRoutes);
+app.use("/ledger", basicAuth, ledgerRoutes);
 app.use("/advances", basicAuth, advancesRoutes);
 app.use("/vehicles", basicAuth, vehiclesRoutes);
 app.use("/collections", basicAuth, collectionsRoutes);
 app.use("/app-users", basicAuth, appUsersRoutes);
 app.use("/deposits", basicAuth, depositsRoutes);
 app.use("/inspections", basicAuth, inspectionsRoutes);
+app.use("/audits", basicAuth, auditsRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
