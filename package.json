@@ -19,6 +19,11 @@
     "express": "^5.1.0",
     "multer": "^2.0.2",
     "node-fetch": "^3.3.2",
+    "puppeteer": "^24.37.5",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "puppeteer-extra-plugin-user-data-dir": "^2.4.1",
+    "puppeteer-extra-plugin-user-preferences": "^2.4.1",
     "twilio": "^5.11.1"
   },
   "devDependencies": {

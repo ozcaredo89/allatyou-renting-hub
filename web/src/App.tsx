@@ -28,8 +28,9 @@ import AdminMarketplace from "./pages/AdminMarketplace";
 import NewInspection from "./pages/NewInspection";
 import AdminInspections from "./pages/AdminInspections";
 
-// Auditorías
+// Auditorías & Oráculo
 import AdminAudits from "./pages/AdminAudits";
+import AdminOracle from "./pages/AdminOracle";
 
 export default function App() {
   const hostname = window.location.hostname;
@@ -79,6 +80,9 @@ export default function App() {
               <Route path="/inspections/new" element={<NewInspection />} />
               <Route path="/marketplace" element={<AdminMarketplace />} />
               <Route path="/audits" element={<AdminAudits />} />
+
+              {/* INTELIGENCIA COMERCIAL (DAAS) */}
+              <Route path="/oracle" element={<AdminOracle />} />
 
               {/* 404 Interno */}
               <Route path="*" element={<div className="p-10 text-center text-slate-500">Página no encontrada en Admin</div>} />

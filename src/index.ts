@@ -38,6 +38,9 @@ import providersRoutes from "./routes/providers";
 // --- NUEVO: MÓDULO AUDITORÍA DE GASTOS ---
 import auditsRoutes from "./routes/audits";
 
+// --- NUEVO: MÓDULO INTELIGENCIA COMERCIAL (ORÁCULO DAAS) ---
+import oracleRoutes from "./routes/oracle";
+
 
 const app = express();
 
@@ -111,6 +114,7 @@ app.use("/app-users", basicAuth, appUsersRoutes);
 app.use("/deposits", basicAuth, depositsRoutes);
 app.use("/inspections", basicAuth, inspectionsRoutes);
 app.use("/audits", basicAuth, auditsRoutes);
+app.use("/oracle", basicAuth, oracleRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

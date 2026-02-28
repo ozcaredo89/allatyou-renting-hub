@@ -93,6 +93,9 @@ export default function AdminLayout() {
               <NavLink to="/audits" className={navItemClass}>
                 <span>🛡️</span> Monitoreo Gastos
               </NavLink>
+              <NavLink to="/oracle" className={navItemClass}>
+                <span>🔮</span> Oráculo DaaS
+              </NavLink>
               <NavLink to="/inspections/new" className={navItemClass}>
                 <span>📷</span> Nueva Inspección
               </NavLink>
