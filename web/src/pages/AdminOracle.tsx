@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
     MapPin,
     TrendingUp,
     Activity,
-    AlertTriangle,
     RefreshCw,
     PlusCircle,
     Zap
@@ -173,7 +172,7 @@ export default function AdminOracle() {
                                     ) : ranking.length === 0 ? (
                                         <tr><td colSpan={4} className="p-12 text-center text-slate-400">No hay data logística recopilada aún.</td></tr>
                                     ) : (
-                                        ranking.map((node: any, idx: number) => {
+                                        ranking.map((node: any) => {
                                             // Fake sparkline calculation for visual effect since we don't have historicals yet
                                             const isUp = Math.random() > 0.3;
 
