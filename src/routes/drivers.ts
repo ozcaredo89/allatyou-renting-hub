@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
+import { sendEmail } from "../lib/email";
 
 const r = Router();
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
@@ -55,9 +56,11 @@ r.post("/", async (req: Request, res: Response) => {
         date_of_birth: body.date_of_birth || null,
         notes: body.notes || null,
         status: body.status || "active",
-        
-        // --- NUEVO CAMPO ---
-        photo_url: body.photo_url || null, 
+
+        // --- NUEVOS CAMPOS ---
+        photo_url: body.photo_url || null,
+        deposit_amount: body.deposit_amount !== undefined ? body.deposit_amount : 300000,
+        deposit_receipt_url: body.deposit_receipt_url || null,
 
         // Documentación (URLs)
         cv_url: body.cv_url || null,
@@ -74,6 +77,21 @@ r.post("/", async (req: Request, res: Response) => {
       if (error.code === '23505') return res.status(409).json({ error: "Ya existe un conductor con este documento." });
       return res.status(500).json({ error: error.message });
     }
+
+    // Disparar correo asincrónicamente
+    sendEmail({
+      to: "oscar.hv89@gmail.com",
+      subject: `Nuevo Conductor Registrado: ${data.full_name}`,
+      text: `Se ha registrado el conductor ${data.full_name} (CC: ${data.document_number}). Depósito: $${data.deposit_amount || 0}.`,
+      html: `<p>Se ha registrado un nuevo conductor en AllAtYou Renting Hub:</p>
+            <ul>
+              <li><strong>Nombre:</strong> ${data.full_name}</li>
+              <li><strong>Documento:</strong> ${data.document_number}</li>
+              <li><strong>Teléfono:</strong> ${data.phone}</li>
+              <li><strong>Depósito:</strong> $${Number(data.deposit_amount || 0).toLocaleString()} COP</li>
+            </ul>
+            <p><strong>Comprobante de Depósito:</strong> ${data.deposit_receipt_url ? `<a href="${data.deposit_receipt_url}">Ver Adjunto</a>` : 'No adjuntado.'}</p>`
+    }).catch(err => console.error("Error enviando email conductor:", err));
 
     return res.status(201).json(data);
   } catch (err: any) {
@@ -100,9 +118,11 @@ r.put("/:id", async (req: Request, res: Response) => {
       date_of_birth: body.date_of_birth,
       notes: body.notes,
       status: body.status,
-      
-      // --- NUEVO CAMPO ---
+
+      // --- NUEVOS CAMPOS ---
       photo_url: body.photo_url,
+      deposit_amount: body.deposit_amount,
+      deposit_receipt_url: body.deposit_receipt_url,
 
       // Documentación (URLs)
       cv_url: body.cv_url,
@@ -128,6 +148,22 @@ r.put("/:id", async (req: Request, res: Response) => {
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    // Disparar correo asincrónicamente
+    sendEmail({
+      to: "oscar.hv89@gmail.com",
+      subject: `Expediente Actualizado: ${data.full_name}`,
+      text: `Se ha modificado el perfil del conductor ${data.full_name} (CC: ${data.document_number}). Depósito actual: $${data.deposit_amount || 0}.`,
+      html: `<p>Se ha editado el perfil del conductor en AllAtYou Renting Hub:</p>
+            <ul>
+              <li><strong>Nombre:</strong> ${data.full_name}</li>
+              <li><strong>Documento:</strong> ${data.document_number}</li>
+              <li><strong>Estado:</strong> ${data.status}</li>
+              <li><strong>Depósito:</strong> $${Number(data.deposit_amount || 0).toLocaleString()} COP</li>
+            </ul>
+            <p><strong>Comprobante de Depósito:</strong> ${data.deposit_receipt_url ? `<a href="${data.deposit_receipt_url}">Ver Adjunto</a>` : 'No adjuntado.'}</p>`
+    }).catch(err => console.error("Error enviando email update conductor:", err));
+
     return res.json(data);
   } catch (err: any) {
     return res.status(500).json({ error: err?.message });

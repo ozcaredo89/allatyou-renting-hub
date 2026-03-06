@@ -23,6 +23,8 @@ type Driver = {
   license_front_url: string | null;
   license_back_url: string | null;
   contract_url: string | null;
+  deposit_amount: number | null;
+  deposit_receipt_url: string | null;
 };
 
 const EMPTY_DRIVER: Omit<Driver, "id" | "created_at"> = {
@@ -41,12 +43,14 @@ const EMPTY_DRIVER: Omit<Driver, "id" | "created_at"> = {
   license_front_url: null,
   license_back_url: null,
   contract_url: null,
+  deposit_amount: 300000,
+  deposit_receipt_url: null,
 };
 
 export default function AdminDrivers() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(false);
-  
+
   // Modal State
   const [editing, setEditing] = useState<Partial<Driver> | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -55,7 +59,7 @@ export default function AdminDrivers() {
   const [profileSheetOpen, setProfileSheetOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const profileInputRef = useRef<HTMLInputElement>(null);
@@ -69,10 +73,10 @@ export default function AdminDrivers() {
     setLoading(true);
     try {
       const auth = ensureBasicAuth();
-      const res = await fetch(`${API}/drivers?all=true`, { 
-        headers: { Authorization: auth } 
+      const res = await fetch(`${API}/drivers?all=true`, {
+        headers: { Authorization: auth }
       });
-      
+
       if (res.status === 401) {
         clearBasicAuth();
         window.location.reload();
@@ -105,7 +109,7 @@ export default function AdminDrivers() {
     try {
       const auth = ensureBasicAuth();
       const headers = { "Content-Type": "application/json", Authorization: auth };
-      
+
       let res;
       if (isCreating) {
         res = await fetch(`${API}/drivers`, {
@@ -149,7 +153,7 @@ export default function AdminDrivers() {
     setProfileSheetOpen(false); // Cierra el menú
     setIsCameraOpen(true);      // Abre la cámara
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user" } // "user" para selfie, "environment" para trasera
       });
       setStream(mediaStream);
@@ -179,14 +183,14 @@ export default function AdminDrivers() {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const context = canvas.getContext('2d');
-    
+
     if (context) {
       // Espejo (Mirror effect) para selfie sea natural
       context.translate(canvas.width, 0);
       context.scale(-1, 1);
-      
+
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      
+
       canvas.toBlob((blob) => {
         if (blob) {
           const file = new File([blob], `profile_${Date.now()}.jpg`, { type: "image/jpeg" });
@@ -200,13 +204,13 @@ export default function AdminDrivers() {
   const handleProfileUpload = async (file: File) => {
     setUploadingPhoto(true);
     try {
-        const url = await uploadFile(file);
-        setEditing(prev => prev ? ({...prev, photo_url: url}) : null);
+      const url = await uploadFile(file);
+      setEditing(prev => prev ? ({ ...prev, photo_url: url }) : null);
     } catch (e) {
-        alert("Error subiendo foto");
+      alert("Error subiendo foto");
     } finally {
-        setUploadingPhoto(false);
-        setProfileSheetOpen(false);
+      setUploadingPhoto(false);
+      setProfileSheetOpen(false);
     }
   };
 
@@ -258,7 +262,7 @@ export default function AdminDrivers() {
   return (
     <div className="min-h-screen p-6 bg-slate-50">
       <div className="mx-auto max-w-[1400px]">
-        
+
         {/* Header */}
         <div className="mb-6 flex items-end justify-between">
           <div>
@@ -296,16 +300,16 @@ export default function AdminDrivers() {
                   drivers.map((d) => (
                     <tr key={d.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3">
-                         <div className="flex items-center gap-3">
-                            {d.photo_url ? (
-                                <img src={d.photo_url} alt="Avatar" className="w-8 h-8 rounded-full object-cover border border-slate-200" />
-                            ) : (
-                                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 font-bold">
-                                    {d.full_name.charAt(0)}
-                                </div>
-                            )}
-                            <span className="font-bold text-slate-700">{d.full_name}</span>
-                         </div>
+                        <div className="flex items-center gap-3">
+                          {d.photo_url ? (
+                            <img src={d.photo_url} alt="Avatar" className="w-8 h-8 rounded-full object-cover border border-slate-200" />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 font-bold">
+                              {d.full_name.charAt(0)}
+                            </div>
+                          )}
+                          <span className="font-bold text-slate-700">{d.full_name}</span>
+                        </div>
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-600">{d.document_number}</td>
                       <td className="px-4 py-3 text-slate-600">
@@ -349,40 +353,48 @@ export default function AdminDrivers() {
 
             <div className="p-6 overflow-y-auto">
               <form id="driverForm" onSubmit={saveChanges} className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                
+
                 {/* COLUMNA IZQUIERDA: DATOS */}
                 <div className="space-y-4">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-600 border-b border-emerald-100 pb-2">Información Personal</h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="col-span-2">
                       <label className="block text-xs font-bold text-slate-700 mb-1">Nombre Completo</label>
-                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase" value={editing.full_name || ""} onChange={e => setEditing({...editing, full_name: e.target.value})} required />
+                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase" value={editing.full_name || ""} onChange={e => setEditing({ ...editing, full_name: e.target.value })} required />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 mb-1">Documento (CC)</label>
-                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono" value={editing.document_number || ""} onChange={e => setEditing({...editing, document_number: e.target.value})} required />
+                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono" value={editing.document_number || ""} onChange={e => setEditing({ ...editing, document_number: e.target.value })} required />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 mb-1">Fecha Nacimiento</label>
-                      <input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.date_of_birth || ""} onChange={e => setEditing({...editing, date_of_birth: e.target.value})} />
+                      <input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.date_of_birth || ""} onChange={e => setEditing({ ...editing, date_of_birth: e.target.value })} />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 mb-1">Celular</label>
-                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.phone || ""} onChange={e => setEditing({...editing, phone: e.target.value})} required />
+                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.phone || ""} onChange={e => setEditing({ ...editing, phone: e.target.value })} required />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 mb-1">Email</label>
-                      <input type="email" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.email || ""} onChange={e => setEditing({...editing, email: e.target.value})} />
+                      <input type="email" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.email || ""} onChange={e => setEditing({ ...editing, email: e.target.value })} />
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">Dirección</label>
-                    <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.address || ""} onChange={e => setEditing({...editing, address: e.target.value})} />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-1">
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Dirección</label>
+                      <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.address || ""} onChange={e => setEditing({ ...editing, address: e.target.value })} />
+                    </div>
+                    <div className="col-span-1 border-l border-emerald-100 pl-4">
+                      <label className="block text-xs font-bold text-emerald-700 mb-1">Depósito (COP)</label>
+                      <input type="number" className="w-full rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-900"
+                        value={editing.deposit_amount !== undefined && editing.deposit_amount !== null ? editing.deposit_amount : 300000}
+                        onChange={e => setEditing({ ...editing, deposit_amount: parseInt(e.target.value) || 0 })} />
+                    </div>
                   </div>
                   <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-600 border-b border-emerald-100 pb-2 pt-4">Estado y Notas</h3>
                   <div>
                     <label className="block text-xs font-medium text-slate-700 mb-1">Estado Operativo</label>
-                    <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white" value={editing.status || "active"} onChange={e => setEditing({...editing, status: e.target.value as any})} >
+                    <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white" value={editing.status || "active"} onChange={e => setEditing({ ...editing, status: e.target.value as any })} >
                       <option value="active">Activo (Disponible)</option>
                       <option value="inactive">Inactivo</option>
                       <option value="suspended">Suspendido (Mora/Sanción)</option>
@@ -390,52 +402,53 @@ export default function AdminDrivers() {
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-700 mb-1">Notas Internas</label>
-                    <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm h-20 resize-none" placeholder="Antecedentes, referencias, etc..." value={editing.notes || ""} onChange={e => setEditing({...editing, notes: e.target.value})} />
+                    <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm h-20 resize-none" placeholder="Antecedentes, referencias, etc..." value={editing.notes || ""} onChange={e => setEditing({ ...editing, notes: e.target.value })} />
                   </div>
                 </div>
 
                 {/* COLUMNA DERECHA: ARCHIVOS */}
                 <div className="space-y-6 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                  
+
                   {/* --- SECCIÓN FOTO DE PERFIL MEJORADA --- */}
                   <div className="flex flex-col items-center justify-center p-4 border border-dashed border-emerald-200 bg-emerald-50/50 rounded-xl">
-                     <div className="relative group cursor-pointer" onClick={() => setProfileSheetOpen(true)}>
-                        {editing.photo_url ? (
-                            <img src={editing.photo_url} alt="Profile" className="h-24 w-24 rounded-full object-cover border-4 border-white shadow-md" />
-                        ) : (
-                            <div className="h-24 w-24 rounded-full bg-slate-200 flex items-center justify-center text-slate-400 font-bold text-3xl border-4 border-white shadow-md">?</div>
-                        )}
-                        <div className="absolute inset-0 bg-black/30 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                            <Camera className="text-white w-8 h-8" />
-                        </div>
-                        {uploadingPhoto && <div className="absolute inset-0 bg-white/80 rounded-full flex items-center justify-center animate-pulse text-xs font-bold text-emerald-600">...</div>}
-                     </div>
-                     <button type="button" onClick={() => setProfileSheetOpen(true)} className="mt-2 text-xs font-bold text-emerald-600 hover:text-emerald-800">
-                        {editing.photo_url ? "Cambiar Foto" : "Agregar Foto"}
-                     </button>
+                    <div className="relative group cursor-pointer" onClick={() => setProfileSheetOpen(true)}>
+                      {editing.photo_url ? (
+                        <img src={editing.photo_url} alt="Profile" className="h-24 w-24 rounded-full object-cover border-4 border-white shadow-md" />
+                      ) : (
+                        <div className="h-24 w-24 rounded-full bg-slate-200 flex items-center justify-center text-slate-400 font-bold text-3xl border-4 border-white shadow-md">?</div>
+                      )}
+                      <div className="absolute inset-0 bg-black/30 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Camera className="text-white w-8 h-8" />
+                      </div>
+                      {uploadingPhoto && <div className="absolute inset-0 bg-white/80 rounded-full flex items-center justify-center animate-pulse text-xs font-bold text-emerald-600">...</div>}
+                    </div>
+                    <button type="button" onClick={() => setProfileSheetOpen(true)} className="mt-2 text-xs font-bold text-emerald-600 hover:text-emerald-800">
+                      {editing.photo_url ? "Cambiar Foto" : "Agregar Foto"}
+                    </button>
                   </div>
                   {/* ------------------------------------ */}
 
                   <div className="space-y-3">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Documentos</h3>
-                    <FileField label="Hoja de Vida (PDF)" value={editing.cv_url} onChange={(url) => setEditing(prev => ({...prev!, cv_url: url}))} />
+                    <FileField label="Hoja de Vida (PDF)" value={editing.cv_url} onChange={(url) => setEditing(prev => ({ ...prev!, cv_url: url }))} />
                     <div className="grid grid-cols-2 gap-3">
-                      <FileField label="Cédula (Frontal)" value={editing.id_front_url} onChange={(url) => setEditing(prev => ({...prev!, id_front_url: url}))} />
-                      <FileField label="Cédula (Trasera)" value={editing.id_back_url} onChange={(url) => setEditing(prev => ({...prev!, id_back_url: url}))} />
+                      <FileField label="Cédula (Frontal)" value={editing.id_front_url} onChange={(url) => setEditing(prev => ({ ...prev!, id_front_url: url }))} />
+                      <FileField label="Cédula (Trasera)" value={editing.id_back_url} onChange={(url) => setEditing(prev => ({ ...prev!, id_back_url: url }))} />
                     </div>
                   </div>
 
                   <div className="space-y-3">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Licencia</h3>
                     <div className="grid grid-cols-2 gap-3">
-                      <FileField label="Licencia (Frontal)" value={editing.license_front_url} onChange={(url) => setEditing(prev => ({...prev!, license_front_url: url}))} />
-                      <FileField label="Licencia (Trasera)" value={editing.license_back_url} onChange={(url) => setEditing(prev => ({...prev!, license_back_url: url}))} />
+                      <FileField label="Licencia (Frontal)" value={editing.license_front_url} onChange={(url) => setEditing(prev => ({ ...prev!, license_front_url: url }))} />
+                      <FileField label="Licencia (Trasera)" value={editing.license_back_url} onChange={(url) => setEditing(prev => ({ ...prev!, license_back_url: url }))} />
                     </div>
                   </div>
 
                   <div className="space-y-3">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Legal</h3>
-                    <FileField label="Contrato Firmado" value={editing.contract_url} onChange={(url) => setEditing(prev => ({...prev!, contract_url: url}))} />
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Legal y Pagos</h3>
+                    <FileField label="Comprobante Depósito" value={editing.deposit_receipt_url} onChange={(url) => setEditing(prev => ({ ...prev!, deposit_receipt_url: url }))} />
+                    <FileField label="Contrato Firmado" value={editing.contract_url} onChange={(url) => setEditing(prev => ({ ...prev!, contract_url: url }))} />
                   </div>
                 </div>
               </form>
@@ -454,65 +467,65 @@ export default function AdminDrivers() {
       {/* --- ACTION SHEET DE FOTO DE PERFIL (Z-INDEX 60) --- */}
       {profileSheetOpen && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="w-full max-w-md bg-white rounded-t-3xl p-6 pb-10 space-y-4 animate-in slide-in-from-bottom duration-300">
-                <div className="flex justify-between items-center mb-2">
-                    <h3 className="text-lg font-bold text-slate-800">Foto de Perfil</h3>
-                    <button onClick={() => setProfileSheetOpen(false)} className="p-1 bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
-                    <button onClick={startCamera} className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors">
-                        <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center">
-                            <Camera className="w-6 h-6" />
-                        </div>
-                        <span className="text-sm font-bold text-slate-700">Usar Cámara</span>
-                    </button>
-
-                    <button onClick={() => { profileInputRef.current?.click(); setProfileSheetOpen(false); }} className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors">
-                        <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center">
-                            <ImageIcon className="w-6 h-6" />
-                        </div>
-                        <span className="text-sm font-bold text-slate-700">Subir Archivo</span>
-                    </button>
-                </div>
+          <div className="w-full max-w-md bg-white rounded-t-3xl p-6 pb-10 space-y-4 animate-in slide-in-from-bottom duration-300">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-lg font-bold text-slate-800">Foto de Perfil</h3>
+              <button onClick={() => setProfileSheetOpen(false)} className="p-1 bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5" /></button>
             </div>
-            {/* Click outside to close */}
-            <div className="absolute inset-0 -z-10" onClick={() => setProfileSheetOpen(false)} />
+
+            <div className="grid grid-cols-2 gap-4">
+              <button onClick={startCamera} className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors">
+                <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center">
+                  <Camera className="w-6 h-6" />
+                </div>
+                <span className="text-sm font-bold text-slate-700">Usar Cámara</span>
+              </button>
+
+              <button onClick={() => { profileInputRef.current?.click(); setProfileSheetOpen(false); }} className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors">
+                <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center">
+                  <ImageIcon className="w-6 h-6" />
+                </div>
+                <span className="text-sm font-bold text-slate-700">Subir Archivo</span>
+              </button>
+            </div>
+          </div>
+          {/* Click outside to close */}
+          <div className="absolute inset-0 -z-10" onClick={() => setProfileSheetOpen(false)} />
         </div>
       )}
 
       {/* INPUT OCULTO PARA ACTION SHEET */}
-      <input 
-          type="file" 
-          accept="image/*" 
-          ref={profileInputRef}
-          className="hidden" 
-          onChange={(e) => e.target.files?.[0] && handleProfileUpload(e.target.files[0])}
+      <input
+        type="file"
+        accept="image/*"
+        ref={profileInputRef}
+        className="hidden"
+        onChange={(e) => e.target.files?.[0] && handleProfileUpload(e.target.files[0])}
       />
 
       {/* --- MODAL DE CÁMARA (Z-INDEX 70) --- */}
       {isCameraOpen && (
         <div className="fixed inset-0 z-[70] bg-black flex flex-col animate-in fade-in duration-300">
-            <div className="p-4 flex justify-between items-center bg-black/50 absolute top-0 w-full z-10 backdrop-blur-sm">
-                <span className="text-white font-bold text-sm">Tomar Selfie</span>
-                <button onClick={stopCamera} className="text-white bg-white/20 p-2 rounded-full">
-                    <X className="w-6 h-6" />
-                </button>
-            </div>
+          <div className="p-4 flex justify-between items-center bg-black/50 absolute top-0 w-full z-10 backdrop-blur-sm">
+            <span className="text-white font-bold text-sm">Tomar Selfie</span>
+            <button onClick={stopCamera} className="text-white bg-white/20 p-2 rounded-full">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
 
-            <div className="flex-1 relative flex items-center justify-center bg-black">
-                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-contain transform -scale-x-100" /> {/* Espejo en CSS visualmente */}
-                <canvas ref={canvasRef} className="hidden" />
-            </div>
+          <div className="flex-1 relative flex items-center justify-center bg-black">
+            <video ref={videoRef} autoPlay playsInline className="w-full h-full object-contain transform -scale-x-100" /> {/* Espejo en CSS visualmente */}
+            <canvas ref={canvasRef} className="hidden" />
+          </div>
 
-            <div className="p-8 bg-black flex justify-center pb-12">
-                <button 
-                    onClick={capturePhoto}
-                    className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center bg-white/20 active:bg-white active:scale-95 transition-all"
-                >
-                    <div className="w-16 h-16 bg-white rounded-full" />
-                </button>
-            </div>
+          <div className="p-8 bg-black flex justify-center pb-12">
+            <button
+              onClick={capturePhoto}
+              className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center bg-white/20 active:bg-white active:scale-95 transition-all"
+            >
+              <div className="w-16 h-16 bg-white rounded-full" />
+            </button>
+          </div>
         </div>
       )}
 
