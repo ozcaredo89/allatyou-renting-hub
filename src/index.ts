@@ -38,9 +38,11 @@ import providersRoutes from "./routes/providers";
 // --- NUEVO: MÓDULO AUDITORÍA DE GASTOS ---
 import auditsRoutes from "./routes/audits";
 
-// --- NUEVO: MÓDULO INTELIGENCIA COMERCIAL (ORÁCULO DAAS) ---
 import oracleRoutes from "./routes/oracle";
 
+// --- MÓDULO DAEMON PROTRACK KILÓMETROS ---
+import { syncProtrackMileage } from "./oraculo/mileage-daemon";
+import { syncGpsImeis } from "./oraculo/sync-imei";
 
 const app = express();
 
@@ -119,4 +121,25 @@ app.use("/oracle", basicAuth, oracleRoutes);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`API up on http://localhost:${PORT}`);
+
+  // Arrancar el Daemon de Kilometraje al inicio (con delay para no bloquear)
+  setTimeout(() => {
+    // 1. Intentar emparejar nuevos IMEIs con nuevos Vehículos
+    syncGpsImeis().catch(err => console.error("Error inicial Sync IMEI:", err));
+
+    // 2. Extraer el kilometraje de los IMEIs emparejados
+    setTimeout(() => {
+      syncProtrackMileage().catch(err => console.error("Error inicial Daemon Kilometraje:", err));
+    }, 30000); // 30s después del emparejamiento
+
+    // Y luego repetir el ciclo cada 12 horas (43200000 ms)
+    setInterval(() => {
+      syncGpsImeis().catch(err => console.error("Error periódico Sync IMEI:", err));
+
+      setTimeout(() => {
+        syncProtrackMileage().catch(err => console.error("Error periódico Daemon Kilometraje:", err));
+      }, 30000); // 30s después del emparejamiento cíclico
+
+    }, 43200000);
+  }, 10000); // 10 segundos después del inicio
 });

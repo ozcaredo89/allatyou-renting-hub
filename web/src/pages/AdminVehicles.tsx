@@ -22,6 +22,7 @@ type Vehicle = {
   extinguisher_expiry: string | null;
   battery_install_date: string | null;
   tires_notes: string | null;
+  gps_imei: string | null;
 
   // CAMPOS DE DOCUMENTOS
   ownership_card_front: string | null;
@@ -47,6 +48,7 @@ const EMPTY_VEHICLE: Vehicle = {
   extinguisher_expiry: null,
   battery_install_date: null,
   tires_notes: "",
+  gps_imei: null,
   ownership_card_front: null,
   ownership_card_back: null,
   purchase_price: "",
@@ -72,10 +74,18 @@ export default function AdminVehicles() {
 
   // --- ESTADOS PARA GASTOS E HISTORIAL (NUEVO) ---
   const [vehicleExpenses, setVehicleExpenses] = useState<any[]>([]);
+  const [vehicleMileage, setVehicleMileage] = useState<any[]>([]); // Historial Kilometraje
   const [loadingExpenses, setLoadingExpenses] = useState(false);
-  const [viewingHistory, setViewingHistory] = useState<{ plate: string; category: 'Mantenimiento' | 'Cambio de aceite' } | null>(null);
+  const [viewingHistory, setViewingHistory] = useState<{ plate: string; category: 'Mantenimiento' | 'Cambio de aceite' | 'Kilometraje' } | null>(null);
   const [viewingExpenseDetail, setViewingExpenseDetail] = useState<any | null>(null);
   const [viewingImages, setViewingImages] = useState<{ urls: { url: string, title?: string }[]; startingIndex: number } | null>(null);
+
+  // Estado para Reporte Manual Odómetro
+  const [newMileage, setNewMileage] = useState<{ mileage_km: string; date: string }>({ mileage_km: "", date: new Date().toISOString().slice(0, 10) });
+  const [savingMileage, setSavingMileage] = useState(false);
+  const [mileageTab, setMileageTab] = useState<'manual' | 'auto'>('manual'); // NUEVO ESTADO DE TABS
+  const [autoFilterTab, setAutoFilterTab] = useState<'7d' | '30d' | 'custom' | 'all'>('7d');
+  const [customRange, setCustomRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
 
   // --- ESTADOS PARA CÁMARA (NUEVO) ---
   const [activeField, setActiveField] = useState<'ownership_card_front' | 'ownership_card_back' | null>(null);
@@ -161,10 +171,60 @@ export default function AdminVehicles() {
     setIsCreating(false);
   }
 
-  function openHistory(plate: string, category: 'Mantenimiento' | 'Cambio de aceite') {
+  function openHistory(plate: string, category: 'Mantenimiento' | 'Cambio de aceite' | 'Kilometraje') {
     setVehicleExpenses([]);
+    setVehicleMileage([]);
     setViewingHistory({ plate, category });
-    loadVehicleExpenses(plate);
+    if (category === 'Kilometraje') {
+      loadVehicleMileage(plate);
+    } else {
+      loadVehicleExpenses(plate);
+    }
+  }
+
+  async function loadVehicleMileage(plate: string) {
+    setLoadingExpenses(true);
+    try {
+      const auth = ensureBasicAuth();
+      const headers = { Authorization: auth };
+      const res = await fetch(`${API}/vehicles/${plate}/mileage`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setVehicleMileage(data || []);
+      }
+    } catch (e) {
+      console.error("Error loading mileage", e);
+    } finally {
+      setLoadingExpenses(false);
+    }
+  }
+
+  async function handleAddMileage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!viewingHistory || viewingHistory.category !== 'Kilometraje') return;
+
+    setSavingMileage(true);
+    try {
+      const auth = ensureBasicAuth();
+      const res = await fetch(`${API}/vehicles/${viewingHistory.plate}/mileage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: auth },
+        body: JSON.stringify({
+          mileage_km: Number(newMileage.mileage_km),
+          recorded_at: newMileage.date + "T12:00:00Z" // Medio día default
+        })
+      });
+
+      if (!res.ok) throw new Error("Error guardando el odómetro");
+
+      setNewMileage({ mileage_km: "", date: new Date().toISOString().slice(0, 10) });
+      await loadVehicleMileage(viewingHistory.plate); // Recargar
+    } catch (err) {
+      alert("No se pudo guardar el kilometraje.");
+      console.error(err);
+    } finally {
+      setSavingMileage(false);
+    }
   }
 
   // --- LÓGICA DE SUBIDA UNIFICADA ---
@@ -290,6 +350,31 @@ export default function AdminVehicles() {
     return "text-gray-700";
   };
 
+  const getFilteredAutoMileage = () => {
+    let list = vehicleMileage.filter((log: any) => log.source === 'protrack_api');
+    const now = new Date();
+
+    if (autoFilterTab === '7d') {
+      const past = new Date(now); past.setDate(past.getDate() - 7);
+      list = list.filter((log: any) => new Date(log.recorded_at) >= past);
+    } else if (autoFilterTab === '30d') {
+      const past = new Date(now); past.setDate(past.getDate() - 30);
+      list = list.filter((log: any) => new Date(log.recorded_at) >= past);
+    } else if (autoFilterTab === 'custom' && customRange.start && customRange.end) {
+      const start = new Date(customRange.start + 'T00:00:00');
+      const end = new Date(customRange.end + 'T23:59:59');
+      list = list.filter((log: any) => {
+        const d = new Date(log.recorded_at);
+        return d >= start && d <= end;
+      });
+    }
+
+    const totalKm = list.reduce((sum: number, log: any) => sum + Number(log.mileage_km), 0);
+    return { list, totalKm };
+  };
+
+  const autoMileageData = getFilteredAutoMileage();
+
   return (
     <div className="min-h-screen p-6 bg-slate-50">
       <div className="mx-auto max-w-[1400px]">
@@ -355,20 +440,29 @@ export default function AdminVehicles() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => openHistory(v.plate, 'Mantenimiento')}
-                            title="Historial de Mantenimientos"
-                            className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
-                          >
-                            <Wrench size={16} />
-                          </button>
-                          <button
-                            onClick={() => openHistory(v.plate, 'Cambio de aceite')}
-                            title="Historial Cambios de Aceite"
-                            className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors"
-                          >
-                            <Droplets size={16} />
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5 bg-slate-100 rounded-lg p-1">
+                            <button
+                              onClick={() => openHistory(v.plate, 'Kilometraje')}
+                              title="Odómetro / Kilometraje"
+                              className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-white rounded shadow-sm hover:shadow transition-all"
+                            >
+                              <span className="text-sm font-black">KM</span>
+                            </button>
+                            <button
+                              onClick={() => openHistory(v.plate, 'Mantenimiento')}
+                              title="Historial de Mantenimientos"
+                              className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-white rounded shadow-sm hover:shadow transition-all"
+                            >
+                              <Wrench size={14} />
+                            </button>
+                            <button
+                              onClick={() => openHistory(v.plate, 'Cambio de aceite')}
+                              title="Historial Cambios de Aceite"
+                              className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-white rounded shadow-sm hover:shadow transition-all"
+                            >
+                              <Droplets size={14} />
+                            </button>
+                          </div>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -512,6 +606,18 @@ export default function AdminVehicles() {
                       <label className="block text-xs font-medium text-slate-700 mb-1">Clave Alarma</label>
                       <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono" placeholder="****" value={editing.alarm_code || ""} onChange={e => setEditing({ ...editing, alarm_code: e.target.value })} />
                     </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-bold text-blue-700 mb-1">Protrack GPS IMEI (15 dígitos)</label>
+                      <input
+                        type="text"
+                        maxLength={15}
+                        className="w-full rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono tracking-widest text-blue-900"
+                        placeholder="Ej: 351000091413001"
+                        value={editing.gps_imei || ""}
+                        onChange={e => setEditing({ ...editing, gps_imei: e.target.value.replace(/\D/g, '') })}
+                      />
+                      <p className="text-[10px] text-blue-600 mt-1">Este número permite al sistema leer el kilometraje diario de forma automática.</p>
+                    </div>
                   </div>
 
                   <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-100">
@@ -590,8 +696,10 @@ export default function AdminVehicles() {
                 <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                   {viewingHistory.category === 'Mantenimiento' ? (
                     <><Wrench className="text-blue-500 w-5 h-5" /> Mantenimientos</>
-                  ) : (
+                  ) : viewingHistory.category === 'Cambio de aceite' ? (
                     <><Droplets className="text-amber-500 w-5 h-5" /> Cambios Aceite</>
+                  ) : (
+                    <><span className="text-emerald-500 font-black">KM</span> Odométro</>
                   )}
                 </h2>
                 <p className="text-xs text-slate-500 mt-1 uppercase tracking-wider font-bold">Vehículo {viewingHistory.plate}</p>
@@ -601,49 +709,167 @@ export default function AdminVehicles() {
               </button>
             </div>
 
-            {/* CONTENIDO (LISTA DE GASTOS) */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {loadingExpenses ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-3 opacity-60">
-                  <div className="w-6 h-6 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin"></div>
-                  <p className="text-sm">Buscando registros...</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {vehicleExpenses.filter(e => e.category === viewingHistory.category).length === 0 ? (
-                    <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
-                      <p className="text-sm font-medium text-slate-500">No hay registros de {viewingHistory.category.toLowerCase()}.</p>
-                      <p className="text-xs text-slate-400 mt-1">Cuando le asignes gastos a {viewingHistory.plate}, aparecerán aquí.</p>
-                    </div>
-                  ) : (
-                    vehicleExpenses.filter(e => e.category === viewingHistory.category).map(expense => {
-                      const share = expense.expense_vehicles?.find((ev: any) => ev.plate === viewingHistory.plate)?.share_amount || 0;
-                      const isMaint = viewingHistory.category === 'Mantenimiento';
+            {/* CONTENIDO (LISTA O KILOMETRAJE) */}
+            <div className="flex-1 overflow-y-auto bg-slate-50">
+              {viewingHistory.category === 'Kilometraje' && (
+                <div className="p-4 bg-white border-b border-slate-200 sticky top-0 z-10">
+                  {/* TABS DE KILOMETRAJE */}
+                  <div className="flex gap-2 mb-4 p-1 bg-slate-100 rounded-lg">
+                    <button
+                      onClick={() => setMileageTab('manual')}
+                      className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${mileageTab === 'manual' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      Odómetro Manual
+                    </button>
+                    <button
+                      onClick={() => setMileageTab('auto')}
+                      className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${mileageTab === 'auto' ? 'bg-white shadow-sm text-blue-700' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      Distancia Diaria
+                    </button>
+                  </div>
 
-                      return (
-                        <div key={expense.id} className="group relative rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-slate-300 hover:shadow-md transition-all">
-                          <div className="flex justify-between items-start mb-2">
-                            <span className="inline-block px-2 py-1 bg-slate-100 text-[10px] font-bold text-slate-500 rounded-md tracking-widest">{expense.date}</span>
-                            <span className={`text-sm font-bold ${isMaint ? 'text-blue-700' : 'text-amber-700'}`}>
-                              ${new Intl.NumberFormat("es-CO").format(Number(share))}
-                            </span>
-                          </div>
-                          <p className="text-sm text-slate-700 font-medium mb-3">{expense.item}</p>
+                  {mileageTab === 'manual' && (
+                    <form onSubmit={handleAddMileage} className="flex gap-2 items-end">
+                      <div className="flex-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Kilometraje Absoluto</label>
+                        <input type="number" required placeholder="Ej. 125000" className="w-full text-sm border-slate-200 rounded-lg py-2 focus:ring-emerald-500"
+                          value={newMileage.mileage_km} onChange={e => setNewMileage({ ...newMileage, mileage_km: e.target.value })}
+                        />
+                      </div>
+                      <div className="w-32">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Fecha</label>
+                        <input type="date" required className="w-full text-sm border-slate-200 rounded-lg py-2 focus:ring-emerald-500"
+                          value={newMileage.date} onChange={e => setNewMileage({ ...newMileage, date: e.target.value })}
+                        />
+                      </div>
+                      <button type="submit" disabled={savingMileage} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-3 rounded-lg shadow-sm">
+                        {savingMileage ? "..." : "+ Add"}
+                      </button>
+                    </form>
+                  )}
 
-                          <div className="pt-3 border-t border-slate-50 flex justify-end">
-                            <button
-                              onClick={() => setViewingExpenseDetail(expense)}
-                              className={`text-xs font-bold ${isMaint ? 'text-blue-500 hover:text-blue-600' : 'text-amber-500 hover:text-amber-600'} flex items-center gap-1 bg-transparent border-none cursor-pointer`}
-                            >
-                              Ver detalle completo &rarr;
-                            </button>
-                          </div>
+                  {mileageTab === 'auto' && (
+                    <div className="mt-1 border-t border-slate-100 pt-3">
+                      <div className="flex flex-wrap gap-1 mb-3">
+                        <button onClick={() => setAutoFilterTab('7d')} className={`px-2 py-1 text-[10px] font-bold rounded-md transition-colors ${autoFilterTab === '7d' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>7 Días</button>
+                        <button onClick={() => setAutoFilterTab('30d')} className={`px-2 py-1 text-[10px] font-bold rounded-md transition-colors ${autoFilterTab === '30d' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Mes</button>
+                        <button onClick={() => setAutoFilterTab('all')} className={`px-2 py-1 text-[10px] font-bold rounded-md transition-colors ${autoFilterTab === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Total</button>
+                        <button onClick={() => setAutoFilterTab('custom')} className={`px-2 py-1 text-[10px] font-bold rounded-md transition-colors ${autoFilterTab === 'custom' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Rango</button>
+                      </div>
+
+                      {autoFilterTab === 'custom' && (
+                        <div className="flex gap-2 mb-3">
+                          <input type="date" className="text-xs p-1.5 border border-slate-200 rounded text-slate-700 focus:ring-blue-500" value={customRange.start} onChange={e => setCustomRange({ ...customRange, start: e.target.value })} />
+                          <input type="date" className="text-xs p-1.5 border border-slate-200 rounded text-slate-700 focus:ring-blue-500" value={customRange.end} onChange={e => setCustomRange({ ...customRange, end: e.target.value })} />
                         </div>
-                      );
-                    })
+                      )}
+
+                      <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex justify-between items-center">
+                        <span className="text-xs font-bold text-blue-800 uppercase tracking-wide">Total Recorrido</span>
+                        <span className="text-lg font-black text-blue-700">{new Intl.NumberFormat("es-CO").format(autoMileageData.totalKm)} <span className="text-[10px]">km</span></span>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
+
+              <div className="p-6">
+                {loadingExpenses ? (
+                  <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-3 opacity-60">
+                    <div className="w-6 h-6 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin"></div>
+                    <p className="text-sm">Buscando registros...</p>
+                  </div>
+                ) : viewingHistory.category === 'Kilometraje' ? (
+                  // UI KILOMETRAJE DIVIDIDO EN TABS
+                  <div className="space-y-3">
+                    {mileageTab === 'manual' ? (
+                      vehicleMileage.filter((log: any) => log.source === 'manual').length === 0 ? (
+                        <div className="text-center py-10">
+                          <p className="text-slate-400 text-sm">Sin historial manual de kilometraje.</p>
+                        </div>
+                      ) : (
+                        vehicleMileage
+                          .filter((log: any) => log.source === 'manual')
+                          .map((log: any) => (
+                            <div key={log.id} className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200 shadow-sm hover:border-slate-300 transition-colors">
+                              <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase">Manual</span>
+                                  <span className="text-xs text-slate-500 font-medium">{new Date(log.recorded_at).toLocaleDateString()}</span>
+                                </div>
+                                <p className="font-black text-slate-800 text-xl">
+                                  {new Intl.NumberFormat("es-CO").format(Number(log.mileage_km))}
+                                  <span className="text-xs text-slate-400 font-bold ml-1">km</span>
+                                </p>
+                              </div>
+                            </div>
+                          ))
+                      )
+                    ) : (
+                      autoMileageData.list.length === 0 ? (
+                        <div className="text-center py-10">
+                          <p className="text-slate-400 text-sm">Sin historial automático para este período.</p>
+                        </div>
+                      ) : (
+                        autoMileageData.list.map((log: any) => (
+                          <div key={log.id} className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200 shadow-sm hover:border-slate-300 transition-colors">
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase">GPS</span>
+                                <span className="text-xs text-slate-500 font-medium">{new Date(log.recorded_at).toLocaleDateString()}</span>
+                              </div>
+                              <p className="font-black text-slate-800 text-xl">
+                                +{new Intl.NumberFormat("es-CO").format(Number(log.mileage_km))}
+                                <span className="text-xs text-slate-400 font-bold ml-1">km</span>
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[10px] text-blue-500 font-bold uppercase tracking-wider">{log.notes || 'Distancia Diaria'}</p>
+                            </div>
+                          </div>
+                        ))
+                      )
+                    )}
+                  </div>
+                ) : (
+                  // UI GASTOS (MANTENIMIENTO O ACEITE)
+                  <div className="space-y-4">
+                    {vehicleExpenses.filter(e => e.category === viewingHistory.category).length === 0 ? (
+                      <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+                        <p className="text-sm font-medium text-slate-500">No hay registros de {viewingHistory.category.toLowerCase()}.</p>
+                        <p className="text-xs text-slate-400 mt-1">Cuando le asignes gastos a {viewingHistory.plate}, aparecerán aquí.</p>
+                      </div>
+                    ) : (
+                      vehicleExpenses.filter(e => e.category === viewingHistory.category).map(expense => {
+                        const share = expense.expense_vehicles?.find((ev: any) => ev.plate === viewingHistory.plate)?.share_amount || 0;
+                        const isMaint = viewingHistory.category === 'Mantenimiento';
+
+                        return (
+                          <div key={expense.id} className="group relative rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-slate-300 hover:shadow-md transition-all">
+                            <div className="flex justify-between items-start mb-2">
+                              <span className="inline-block px-2 py-1 bg-slate-100 text-[10px] font-bold text-slate-500 rounded-md tracking-widest">{expense.date}</span>
+                              <span className={`text-sm font-bold ${isMaint ? 'text-blue-700' : 'text-amber-700'}`}>
+                                ${new Intl.NumberFormat("es-CO").format(Number(share))}
+                              </span>
+                            </div>
+                            <p className="text-sm text-slate-700 font-medium mb-3">{expense.item}</p>
+
+                            <div className="pt-3 border-t border-slate-50 flex justify-end">
+                              <button
+                                onClick={() => setViewingExpenseDetail(expense)}
+                                className={`text-xs font-bold ${isMaint ? 'text-blue-500 hover:text-blue-600' : 'text-amber-500 hover:text-amber-600'} flex items-center gap-1 bg-transparent border-none cursor-pointer`}
+                              >
+                                Ver detalle completo &rarr;
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
           </div>

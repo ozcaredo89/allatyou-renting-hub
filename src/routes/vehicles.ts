@@ -58,7 +58,7 @@ r.post("/", async (req: Request, res: Response) => {
         .select("full_name")
         .eq("id", body.current_driver_id)
         .single();
-      
+
       if (driverInfo) {
         ownerName = driverInfo.full_name;
       }
@@ -70,8 +70,8 @@ r.post("/", async (req: Request, res: Response) => {
       brand: body.brand,
       line: body.line,
       model_year: body.model_year,
-      current_driver_id: body.current_driver_id || null, 
-      owner_name: ownerName, 
+      current_driver_id: body.current_driver_id || null,
+      owner_name: ownerName,
 
       // Legal & Seguridad
       alarm_code: body.alarm_code,
@@ -86,7 +86,8 @@ r.post("/", async (req: Request, res: Response) => {
       battery_brand: body.battery_brand,
       battery_install_date: body.battery_install_date,
       tires_notes: body.tires_notes,
-      
+      gps_imei: body.gps_imei,
+
       // Documentos
       ownership_card_front: body.ownership_card_front,
       ownership_card_back: body.ownership_card_back,
@@ -115,18 +116,18 @@ r.post("/", async (req: Request, res: Response) => {
 
     // --- NUEVA LÓGICA: Inversión Inicial (CREATE) ---
     if (body.purchase_price && Number(body.purchase_price) > 0) {
-        const { error: errInv } = await supabase
-          .from("vehicle_investments")
-          .insert({
-            plate: cleanPlate,
-            date: body.purchase_date || new Date().toISOString().slice(0, 10),
-            concept: 'Inicial',
-            amount: Number(body.purchase_price)
-          });
-        
-        if (errInv) {
-            console.error("Error creando inversión inicial:", errInv.message);
-        }
+      const { error: errInv } = await supabase
+        .from("vehicle_investments")
+        .insert({
+          plate: cleanPlate,
+          date: body.purchase_date || new Date().toISOString().slice(0, 10),
+          concept: 'Inicial',
+          amount: Number(body.purchase_price)
+        });
+
+      if (errInv) {
+        console.error("Error creando inversión inicial:", errInv.message);
+      }
     }
     // ---------------------------------------
 
@@ -151,25 +152,26 @@ r.put("/:plate", async (req: Request, res: Response) => {
       line: body.line,
       model_year: body.model_year,
       current_driver_id: body.current_driver_id,
-      
+
       // Legal & Seguridad
       alarm_code: body.alarm_code,
       soat_expires_at: body.soat_expires_at,
       tecno_expires_at: body.tecno_expires_at,
       extinguisher_expiry: body.extinguisher_expiry,
       gps_renewal_date: body.gps_renewal_date,
-      
+
       // Mantenimiento
       timing_belt_last_date: body.timing_belt_last_date,
       timing_belt_last_km: body.timing_belt_last_km,
       battery_brand: body.battery_brand,
       battery_install_date: body.battery_install_date,
       tires_notes: body.tires_notes,
+      gps_imei: body.gps_imei,
 
       // Documentos
       ownership_card_front: body.ownership_card_front,
       ownership_card_back: body.ownership_card_back,
-      
+
       updated_at: new Date().toISOString(),
     };
 
@@ -183,7 +185,7 @@ r.put("/:plate", async (req: Request, res: Response) => {
           .select("full_name")
           .eq("id", body.current_driver_id)
           .single();
-        
+
         if (driverInfo) {
           updates.owner_name = driverInfo.full_name;
         }
@@ -207,36 +209,97 @@ r.put("/:plate", async (req: Request, res: Response) => {
     // --- NUEVA LÓGICA: Inversión Inicial (UPDATE) ---
     // Si envían precio, actualizamos o insertamos el registro 'Inicial'
     if (body.purchase_price && Number(body.purchase_price) > 0) {
-        // Primero intentamos actualizar si ya existe
-        const { data: existing } = await supabase
-            .from("vehicle_investments")
-            .select("id")
-            .eq("plate", plate)
-            .eq("concept", "Inicial")
-            .maybeSingle();
+      // Primero intentamos actualizar si ya existe
+      const { data: existing } = await supabase
+        .from("vehicle_investments")
+        .select("id")
+        .eq("plate", plate)
+        .eq("concept", "Inicial")
+        .maybeSingle();
 
-        if (existing) {
-            // Update
-            await supabase.from("vehicle_investments")
-                .update({
-                    amount: Number(body.purchase_price),
-                    date: body.purchase_date || new Date().toISOString().slice(0, 10)
-                })
-                .eq("id", existing.id);
-        } else {
-            // Insert (Caso raro: vehículo viejo sin inversión registrada que se edita por primera vez)
-            await supabase.from("vehicle_investments")
-                .insert({
-                    plate: plate,
-                    date: body.purchase_date || new Date().toISOString().slice(0, 10),
-                    concept: 'Inicial',
-                    amount: Number(body.purchase_price)
-                });
-        }
+      if (existing) {
+        // Update
+        await supabase.from("vehicle_investments")
+          .update({
+            amount: Number(body.purchase_price),
+            date: body.purchase_date || new Date().toISOString().slice(0, 10)
+          })
+          .eq("id", existing.id);
+      } else {
+        // Insert (Caso raro: vehículo viejo sin inversión registrada que se edita por primera vez)
+        await supabase.from("vehicle_investments")
+          .insert({
+            plate: plate,
+            date: body.purchase_date || new Date().toISOString().slice(0, 10),
+            concept: 'Inicial',
+            amount: Number(body.purchase_price)
+          });
+      }
     }
     // ---------------------------------------
 
     return res.json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  }
+});
+
+// ==========================================
+// MÓDULO DE KILOMETRAJE
+// ==========================================
+
+// GET HISTORY
+r.get("/:plate/mileage", async (req: Request, res: Response) => {
+  try {
+    const period = req.query.period as string || "all"; // 'day', 'week', 'month', 'year', 'all'
+    let query = supabase
+      .from("vehicle_mileage_logs")
+      .select("*")
+      .eq("plate", req.params.plate)
+      .order("recorded_at", { ascending: false });
+
+    // Filtrar opcionalmente por rangos si mandan begin/end en formato YYYY-MM-DD
+    if (req.query.begin) query = query.gte("recorded_at", req.query.begin);
+    if (req.query.end) query = query.lte("recorded_at", req.query.end);
+
+    // Si mandan límite por simplicidad
+    if (req.query.limit) query = query.limit(Number(req.query.limit));
+
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  }
+});
+
+// POST MANUAL RECORD
+r.post("/:plate/mileage", async (req: Request, res: Response) => {
+  try {
+    const { mileage_km, recorded_at, notes } = req.body;
+
+    if (mileage_km === undefined || isNaN(Number(mileage_km))) {
+      return res.status(400).json({ error: "mileage_km es requerido y debe ser número" });
+    }
+
+    const insertion = {
+      plate: req.params.plate,
+      mileage_km: Number(mileage_km),
+      recorded_at: recorded_at || new Date().toISOString(),
+      source: "manual",
+      notes: notes || null
+    };
+
+    const { data, error } = await supabase
+      .from("vehicle_mileage_logs")
+      .insert(insertion)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.status(201).json(data);
   } catch (err: any) {
     return res.status(500).json({ error: err?.message });
   }
