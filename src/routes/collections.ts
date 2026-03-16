@@ -120,13 +120,31 @@ r.get("/pending", async (req: Request, res: Response) => {
             if (!phone && v.owner_whatsapp) phone = v.owner_whatsapp;
           }
 
+          // Calcular monto real: tarifa base 70,000 + cuotas de préstamos
+          let dailyDebt = 70000;
+          const { data: advances } = await supabase
+            .from("operational_advances")
+            .select("daily_installment")
+            .eq("plate", item.plate)
+            .eq("status", "active");
+
+          if (advances && advances.length > 0) {
+            for (const adv of advances) {
+              if (adv.daily_installment) {
+                dailyDebt += Number(adv.daily_installment);
+              }
+            }
+          }
+
+          const totalDebt = dailyDebt * item.days_since;
+
           pendingList.push({
             plate: item.plate,
             owner_name: ownerName,
             driver_id: driverId,
             contact_phone: phone,
-            days_overdue: item.days_since, // Dato crítico para el mensaje
-            amount: null // Podríamos calcularlo si tuviéramos la tarifa diaria a mano
+            days_overdue: item.days_since,
+            amount: totalDebt 
           });
         }
     }
@@ -237,16 +255,80 @@ r.post("/resend/:id", async (req: Request, res: Response) => {
   }
 });
 
-// Endpoint para traer plantillas
+// Endpoint para traer plantillas de una empresa
 r.get("/templates", async (req: Request, res: Response) => {
+  const companyId = req.query.companyId as string;
+  if (!companyId) return res.status(400).json({ error: "companyId es requerido" });
+
   const { data, error } = await supabase
     .from("reminder_templates")
     .select("*")
-    .eq("is_default", true)
-    .single(); 
+    .eq("company_id", companyId)
+    .order("is_default", { ascending: false })
+    .order("id", { ascending: true });
   
   if (error) return res.status(500).json({ error: error.message });
-  return res.json(data);
+  return res.json(data || []);
+});
+
+// Endpoint para crear plantilla
+r.post("/templates", async (req: Request, res: Response) => {
+  const { company_id, template_name, message_body, is_default } = req.body;
+  
+  if (!company_id || !template_name || !message_body) {
+    return res.status(400).json({ error: "company_id, template_name y message_body son requeridos" });
+  }
+
+  try {
+    if (is_default) {
+      await supabase.from("reminder_templates").update({ is_default: false }).eq("company_id", company_id);
+    }
+
+    const { data, error } = await supabase
+      .from("reminder_templates")
+      .insert([{ company_id, template_name, message_body, is_default: !!is_default }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return res.status(201).json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint para editar plantilla
+r.put("/templates/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { template_name, message_body, is_default, company_id } = req.body;
+
+  try {
+    if (is_default && company_id) {
+       await supabase.from("reminder_templates").update({ is_default: false }).eq("company_id", company_id);
+    }
+
+    const updates: any = { template_name, message_body, is_default: !!is_default };
+    
+    const { data, error } = await supabase
+      .from("reminder_templates")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint para eliminar plantilla
+r.delete("/templates/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { error } = await supabase.from("reminder_templates").delete().eq("id", id);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ success: true });
 });
 
 export default r;
