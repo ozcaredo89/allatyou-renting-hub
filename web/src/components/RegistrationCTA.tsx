@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+
 import { Rocket, ArrowRight, CheckCircle2 } from "lucide-react";
 
 export default function RegistrationCTA() {
@@ -33,13 +33,15 @@ export default function RegistrationCTA() {
           </li>
         </ul>
 
-        <Link
-          to="/registro"
+        <a
+          href={`${import.meta.env.VITE_TALLER_URL || "https://taller.allatyou.com"}/registro`}
+          target="_blank"
+          rel="noopener noreferrer"
           className="flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-bold py-3 px-6 rounded-xl transition-all duration-300 hover:scale-105 hover:shadow-lg hover:shadow-emerald-500/20 w-full"
         >
           <span>Empieza tu prueba gratis</span>
           <ArrowRight size={20} />
-        </Link>
+        </a>
       </div>
     </div>
   );
