@@ -12,6 +12,7 @@ import { PicoPlacaModal, ReminderModal } from "../components/UtilitiesModals";
 import { TrustSection } from "../components/TrustSection";
 import AssistanceQuiz from "../components/AssistanceQuiz";
 import Logo from "../components/Logo";
+import RegistrationCTA from "../components/RegistrationCTA";
 
 const WHATSAPP_URL = "https://wa.me/573113738912?text=Hola%20AllAtYou%2C%20vengo%20de%20la%20web%20y%20quiero%20m%C3%A1s%20info.";
 
@@ -74,6 +75,7 @@ export default function Landing() {
             <a href="#como" className="hover:text-white transition-colors">Cómo funciona</a>
             <a href="#flujo" className="hover:text-white transition-colors">Dinero</a>
             <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
+            <a href="#talleres" className="hover:text-white transition-colors">Software para Talleres</a>
           </nav>
           <div className="flex gap-3">
              <a href={WHATSAPP_URL} target="_blank" className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 transition-all">
@@ -219,6 +221,27 @@ export default function Landing() {
               <ShareButton title="Administración AllAtYou" text="Rentabiliza tu vehículo." hash="#propietarios" colorClass="text-blue-400" />
             </div>
             <div className="lg:col-start-1 rounded-3xl border border-white/10 bg-[#101a33]/80 p-1"><VehicleApplicationForm /></div>
+          </section>
+
+          {/* === SECCIÓN B2B: TALLERES ALIADOS === */}
+          <section id="talleres" className="mb-20 relative">
+            {/* Efecto de brillo de fondo para resaltar la sección SaaS */}
+            <div className="absolute inset-0 -z-10 bg-gradient-to-r from-violet-600/10 via-fuchsia-600/10 to-transparent blur-3xl rounded-full" />
+
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-[10px] font-bold text-violet-400 mb-4 uppercase tracking-wider">
+                Para Talleres Mecánicos
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-4">¿Tienes un taller mecánico?</h2>
+              <p className="text-slate-400 text-sm max-w-2xl mx-auto">
+                Digitaliza tu operación, envía diagnósticos profesionales y conviértete en parte de nuestra red de confianza.
+              </p>
+            </div>
+
+            {/* Renderizado del componente CTA que creamos previamente */}
+            <div className="mx-auto max-w-4xl flex justify-center">
+              <RegistrationCTA />
+            </div>
           </section>
 
           {/* === SECCIÓN DE CONFIANZA === */}

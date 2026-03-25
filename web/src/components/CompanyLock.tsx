@@ -1,6 +1,5 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { ensureBasicAuth } from "../lib/auth";
-import RegistrationCTA from "./RegistrationCTA";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -196,10 +195,6 @@ export default function CompanyLock({ children }: Props) {
           </div>
         )}
       </div>
-
-      {/* Separador y Banner CTA que invita a registrarse */}
-      <hr className="my-8 w-full max-w-md border-slate-200" />
-      <RegistrationCTA />
     </div>
   );
 }
