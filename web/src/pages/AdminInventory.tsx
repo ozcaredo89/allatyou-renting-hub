@@ -41,6 +41,26 @@ const formatCurrency = (n: number) =>
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
+/**
+ * Parsea JSON de forma segura. Si el servidor devuelve HTML (ej. 404 de
+ * un endpoint no desplegado), lanza un error claro en lugar del críptico
+ * "Unexpected token '<'".
+ */
+async function safeJson(res: Response): Promise<any> {
+  const text = await res.text();
+  if (text.trim().startsWith("<")) {
+    throw new Error(
+      `El endpoint de Inventario aún no está disponible en el servidor (HTTP ${res.status}). ` +
+      `Asegúrate de haber desplegado el backend con la nueva ruta /inventory.`
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Respuesta inválida del servidor (HTTP ${res.status}): ${text.slice(0, 120)}`);
+  }
+}
+
 const MOVEMENT_LABELS: Record<MovementType, { label: string; color: string; icon: React.ReactNode }> = {
   IN: {
     label: "Entrada (Compra)",
@@ -90,7 +110,7 @@ function ItemModal({ isOpen, onClose, onSaved }: ItemModalProps) {
           current_stock: parseInt(form.current_stock) || 0,
         }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Error creando ítem");
       setForm({ category: "", name: "", unit_cost: "", sale_price: "", current_stock: "0" });
       onSaved();
@@ -250,7 +270,7 @@ function MovementModal({ item, onClose, onSaved }: MovementModalProps) {
         }),
       });
 
-      const data = await res.json();
+      const data = await safeJson(res);
 
       if (!res.ok) {
         throw new Error(data.error || "Error registrando movimiento");
@@ -412,14 +432,18 @@ export default function AdminInventory() {
   const [itemModalOpen, setItemModalOpen] = useState(false);
   const [movementTarget, setMovementTarget] = useState<InventoryItem | null>(null);
 
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
   const fetchItems = useCallback(async () => {
     setLoadingItems(true);
+    setFetchError(null);
     try {
       const res = await requestWithBasicAuth(`${API}/inventory/items`);
-      const data = await res.json();
+      const data = await safeJson(res);
       setItems(Array.isArray(data) ? data : []);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setFetchError(e.message);
     } finally {
       setLoadingItems(false);
     }
@@ -429,10 +453,11 @@ export default function AdminInventory() {
     setLoadingMovements(true);
     try {
       const res = await requestWithBasicAuth(`${API}/inventory/movements?limit=100`);
-      const data = await res.json();
+      const data = await safeJson(res);
       setMovements(Array.isArray(data.items) ? data.items : []);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      // fetchError already set by fetchItems if it's a deployment issue
     } finally {
       setLoadingMovements(false);
     }
@@ -457,6 +482,17 @@ export default function AdminInventory() {
 
   return (
     <div className="min-h-full bg-slate-50 p-4 md:p-8 space-y-6">
+
+      {/* BANNER: Error de despliegue del backend */}
+      {fetchError && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex gap-3 items-start">
+          <span className="text-2xl">⚠️</span>
+          <div>
+            <p className="font-bold text-amber-800 text-sm">Backend no disponible</p>
+            <p className="text-amber-700 text-sm mt-0.5 leading-snug">{fetchError}</p>
+          </div>
+        </div>
+      )}
 
       {/* MODALES */}
       <ItemModal isOpen={itemModalOpen} onClose={() => setItemModalOpen(false)} onSaved={fetchItems} />
