@@ -247,17 +247,21 @@ r.post("/movements", async (req: Request, res: Response) => {
       }
 
       // 3. Log de auditoría (asíncrono, no bloquea)
-      supabase.from("expense_audit_log").insert([{
-        expense_id: expense.id,
-        action: "created",
-        changed_fields: {
-          source: "inventory_movement",
-          movement_id: movement.id,
-          plates: [plate],
-          category: expenseCategory
-        },
-        actor: "sistema-inventario"
-      }]).then(() => {}).catch((e: any) => console.error("[Inventory] Audit log error:", e));
+      // Usamos Promise.resolve() porque el cliente de Supabase devuelve PromiseLike<void>
+      // (sin .select()) y TypeScript no encuentra .catch() directamente en ese tipo.
+      Promise.resolve(
+        supabase.from("expense_audit_log").insert([{
+          expense_id: expense.id,
+          action: "created",
+          changed_fields: {
+            source: "inventory_movement",
+            movement_id: movement.id,
+            plates: [plate],
+            category: expenseCategory
+          },
+          actor: "sistema-inventario"
+        }])
+      ).catch((e: any) => console.error("[Inventory] Audit log error:", e));
 
       createdExpense = expense;
     }
