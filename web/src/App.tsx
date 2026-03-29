@@ -31,6 +31,7 @@ import AdminInspections from "./pages/AdminInspections";
 // Auditorías & Oráculo
 import AdminAudits from "./pages/AdminAudits";
 import AdminOracle from "./pages/AdminOracle";
+import AdminInventory from "./pages/AdminInventory";
 
 export default function App() {
   const hostname = window.location.hostname;
@@ -71,6 +72,7 @@ export default function App() {
 
               {/* ACTIVOS */}
               <Route path="/vehicles" element={<AdminVehicles />} />
+              <Route path="/inventory" element={<AdminInventory />} />
               <Route path="/drivers" element={<AdminDrivers />} />
               <Route path="/recruitment" element={<AdminRecruitment />} />
 

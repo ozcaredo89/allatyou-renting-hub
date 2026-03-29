@@ -38,6 +38,9 @@ import providersRoutes from "./routes/providers";
 // --- NUEVO: MÓDULO AUDITORÍA DE GASTOS ---
 import auditsRoutes from "./routes/audits";
 
+// --- NUEVO: MÓDULO INVENTARIO Y TALLER ---
+import inventoryRoutes from "./routes/inventory";
+
 import oracleRoutes from "./routes/oracle";
 
 // --- MÓDULO DAEMON PROTRACK KILÓMETROS ---
@@ -116,6 +119,7 @@ app.use("/app-users", basicAuth, appUsersRoutes);
 app.use("/deposits", basicAuth, depositsRoutes);
 app.use("/inspections", basicAuth, inspectionsRoutes);
 app.use("/audits", basicAuth, auditsRoutes);
+app.use("/inventory", basicAuth, inventoryRoutes);
 app.use("/oracle", basicAuth, oracleRoutes);
 
 const PORT = process.env.PORT || 3000;

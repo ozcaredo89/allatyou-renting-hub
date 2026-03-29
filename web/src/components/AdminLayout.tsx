@@ -71,6 +71,9 @@ export default function AdminLayout() {
             <NavLink to="/vehicles" className={navItemClass}>
               <span>🚗</span> Flota
             </NavLink>
+            <NavLink to="/inventory" className={navItemClass}>
+              <span>📦</span> Inventario
+            </NavLink>
             <NavLink to="/drivers" className={navItemClass}>
               <span>🧢</span> Conductores
             </NavLink>
