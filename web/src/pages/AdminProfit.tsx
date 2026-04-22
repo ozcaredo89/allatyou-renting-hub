@@ -8,7 +8,10 @@ const fmtCOP = new Intl.NumberFormat("es-CO");
 type ProfitRow = {
   plate: string;
   month: string;
-  income: number;
+  pure_income: number;
+  deposits_total: number;
+  advances_total: number;
+  maintenance_provision: number;
   expense: number;
   adjustments: number;
   profit: number;
@@ -23,7 +26,10 @@ type ProfitResp = {
   month: string;
   items: ProfitRow[];
   totals: {
-    income: number;
+    pure_income: number;
+    deposits_total: number;
+    advances_total: number;
+    maintenance_provision: number;
     expense: number;
     adjustments: number;
     profit: number;
@@ -281,9 +287,12 @@ export default function AdminProfit() {
               <thead className="bg-gray-50 text-left">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Placa</th>
-                  <th className="px-4 py-3 font-semibold">Ingresos</th>
+                  <th className="px-4 py-3 font-semibold">Ingreso Neto</th>
+                  <th className="px-4 py-3 font-semibold">Depósitos</th>
+                  <th className="px-4 py-3 font-semibold">Anticipos</th>
                   <th className="px-4 py-3 font-semibold">Gastos</th>
                   <th className="px-4 py-3 font-semibold">Ajustes</th>
+                  <th className="px-4 py-3 font-semibold">Prov. Mant.</th>
                   <th className="px-4 py-3 font-semibold">Utilidad</th>
                   <th className="px-4 py-3 font-semibold">Acum.</th>
                   <th className="px-4 py-3 font-semibold">Inversión</th>
@@ -297,23 +306,29 @@ export default function AdminProfit() {
                   <tr key={r.plate} className="border-t">
                     <td className="px-4 py-3 font-medium">{r.plate}</td>
 
-                    {/* Income: valor como link */}
+                    {/* Ingreso Neto: clickeable para ver detalle */}
                     <td className="px-4 py-3">
-                      {r.income > 0 ? (
+                      {r.pure_income > 0 ? (
                         <button
                           type="button"
                           onClick={() => openDetail("income", r.plate)}
                           className="underline"
                           title="Ver ingresos del mes"
                         >
-                          ${fmtCOP.format(r.income)}
+                          ${fmtCOP.format(r.pure_income)}
                         </button>
                       ) : (
                         <>${fmtCOP.format(0)}</>
                       )}
                     </td>
 
-                    {/* Expense: valor como link */}
+                    {/* Depósitos (info) */}
+                    <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.deposits_total)}</td>
+
+                    {/* Anticipos (info) */}
+                    <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.advances_total)}</td>
+
+                    {/* Gastos: clickeable para ver detalle */}
                     <td className="px-4 py-3">
                       {r.expense > 0 ? (
                         <button
@@ -330,6 +345,7 @@ export default function AdminProfit() {
                     </td>
 
                     <td className="px-4 py-3">${fmtCOP.format(r.adjustments)}</td>
+                    <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.maintenance_provision)}</td>
                     <td className="px-4 py-3 font-semibold">${fmtCOP.format(r.profit)}</td>
                     <td className="px-4 py-3">${fmtCOP.format(r.cum_profit)}</td>
                     <td className="px-4 py-3">
@@ -361,7 +377,7 @@ export default function AdminProfit() {
 
                 {items.length === 0 && !loading && (
                   <tr>
-                    <td className="px-4 py-6 text-gray-500" colSpan={10}>
+                    <td className="px-4 py-6 text-gray-500" colSpan={13}>
                       Sin datos.
                     </td>
                   </tr>
@@ -372,9 +388,12 @@ export default function AdminProfit() {
                 <tfoot>
                   <tr className="border-t bg-gray-50">
                     <td className="px-4 py-3 font-semibold">TOTAL</td>
-                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.income)}</td>
+                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.pure_income)}</td>
+                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.deposits_total)}</td>
+                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.advances_total)}</td>
                     <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.expense)}</td>
                     <td className="px-4 py-3 font-semibold">—</td>
+                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.maintenance_provision)}</td>
                     <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.profit)}</td>
                     <td className="px-4 py-3 font-semibold">—</td>
                     <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.investment_total)}</td>

@@ -67,7 +67,7 @@ async function logInconsistency(params: {
  */
 function computeBaseSplit(totalAmount: number) {
   const amount = clampNonNeg(totalAmount);
-  const insurance = amount >= 5000 ? 5000 : 0;
+  const insurance = amount >= 6000 ? 6000 : 0;
   const delivery = amount > insurance ? Math.min(65000, amount - insurance) : 0;
   const credit = Math.max(0, amount - insurance - delivery);
   return { insurance, delivery, credit };
@@ -79,8 +79,8 @@ function computeBaseSplit(totalAmount: number) {
  *   - NO rechaza
  *   - credit = 0
  *   - installment_status = pending
- *   - si amount > 5000 => insurance=5000, delivery=amount-5000
- *   - si amount <= 5000 => insurance=0, delivery=0
+ *   - si amount > 6000 => insurance=6000, delivery=amount-6000
+ *   - si amount <= 6000 => insurance=0, delivery=0
  *   - shortfall = 70000 - amount
  * - Si installment_number != null y amount >= 70000:
  *   - split base, credit por resto
@@ -91,9 +91,9 @@ function computeInstallmentSplit(totalAmount: number) {
   const amount = clampNonNeg(totalAmount);
 
   if (amount < 70000) {
-    if (amount > 5000) {
-      const insurance = 5000;
-      const delivery = amount - 5000;
+    if (amount > 6000) {
+      const insurance = 6000;
+      const delivery = amount - 6000;
       return {
         insurance,
         delivery,
@@ -493,10 +493,10 @@ r.post("/", async (req: Request, res: Response) => {
         installment_status = "pending";
         installment_shortfall = 70000 - amt;
 
-        // regla especial: si amt > 5000 => insurance 5000 y resto delivery
-        if (amt > 5000) {
-          splitInsurance = 5000;
-          splitDelivery = amt - 5000;
+        // regla especial: si amt > 6000 => insurance 6000 y resto delivery
+        if (amt > 6000) {
+          splitInsurance = 6000;
+          splitDelivery = amt - 6000;
         } else {
           splitInsurance = 0;
           splitDelivery = 0;

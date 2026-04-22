@@ -82,7 +82,10 @@ r.get("/profit", async (req: Request, res: Response) => {
     const c = lastCum.get(plate);
     const b = breMap.get(plate) || {};
 
-    const income = Number(m.income || 0);
+    const pure_income = Number(m.pure_income || 0);
+    const deposits_total = Number(m.deposits_total || 0);
+    const advances_total = Number(m.advances_total || 0);
+    const maintenance_provision = Number(m.maintenance_provision || 0);
     const expense = Number(m.expense || 0);
     const adjustments = Number(m.adjustments || 0);
     const profit = Number(m.profit || 0);
@@ -90,7 +93,10 @@ r.get("/profit", async (req: Request, res: Response) => {
     return {
       plate,
       month: monthStart,
-      income,
+      pure_income,
+      deposits_total,
+      advances_total,
+      maintenance_provision,
       expense,
       adjustments,
       profit,
@@ -104,7 +110,10 @@ r.get("/profit", async (req: Request, res: Response) => {
 
   const totals = items.reduce(
     (acc, r) => {
-      acc.income += r.income;
+      acc.pure_income += r.pure_income;
+      acc.deposits_total += r.deposits_total;
+      acc.advances_total += r.advances_total;
+      acc.maintenance_provision += r.maintenance_provision;
       acc.expense += r.expense;
       acc.adjustments += r.adjustments;
       acc.profit += r.profit;
@@ -112,7 +121,7 @@ r.get("/profit", async (req: Request, res: Response) => {
       if (r.remaining != null) acc.remaining += Number(r.remaining || 0);
       return acc;
     },
-    { income: 0, expense: 0, adjustments: 0, profit: 0, investment_total: 0, remaining: 0 }
+    { pure_income: 0, deposits_total: 0, advances_total: 0, maintenance_provision: 0, expense: 0, adjustments: 0, profit: 0, investment_total: 0, remaining: 0 }
   );
 
   return res.json({ month: monthStr, items, totals });
@@ -162,7 +171,10 @@ r.get("/profit/series", async (req: Request, res: Response) => {
     return {
       plate,
       month: m.month,
-      income: Number(m.income) || 0,
+      pure_income: Number(m.pure_income) || 0,
+      deposits_total: Number(m.deposits_total) || 0,
+      advances_total: Number(m.advances_total) || 0,
+      maintenance_provision: Number(m.maintenance_provision) || 0,
       expense: Number(m.expense) || 0,
       adjustments: Number(m.adjustments) || 0,
       profit,
