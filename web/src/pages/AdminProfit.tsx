@@ -68,12 +68,46 @@ type LedgerRow = {
   attachment_url: string | null;
 };
 
+type DailyRow = {
+  date: string;
+  pure_income: number;
+  deposits: number;
+  advances: number;
+  maintenance: number;
+  expense: number;
+  daily_profit: number;
+};
+
+type DailyResp = {
+  month: string;
+  items: DailyRow[];
+  totals: {
+    pure_income: number;
+    deposits: number;
+    advances: number;
+    maintenance: number;
+    expense: number;
+    daily_profit: number;
+  };
+};
+
+function fmtDayLabel(iso: string): string {
+  const d = new Date(iso + "T12:00:00");
+  const days = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+  return `${days[d.getDay()]} ${d.getDate()}`;
+}
+
 export default function AdminProfit() {
   const todayYm = new Date().toISOString().slice(0, 7);
   const [month, setMonth] = useState(todayYm);
   const [plate, setPlate] = useState("");
   const [data, setData] = useState<ProfitResp | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // View mode & daily data
+  const [viewMode, setViewMode] = useState<"monthly" | "daily">("monthly");
+  const [dailyData, setDailyData] = useState<DailyResp | null>(null);
+  const [dailyLoading, setDailyLoading] = useState(false);
 
   // Income/expense detail modal
   const [detailType, setDetailType] = useState<"income" | "expense" | null>(null);
@@ -122,14 +156,41 @@ export default function AdminProfit() {
     }
   }
 
+  async function loadDaily() {
+    setDailyLoading(true);
+    try {
+      const auth = ensureBasicAuth();
+      const rs = await fetch(`${API}/reports/daily?month=${month}`, {
+        headers: { Authorization: auth },
+      });
+
+      if (rs.status === 401 || rs.status === 403) {
+        clearBasicAuth();
+        throw new Error("Unauthorized");
+      }
+
+      if (!rs.ok) throw new Error(await rs.text());
+      const json: DailyResp = await rs.json();
+      setDailyData(json);
+    } finally {
+      setDailyLoading(false);
+    }
+  }
+
+  function loadCurrent() {
+    if (viewMode === "monthly") load();
+    else loadDaily();
+  }
+
   useEffect(() => {
     load();
+    loadDaily();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault();
-    load();
+    loadCurrent();
   }
 
   // ===== Income/Expense detail =====
@@ -256,14 +317,17 @@ export default function AdminProfit() {
   const items = data?.items || [];
   const totals = data?.totals;
 
+  const dailyItems = dailyData?.items || [];
+  const dailyTotals = dailyData?.totals;
+
   // 2. ENVOLVER EL RETURN COMPLETO CON <CompanyLock>
   return (
     <CompanyLock>
       <div className="min-h-screen p-6">
         <div className="mx-auto max-w-6xl">
-          <h1 className="mb-6 text-3xl font-bold tracking-tight">Utilidad mensual — Admin</h1>
+          <h1 className="mb-6 text-3xl font-bold tracking-tight">Utilidades — Admin</h1>
 
-          <form onSubmit={onSearch} className="mb-4 flex flex-wrap gap-2">
+          <form onSubmit={onSearch} className="mb-4 flex flex-wrap items-center gap-2">
             <input
               className="rounded-xl border px-3 py-2"
               type="month"
@@ -271,17 +335,103 @@ export default function AdminProfit() {
               onChange={(e) => setMonth(e.target.value)}
               required
             />
-            <input
-              className="rounded-xl border px-3 py-2"
-              placeholder="Filtrar por placa (opcional)"
-              value={plate}
-              onChange={(e) => setPlate(e.target.value.toUpperCase())}
-            />
+            {viewMode === "monthly" && (
+              <input
+                className="rounded-xl border px-3 py-2"
+                placeholder="Filtrar por placa (opcional)"
+                value={plate}
+                onChange={(e) => setPlate(e.target.value.toUpperCase())}
+              />
+            )}
             <button className="rounded-xl bg-black px-4 py-2 text-white">
-              {loading ? "Cargando..." : "Buscar"}
+              {(loading || dailyLoading) ? "Cargando..." : "Buscar"}
             </button>
           </form>
 
+          {/* Tab toggle */}
+          <div className="mb-4 inline-flex rounded-xl border bg-gray-100 p-1">
+            <button
+              type="button"
+              onClick={() => setViewMode("monthly")}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                viewMode === "monthly"
+                  ? "bg-white text-black shadow-sm"
+                  : "text-gray-500 hover:text-black"
+              }`}
+            >
+              📈 Mensual
+            </button>
+            <button
+              type="button"
+              onClick={() => { setViewMode("daily"); if (!dailyData) loadDaily(); }}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                viewMode === "daily"
+                  ? "bg-white text-black shadow-sm"
+                  : "text-gray-500 hover:text-black"
+              }`}
+            >
+              📊 Diario
+            </button>
+          </div>
+
+          {/* ========== VISTA DIARIA ========== */}
+          {viewMode === "daily" && (
+            <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-left">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Fecha</th>
+                    <th className="px-4 py-3 font-semibold">Ingreso Neto</th>
+                    <th className="px-4 py-3 font-semibold">Depósitos</th>
+                    <th className="px-4 py-3 font-semibold">Anticipos</th>
+                    <th className="px-4 py-3 font-semibold">Prov. Mant.</th>
+                    <th className="px-4 py-3 font-semibold">Gastos</th>
+                    <th className="px-4 py-3 font-semibold">Utilidad Diaria</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dailyItems.map((r) => (
+                    <tr key={r.date} className="border-t">
+                      <td className="px-4 py-3 font-medium">{fmtDayLabel(r.date)}</td>
+                      <td className="px-4 py-3">${fmtCOP.format(r.pure_income)}</td>
+                      <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.deposits)}</td>
+                      <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.advances)}</td>
+                      <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.maintenance)}</td>
+                      <td className="px-4 py-3 text-red-600">${fmtCOP.format(r.expense)}</td>
+                      <td className={`px-4 py-3 font-semibold ${r.daily_profit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        ${fmtCOP.format(r.daily_profit)}
+                      </td>
+                    </tr>
+                  ))}
+
+                  {dailyItems.length === 0 && !dailyLoading && (
+                    <tr>
+                      <td className="px-4 py-6 text-gray-500" colSpan={7}>Sin datos para este mes.</td>
+                    </tr>
+                  )}
+                </tbody>
+
+                {dailyTotals && (
+                  <tfoot>
+                    <tr className="border-t bg-gray-50">
+                      <td className="px-4 py-3 font-semibold">TOTAL</td>
+                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(dailyTotals.pure_income)}</td>
+                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(dailyTotals.deposits)}</td>
+                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(dailyTotals.advances)}</td>
+                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(dailyTotals.maintenance)}</td>
+                      <td className="px-4 py-3 font-semibold text-red-600">${fmtCOP.format(dailyTotals.expense)}</td>
+                      <td className={`px-4 py-3 font-semibold ${dailyTotals.daily_profit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        ${fmtCOP.format(dailyTotals.daily_profit)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          )}
+
+          {/* ========== VISTA MENSUAL ========== */}
+          {viewMode === "monthly" && (
           <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 text-left">
@@ -405,6 +555,7 @@ export default function AdminProfit() {
               )}
             </table>
           </div>
+          )}
         </div>
 
         {/* Income/Expense detail modal */}

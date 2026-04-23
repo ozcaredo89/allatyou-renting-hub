@@ -84,3 +84,30 @@ SELECT
   month,
   SUM(profit) OVER (PARTITION BY plate ORDER BY month)::numeric(12,2) AS cum_profit
 FROM public.vehicle_month_profit;
+
+-- ============================================================
+-- PASO 4: Recrear vehicle_breakeven_status (eliminada por CASCADE)
+-- Calcula inversión, restante, % recuperado y si el vehículo
+-- ya se "liberó" (la utilidad acumulada superó la inversión).
+-- ============================================================
+CREATE VIEW public.vehicle_breakeven_status
+WITH (security_invoker = true) AS
+SELECT
+  c.plate,
+  COALESCE(i.investment_total, 0)::numeric(12,2) AS investment_total,
+  GREATEST(COALESCE(i.investment_total, 0) - c.cum_profit, 0)::numeric(12,2) AS remaining,
+  CASE
+    WHEN COALESCE(i.investment_total, 0) > 0
+      THEN LEAST(c.cum_profit / i.investment_total * 100, 100)
+    ELSE 0
+  END::numeric(6,2) AS pct_recovered,
+  c.cum_profit >= COALESCE(i.investment_total, 0) AS is_released
+FROM (
+  -- Último mes acumulado por placa
+  SELECT DISTINCT ON (plate)
+    plate,
+    cum_profit
+  FROM public.vehicle_cumulative_profit
+  ORDER BY plate, month DESC
+) c
+LEFT JOIN public.vehicle_investment_total i ON i.plate = c.plate;

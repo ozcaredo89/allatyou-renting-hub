@@ -249,4 +249,94 @@ r.get("/expense-detail", async (req: Request, res: Response) => {
   return res.json({ items });
 });
 
+/**
+ * GET /reports/daily?month=YYYY-MM
+ * Daily P&L: desglose financiero día por día del mes.
+ */
+r.get("/daily", async (req: Request, res: Response) => {
+  const monthStr = String(req.query.month || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(monthStr)) {
+    return res.status(400).json({ error: "month must be YYYY-MM" });
+  }
+
+  const { start, end } = monthBounds(monthStr);
+
+  // 1) Ingresos por día (payments confirmados)
+  const { data: payments, error: pErr } = await supabase
+    .from("payments")
+    .select("payment_date, delivery_amount, insurance_amount, maintenance_amount, credit_installment_amount")
+    .eq("status", "confirmed")
+    .gte("payment_date", start)
+    .lt("payment_date", end);
+
+  if (pErr) return res.status(500).json({ error: pErr.message });
+
+  // Agrupar ingresos por fecha
+  const incomeByDay = new Map<string, {
+    pure_income: number;
+    deposits: number;
+    maintenance: number;
+    advances: number;
+  }>();
+
+  (payments || []).forEach(p => {
+    const day = p.payment_date;
+    const prev = incomeByDay.get(day) || { pure_income: 0, deposits: 0, maintenance: 0, advances: 0 };
+    prev.pure_income += Number(p.delivery_amount || 0);
+    prev.deposits += Number(p.insurance_amount || 0);
+    prev.maintenance += Number(p.maintenance_amount || 0);
+    prev.advances += Number(p.credit_installment_amount || 0);
+    incomeByDay.set(day, prev);
+  });
+
+  // 2) Gastos por día (expenses.total_amount)
+  const { data: expenses, error: xErr } = await supabase
+    .from("expenses")
+    .select("date, total_amount")
+    .gte("date", start)
+    .lt("date", end);
+
+  if (xErr) return res.status(500).json({ error: xErr.message });
+
+  const expenseByDay = new Map<string, number>();
+  (expenses || []).forEach(e => {
+    const prev = expenseByDay.get(e.date) || 0;
+    expenseByDay.set(e.date, prev + Number(e.total_amount || 0));
+  });
+
+  // 3) Merge: unir fechas de ambos
+  const allDays = new Set([...incomeByDay.keys(), ...expenseByDay.keys()]);
+  const items = Array.from(allDays)
+    .sort()
+    .map(day => {
+      const inc = incomeByDay.get(day) || { pure_income: 0, deposits: 0, maintenance: 0, advances: 0 };
+      const exp = expenseByDay.get(day) || 0;
+      return {
+        date: day,
+        pure_income: inc.pure_income,
+        deposits: inc.deposits,
+        advances: inc.advances,
+        maintenance: inc.maintenance,
+        expense: exp,
+        daily_profit: inc.pure_income - exp,
+      };
+    });
+
+  // 4) Totales del mes
+  const totals = items.reduce(
+    (acc, r) => {
+      acc.pure_income += r.pure_income;
+      acc.deposits += r.deposits;
+      acc.advances += r.advances;
+      acc.maintenance += r.maintenance;
+      acc.expense += r.expense;
+      acc.daily_profit += r.daily_profit;
+      return acc;
+    },
+    { pure_income: 0, deposits: 0, advances: 0, maintenance: 0, expense: 0, daily_profit: 0 }
+  );
+
+  return res.json({ month: monthStr, items, totals });
+});
+
 export default r;
