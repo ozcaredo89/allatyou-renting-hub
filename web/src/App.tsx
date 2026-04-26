@@ -1,4 +1,6 @@
-import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
+import { useEffect } from "react";
+import { BrowserRouter, Route, Routes, Navigate, useLocation } from "react-router-dom";
+import posthog from "posthog-js";
 
 // Layouts
 import AdminLayout from "./components/AdminLayout";
@@ -33,6 +35,14 @@ import AdminAudits from "./pages/AdminAudits";
 import AdminOracle from "./pages/AdminOracle";
 import AdminInventory from "./pages/AdminInventory";
 
+function PostHogPageviewTracker() {
+  const location = useLocation();
+  useEffect(() => {
+    posthog.capture("$pageview");
+  }, [location]);
+  return null;
+}
+
 export default function App() {
   const hostname = window.location.hostname;
 
@@ -42,6 +52,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <PostHogPageviewTracker />
       <Routes>
 
         {/* =======================================================
