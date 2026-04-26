@@ -26,7 +26,7 @@ export default function PublicLayout() {
             <NavLink
               to="/"
               end
-              className={({ isActive }) => `${link} ${isActive ? active : inactive}`}
+              className={({ isActive }) => `hidden md:flex ${link} ${isActive ? active : inactive}`}
             >
               Inicio
             </NavLink>
@@ -34,7 +34,7 @@ export default function PublicLayout() {
             {/* CATÁLOGO (DEMANDA) */}
             <NavLink
               to="/rent"
-              className={({ isActive }) => `${link} ${isActive ? active : inactive}`}
+              className={({ isActive }) => `hidden md:flex ${link} ${isActive ? active : inactive}`}
             >
               Rentar un Carro 🚗
             </NavLink>
@@ -43,7 +43,7 @@ export default function PublicLayout() {
             <NavLink
               to="/rent-your-car"
               className={({ isActive }) => 
-                `${link} ${isActive ? active : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'}`
+                `hidden md:flex ${link} ${isActive ? active : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'}`
               }
             >
               Sube tu Carro 💸
@@ -51,7 +51,7 @@ export default function PublicLayout() {
 
             <NavLink
               to="/assistance"
-              className={({ isActive }) => `${link} ${isActive ? active : inactive}`}
+              className={({ isActive }) => `hidden md:flex ${link} ${isActive ? active : inactive}`}
             >
               Asistencia
             </NavLink>

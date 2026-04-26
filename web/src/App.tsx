@@ -67,6 +67,9 @@ export default function App() {
               <Route path="/" element={<Navigate to="/pay" replace />} />
               <Route path="/pay" element={<Pay />} />
               <Route path="/assistance" element={<Assistance />} />
+              
+              {/* RUTA DE PRUEBAS LOCALES PARA LA LANDING */}
+              <Route path="/landing-test" element={<Landing />} />
             </Route>
 
             {/* --- B. Rutas Administrativas (CON Sidebar) --- */}
