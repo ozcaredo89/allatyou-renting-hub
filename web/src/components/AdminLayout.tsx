@@ -89,6 +89,9 @@ export default function AdminLayout() {
             <NavLink to="/marketplace" className={navItemClass}>
               <span>🏪</span> Marketplace
             </NavLink>
+            <NavLink to="/trips" className={navItemClass}>
+              <span>🚕</span> Rutas
+            </NavLink>
 
             {/* --- SECCIÓN AUDITORÍA --- */}
             <div className="mt-4 pt-4 border-t border-slate-800/50">

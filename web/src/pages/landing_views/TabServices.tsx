@@ -4,6 +4,7 @@ import { Calendar, Bell } from "lucide-react";
 import { AssistanceBanner } from "../../components/AssistanceBanner";
 import AssistanceQuiz from "../../components/AssistanceQuiz";
 import { PicoPlacaModal, ReminderModal } from "../../components/UtilitiesModals";
+import { TripBookingForm } from "../../components/TripBookingForm";
 
 export function TabServices() {
   const [searchParams] = useSearchParams();
@@ -74,6 +75,11 @@ export function TabServices() {
 
         <AssistanceBanner />
         
+        {/* === NUEVO: Formulario de Viajes Bajo Demanda === */}
+        <section className="mb-20 mt-10">
+          <TripBookingForm />
+        </section>
+
         {/* Quiz flotante / In-page */}
         <AssistanceQuiz />
 

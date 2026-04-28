@@ -31,9 +31,13 @@ import NewInspection from "./pages/NewInspection";
 import AdminInspections from "./pages/AdminInspections";
 
 // Auditorías & Oráculo
+import AdminTrips from "./pages/AdminTrips";
 import AdminAudits from "./pages/AdminAudits";
 import AdminOracle from "./pages/AdminOracle";
 import AdminInventory from "./pages/AdminInventory";
+
+// Rutas Públicas de Cliente / Subasta
+import BidTrip from "./pages/BidTrip";
 
 function PostHogPageviewTracker() {
   const location = useLocation();
@@ -70,6 +74,7 @@ export default function App() {
               
               {/* RUTA DE PRUEBAS LOCALES PARA LA LANDING */}
               <Route path="/landing-test" element={<Landing />} />
+              <Route path="/bid/:id" element={<BidTrip />} />
             </Route>
 
             {/* --- B. Rutas Administrativas (CON Sidebar) --- */}
@@ -95,6 +100,7 @@ export default function App() {
               <Route path="/inspections" element={<AdminInspections />} />
               <Route path="/inspections/new" element={<NewInspection />} />
               <Route path="/marketplace" element={<AdminMarketplace />} />
+              <Route path="/trips" element={<AdminTrips />} />
               <Route path="/audits" element={<AdminAudits />} />
 
               {/* INTELIGENCIA COMERCIAL (DAAS) */}
@@ -117,6 +123,7 @@ export default function App() {
             {/* Permitimos /pay también en la landing por comodidad de conductores */}
             <Route path="/pay" element={<Pay />} />
             <Route path="/assistance" element={<Assistance />} />
+            <Route path="/bid/:id" element={<BidTrip />} />
             {/* Cualquier otra cosa en la landing va al home */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

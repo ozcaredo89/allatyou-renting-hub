@@ -111,3 +111,46 @@ FROM (
   ORDER BY plate, month DESC
 ) c
 LEFT JOIN public.vehicle_investment_total i ON i.plate = c.plate;
+
+-- ============================================================
+-- PASO 5: Módulo de Rutas Bajo Demanda (Subasta Inversa)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.trips (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_phone TEXT NOT NULL,
+    client_email TEXT,
+    origin_address TEXT NOT NULL,
+    origin_lat NUMERIC(10, 7) NOT NULL,
+    origin_lng NUMERIC(10, 7) NOT NULL,
+    dest_address TEXT NOT NULL,
+    dest_lat NUMERIC(10, 7) NOT NULL,
+    dest_lng NUMERIC(10, 7) NOT NULL,
+    distance_km NUMERIC(6, 2),
+    pickup_time TIMESTAMP WITH TIME ZONE,
+    recurrence TEXT DEFAULT 'none',
+    status TEXT DEFAULT 'pending', -- pending, assigned, completed
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.trip_offers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trip_id UUID REFERENCES public.trips(id) ON DELETE CASCADE,
+    driver_name TEXT NOT NULL,
+    driver_phone TEXT NOT NULL,
+    offer_amount NUMERIC(12, 2) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Políticas RLS opcionales (Asegúrate de configurar según el entorno)
+-- Por ahora se permite escritura para que funcione la demo.
+ALTER TABLE public.trips ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Enable insert for public" ON public.trips FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable read for all" ON public.trips FOR SELECT USING (true);
+CREATE POLICY "Enable update for all" ON public.trips FOR UPDATE USING (true);
+
+ALTER TABLE public.trip_offers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Enable insert for public" ON public.trip_offers FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable read for all" ON public.trip_offers FOR SELECT USING (true);
+
+ALTER TABLE public.trips ADD COLUMN IF NOT EXISTS waypoints JSONB DEFAULT '[]'::jsonb;

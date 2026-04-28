@@ -59,6 +59,8 @@ const corsOptions: CorsOptionsDelegate = (req, cb) => {
   const allowList = [
     ...envOrigins,
     "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
   ];
   let allowed = false;
   try {
@@ -105,6 +107,16 @@ app.use("/marketing", marketingRoutes);
 
 // --- RUTA MARKETPLACE (PÚBLICA: CATÁLOGO Y UPLOAD) ---
 app.use("/marketplace", marketplaceRoutes);
+
+// --- RUTAS BAJO DEMANDA (SUBASTA) ---
+import tripsRoutes from "./routes/trips";
+app.use("/trips", tripsRoutes);
+
+// --- RECLUTAMIENTO (CONDUCTORES Y VEHÍCULOS) ---
+import driverApplicationsRoutes from "./routes/driverApplications";
+import vehicleApplicationsRoutes from "./routes/vehicleApplications";
+app.use("/driver-applications", driverApplicationsRoutes);
+app.use("/vehicle-applications", vehicleApplicationsRoutes);
 
 /** Rutas protegidas con Basic Auth (monta el middleware en la misma línea) */
 app.use("/companies", basicAuth, companiesRoutes);
