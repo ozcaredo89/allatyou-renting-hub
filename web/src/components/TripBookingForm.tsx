@@ -219,7 +219,7 @@ export function TripBookingForm() {
             {waypoints.length > 0 && (
               <div className="space-y-3 pl-4 border-l-2 border-slate-700/50 pt-2">
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Paradas Intermedias</label>
-                {waypoints.map((wp, idx) => (
+                {waypoints.map((_wp, idx) => (
                   <div key={idx} className="flex items-start gap-3">
                     <div className="flex-1">
                       <CustomPlaceAutocomplete 
@@ -499,6 +499,7 @@ function CustomPlaceAutocomplete({
       input,
       componentRestrictions: { country: "co" },
       bounds: bounds,
+      // @ts-ignore - TS Definitions lack strictBounds for AutocompletionRequest in some versions
       strictBounds: true
     }, (results, status) => {
       if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
