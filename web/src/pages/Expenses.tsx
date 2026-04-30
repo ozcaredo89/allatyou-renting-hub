@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { BillGeneratorModal } from "../components/BillGeneratorModal";
-import { Pencil, X, ChevronDown, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Pencil, X, ChevronDown, AlertCircle, CheckCircle2, Download } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { requestWithBasicAuth } from "../lib/auth";
 
@@ -299,6 +299,35 @@ export default function Expenses() {
     navigator.clipboard.writeText(`Gasto [${saved.category}]: ${saved.item} - $${fmtCOP.format(saved.total)}`).then(() => alert("Copiado!"));
   }
 
+  const exportToCSV = () => {
+    if (recent.length === 0) {
+      alert("No hay datos para exportar");
+      return;
+    }
+
+    const headers = "ID,Fecha,Categoría,Item,Placas,Total,Descripción\n";
+    const rows = recent.map(e => {
+      const plates = e.expense_vehicles?.map(v => v.plate).join("-") || "Sin Placa";
+      // Limpiamos comillas y saltos de línea envolviendo en comillas dobles
+      const desc = e.description ? `"${e.description.replace(/"/g, '""').replace(/\n/g, " ")}"` : '""';
+      const item = e.item ? `"${e.item.replace(/"/g, '""')}"` : '""';
+      const category = e.category ? `"${e.category.replace(/"/g, '""')}"` : '""';
+      
+      return `${e.id},${e.date},${category},${item},${plates},${e.total_amount},${desc}`;
+    }).join("\n");
+
+    const csvContent = headers + rows;
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "gastos-allatyou.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="min-h-screen p-6 pb-32">
       <div className="mx-auto max-w-5xl">
@@ -505,6 +534,9 @@ export default function Expenses() {
           <div className="flex gap-2">
             <button onClick={applyFilters} className="flex-1 bg-black text-white px-4 py-2 rounded-xl font-bold hover:bg-slate-800 transition-colors">🔍 Filtrar</button>
             <button onClick={clearFilters} className="px-4 py-2 border border-slate-300 bg-white text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition-colors">Limpiar</button>
+            <button onClick={exportToCSV} className="flex items-center justify-center gap-2 px-4 py-2 border border-emerald-300 text-emerald-700 bg-white rounded-xl font-bold hover:bg-emerald-50 transition-colors">
+              <Download className="w-4 h-4" /> Exportar
+            </button>
           </div>
         </div>
 
