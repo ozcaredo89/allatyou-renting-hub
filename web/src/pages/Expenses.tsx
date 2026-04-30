@@ -36,14 +36,19 @@ type ExpenseRow = {
 export default function Expenses() {
 
   // --- ESTADO DE CARGA Y PAGINACIÓN ---
-  const [limit, setLimit] = useState(20);
+  const [limit, setLimit] = useState(50);
   const [recent, setRecent] = useState<ExpenseRow[]>([]);
   const [loadingList, setLoadingList] = useState(false);
 
-  async function loadRecent(currentLimit: number) {
+  // --- FILTROS ---
+  const [filterFrom, setFilterFrom] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
+  const [filterTo, setFilterTo] = useState("");
+  const [filterPlate, setFilterPlate] = useState("");
+
+  async function loadRecent(currentLimit: number, fFrom = filterFrom, fTo = filterTo, fPlate = filterPlate) {
     setLoadingList(true);
     try {
-      const rs = await requestWithBasicAuth(`${API}/expenses?limit=${currentLimit}`);
+      const rs = await requestWithBasicAuth(`${API}/expenses?limit=${currentLimit}&from=${fFrom}&to=${fTo}&plate=${fPlate.toUpperCase()}`);
       if (!rs.ok) return;
       const json = await rs.json();
       setRecent(json.items);
@@ -52,10 +57,22 @@ export default function Expenses() {
     }
   }
 
-  useEffect(() => { loadRecent(limit); }, [limit]);
+  useEffect(() => { loadRecent(limit, filterFrom, filterTo, filterPlate); }, [limit, filterFrom, filterTo, filterPlate]);
+
+  const applyFilters = () => {
+    setLimit(50);
+  };
+
+  const clearFilters = () => {
+    const defaultFrom = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+    setFilterFrom(defaultFrom);
+    setFilterTo("");
+    setFilterPlate("");
+    setLimit(50);
+  };
 
   const handleLoadMore = () => {
-    setLimit(prev => prev + 20);
+    setLimit(prev => prev + 50);
   };
 
   // --- SELECCIÓN MÚLTIPLE ---
@@ -470,6 +487,26 @@ export default function Expenses() {
           <span>Historial de Gastos</span>
           {selectedIds.length > 0 && <span className="text-sm bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full">{selectedIds.length} seleccionados</span>}
         </h2>
+
+        {/* --- BARRA DE FILTROS --- */}
+        <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl mb-4 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase">Desde</label>
+            <input type="date" className="w-full mt-1 p-2 border rounded-xl bg-white" value={filterFrom} onChange={e => setFilterFrom(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase">Hasta</label>
+            <input type="date" className="w-full mt-1 p-2 border rounded-xl bg-white" value={filterTo} onChange={e => setFilterTo(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase">Placa (Opcional)</label>
+            <input type="text" className="w-full mt-1 p-2 border rounded-xl bg-white uppercase" placeholder="ABC123" maxLength={6} value={filterPlate} onChange={e => setFilterPlate(e.target.value.replace(/[^a-zA-Z0-9]/g, ""))} />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={applyFilters} className="flex-1 bg-black text-white px-4 py-2 rounded-xl font-bold hover:bg-slate-800 transition-colors">🔍 Filtrar</button>
+            <button onClick={clearFilters} className="px-4 py-2 border border-slate-300 bg-white text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition-colors">Limpiar</button>
+          </div>
+        </div>
 
         <div className="space-y-4">
           {recent.map((e) => {

@@ -242,15 +242,11 @@ r.post("/", async (req: Request, res: Response) => {
 
 // Listar gastos (incluye categoría)
 r.get("/", async (req: Request, res: Response) => {
-  const limit = Math.min(Math.max(parseInt(String(req.query.limit || 20), 10) || 20, 1), 100);
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit || 50), 10) || 50, 1), 1000);
   const offset = Math.max(parseInt(String(req.query.offset || 0), 10) || 0, 0);
   const from = String(req.query.from || "");
   const to = String(req.query.to || "");
   const plate = String(req.query.plate || "").toUpperCase().trim();
-
-  const today = new Date();
-  const last7 = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const last7Str = last7.toISOString().slice(0, 10); // YYYY-MM-DD
 
   // NUEVO: Agregamos "category" al select
   const selectStr = `
@@ -269,12 +265,8 @@ r.get("/", async (req: Request, res: Response) => {
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (!from && !to) {
-    q = q.gte("date", last7Str);
-  } else {
-    if (from) q = q.gte("date", from);
-    if (to) q = q.lte("date", to);
-  }
+  if (from) q = q.gte("date", from);
+  if (to) q = q.lte("date", to);
 
   if (plate) {
     q = q.eq("expense_vehicles.plate", plate);
