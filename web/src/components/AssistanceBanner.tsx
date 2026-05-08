@@ -1,4 +1,4 @@
-import { ShieldCheck, ArrowRight, Star } from "lucide-react";
+import { ArrowRight, Star } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const BADGES = ["Grúa 24/7", "Gestión Legal", "Mecánica Preventiva"] as const;
