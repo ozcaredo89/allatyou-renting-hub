@@ -37,7 +37,7 @@ export function TabServices() {
             Servicios para tu Vehículo
           </div>
           <h1 className="text-4xl sm:text-5xl font-bold text-white mb-6">
-            Todo lo que tu carro <span className="text-blue-400">necesita</span>
+            Anticípate a los problemas de tu <span className="text-blue-400">vehículo.</span>
           </h1>
           <p className="text-lg text-slate-400 max-w-2xl mx-auto mb-10">
             Desde alertas de vencimiento hasta asistencias en ruta. Mantén tu vehículo al día y protegido sin complicaciones.

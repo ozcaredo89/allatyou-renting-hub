@@ -104,7 +104,7 @@ export function TabIncome({ referralCode }: { referralCode: string | null }) {
           <div className="lg:col-start-2">
             <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-[10px] font-bold text-blue-400 mb-4">RENTABILIDAD SEGURA</div>
             <h2 className="text-3xl font-bold text-white mb-4">Registra tu Vehículo</h2>
-            <p className="text-slate-400 text-sm mb-6 leading-relaxed">Convierte tu carro en un activo real. Nosotros gestionamos todo por ti.</p>
+            <p className="text-slate-400 text-sm mb-6 leading-relaxed">Deja de perder dinero con el carro parqueado. Empieza a facturar hoy mismo con operaciones blindadas.</p>
             <ShareButton title="Administración AllAtYou" text="Rentabiliza tu vehículo." hash="#propietarios" colorClass="text-blue-400" />
           </div>
           <div className="lg:col-start-1 rounded-3xl border border-white/10 bg-[#101a33]/80 p-1">

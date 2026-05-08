@@ -16,7 +16,7 @@ export function TabBusiness() {
               El sistema operativo para tu <span className="text-violet-400">Taller</span>
             </h1>
             <p className="text-lg text-slate-400 max-w-2xl mx-auto mb-10">
-              Digitaliza tu operación, envía diagnósticos profesionales y conviértete en parte de nuestra red de confianza. Toma el control total.
+              Digitaliza tu operación, controla tus ingresos y monitorea tu operación, no dejes las cosas a la suerte y toma el control.
             </p>
           </div>
 
