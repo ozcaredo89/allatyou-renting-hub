@@ -6,7 +6,7 @@ import {
   BellRing, 
   HeartHandshake, 
   CheckCircle2, 
-  AlertTriangle,
+
   Phone,
   Star,
   Truck,
