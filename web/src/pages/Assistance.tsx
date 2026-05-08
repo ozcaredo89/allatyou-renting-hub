@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { 
-  ShieldCheck, 
-  Wrench, 
-  FileSearch, 
-  BellRing, 
-  HeartHandshake, 
-  CheckCircle2, 
+import {
+  ShieldCheck,
+  Wrench,
+  FileSearch,
+  BellRing,
+  HeartHandshake,
+  CheckCircle2,
 
   Phone,
   Star,
@@ -114,12 +114,12 @@ export default function Assistance() {
 
   return (
     <div className="bg-white min-h-screen font-sans text-slate-900">
-      
+
       {/* 1. HERO SECTION */}
       <section className="relative bg-slate-900 text-white py-20 px-6 overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full bg-[url('https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?q=80&w=2070&auto=format&fit=crop')] bg-cover bg-center opacity-20"></div>
         <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent"></div>
-        
+
         <div className="relative z-10 max-w-5xl mx-auto text-center">
           <span className="inline-block py-1 px-3 rounded-full bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 text-xs font-bold tracking-widest uppercase mb-6">
             Nuevo Servicio Premium
@@ -129,21 +129,21 @@ export default function Assistance() {
             <span className="text-emerald-400">ALLATYOU se hace cargo.</span>
           </h1>
           <p className="text-lg md:text-xl text-slate-300 max-w-2xl mx-auto mb-10">
-            No vendemos solo un servicio, vendemos <b>tranquilidad</b>. 
+            No vendemos solo un servicio, vendemos <b>tranquilidad</b>.
             Un plan integral de acompañamiento para que nunca estés solo en la vía.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <a 
-              href={whatsappLink} 
-              target="_blank" 
+            <a
+              href={whatsappLink}
+              target="_blank"
               rel="noreferrer"
               className="px-8 py-4 bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-bold rounded-xl transition-all transform hover:scale-105 shadow-lg shadow-emerald-900/50 flex items-center justify-center gap-2"
             >
               <Phone className="w-5 h-5" />
               Solicitar Asistencia
             </a>
-            <a 
-              href="#precios" 
+            <a
+              href="#precios"
               className="px-8 py-4 bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold rounded-xl transition-all backdrop-blur-sm"
             >
               Ver Planes y Precios
@@ -212,32 +212,32 @@ export default function Assistance() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            <ServiceCard 
+            <ServiceCard
               icon={<ShieldCheck className="w-8 h-8 text-emerald-600" />}
               title="Asistencia en Carretera"
               desc="Acompañamiento en fallas, choques o incidentes. Nosotros coordinamos la solución para que tú no te estreses."
             />
-            <ServiceCard 
+            <ServiceCard
               icon={<Wrench className="w-8 h-8 text-emerald-600" />}
               title="Gestión de Reparaciones"
               desc="Acceso a red de mecánicos confiables, precios preferenciales y revisión de cotizaciones para evitar sobrecostos."
             />
-            <ServiceCard 
+            <ServiceCard
               icon={<FileSearch className="w-8 h-8 text-emerald-600" />}
               title="Peritaje Vehicular"
               desc="Evaluación técnica profesional y recomendaciones antes de reparaciones mayores o procesos de compra/venta."
             />
-            <ServiceCard 
+            <ServiceCard
               icon={<BellRing className="w-8 h-8 text-emerald-600" />}
               title="Recordatorios Legales"
               desc="Nunca más una multa por olvido. Te avisamos antes de que venza tu SOAT o tu Técnico-Mecánica."
             />
-            <ServiceCard 
+            <ServiceCard
               icon={<HeartHandshake className="w-8 h-8 text-emerald-600" />}
               title="Apoyo en Accidentes"
               desc="Orientación inmediata en caso de tránsito, apoyo en conciliación y asesoría paso a paso."
             />
-            
+
             <div className="bg-slate-900 rounded-2xl p-8 text-white flex flex-col justify-center relative overflow-hidden group">
               <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                 <ShieldCheck className="w-32 h-32" />
@@ -247,9 +247,9 @@ export default function Assistance() {
                 A diferencia de un auxilio puntual, nosotros llevamos el historial de tu carro y te educamos preventivamente.
               </p>
               <ul className="space-y-2 text-sm text-emerald-400 font-medium">
-                <li className="flex gap-2 items-center"><CheckCircle2 className="w-4 h-4"/> Atención Humana</li>
-                <li className="flex gap-2 items-center"><CheckCircle2 className="w-4 h-4"/> Ahorro de dinero</li>
-                <li className="flex gap-2 items-center"><CheckCircle2 className="w-4 h-4"/> Red de confianza</li>
+                <li className="flex gap-2 items-center"><CheckCircle2 className="w-4 h-4" /> Atención Humana</li>
+                <li className="flex gap-2 items-center"><CheckCircle2 className="w-4 h-4" /> Ahorro de dinero</li>
+                <li className="flex gap-2 items-center"><CheckCircle2 className="w-4 h-4" /> Red de confianza</li>
               </ul>
             </div>
           </div>
@@ -281,7 +281,7 @@ export default function Assistance() {
             />
             <FaqItem
               question="¿El plan cubre el costo de los repuestos?"
-              answer="No. Los planes cubren toda la gestión, coordinación, mano de obra de asistencia y diagnósticos. Los repuestos los asume el cliente, pero usamos nuestra red de aliados para conseguirlos a precio justo y sin sobrecostos."
+              answer="No. Los planes cubren toda la gestión, coordinación y diagnósticos. Los repuestos y mano de obra de asistencia los asume el cliente, pero usamos nuestra red de aliados para conseguirlos a precio justo y sin sobrecostos."
             />
           </div>
         </div>
