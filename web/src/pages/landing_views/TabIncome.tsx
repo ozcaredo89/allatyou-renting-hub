@@ -6,6 +6,7 @@ import { ShareButton } from "../../components/ShareButton";
 import { IncomeSimulator } from "../../components/IncomeSimulator";
 import { ProcessSteps, MoneyFlow } from "../../components/MarketingSections";
 import { ModelOverview } from "../../components/ModelOverview"; 
+import { InvestmentVaki } from "../../components/InvestmentVaki";
 
 export function TabIncome({ referralCode }: { referralCode: string | null }) {
   const [showRegisterModal, setShowRegisterModal] = useState(false);
@@ -76,6 +77,9 @@ export function TabIncome({ referralCode }: { referralCode: string | null }) {
       </div>
 
       <div className="mx-auto max-w-6xl px-4 mt-12">
+        {/* COMPONENTE VAKI */}
+        <InvestmentVaki />
+
         <section id="como" className="rounded-3xl border border-white/10 bg-[#101a33]/50 p-8 backdrop-blur-sm mb-16">
           <h2 className="text-2xl font-bold text-white mb-2">Cómo funciona (Propietarios)</h2>
           <p className="text-slate-400 mb-8 max-w-2xl">Tu carro entra a una operación administrada profesionalmente. Nosotros nos encargamos del "trabajo sucio".</p>

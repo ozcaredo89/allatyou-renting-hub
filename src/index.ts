@@ -108,6 +108,10 @@ app.use("/marketing", marketingRoutes);
 // --- RUTA MARKETPLACE (PÚBLICA: CATÁLOGO Y UPLOAD) ---
 app.use("/marketplace", marketplaceRoutes);
 
+// --- RUTA PLEDGES (VAKI / CROWDFUNDING) ---
+import pledgesRoutes from "./routes/pledges";
+app.use("/pledges", pledgesRoutes);
+
 // --- RUTAS BAJO DEMANDA (SUBASTA) ---
 import tripsRoutes from "./routes/trips";
 app.use("/trips", tripsRoutes);
