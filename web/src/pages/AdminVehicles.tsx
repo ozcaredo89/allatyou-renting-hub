@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets } from "lucide-react";
+import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
+import { useSortableData } from "../hooks/useSortableData";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -79,6 +80,18 @@ function getOilChangeStatus(dateStr?: string) {
 
 export default function AdminVehicles() {
   const [items, setItems] = useState<Vehicle[]>([]);
+  const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
+
+  const SortIcon = ({ columnKey }: { columnKey: string }) => {
+    if (sortConfig?.key !== columnKey) {
+      return <ChevronsUpDown className="w-3 h-3 opacity-30" />;
+    }
+    return sortConfig.direction === "asc" ? (
+      <ArrowUp className="w-3 h-3" />
+    ) : (
+      <ArrowDown className="w-3 h-3" />
+    );
+  };
   const [drivers, setDrivers] = useState<DriverSimple[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -414,12 +427,36 @@ export default function AdminVehicles() {
               <thead className="bg-slate-50 text-left uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200">
                 <tr>
                   <th className="px-4 py-3">Vehículo</th>
-                  <th className="px-4 py-3">Placa</th>
-                  <th className="px-4 py-3">Conductor Actual</th>
-                  <th className="px-4 py-3 text-center">SOAT</th>
-                  <th className="px-4 py-3 text-center">Tecno</th>
-                  <th className="px-4 py-3 text-center">Odómetro</th>
-                  <th className="px-4 py-3 text-center">Últ. Aceite</th>
+                  <th className="px-4 py-3">
+                    <div onClick={() => requestSort('plate')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
+                      Placa <SortIcon columnKey="plate" />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3">
+                    <div onClick={() => requestSort('driver.full_name')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
+                      Conductor Actual <SortIcon columnKey="driver.full_name" />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 text-center">
+                    <div onClick={() => requestSort('soat_expires_at')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
+                      SOAT <SortIcon columnKey="soat_expires_at" />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 text-center">
+                    <div onClick={() => requestSort('tecno_expires_at')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
+                      Tecno <SortIcon columnKey="tecno_expires_at" />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 text-center">
+                    <div onClick={() => requestSort('current_mileage')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
+                      Odómetro <SortIcon columnKey="current_mileage" />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 text-center">
+                    <div onClick={() => requestSort('last_oil_change_date')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
+                      Últ. Aceite <SortIcon columnKey="last_oil_change_date" />
+                    </div>
+                  </th>
                   <th className="px-4 py-3">Docs</th>
                   <th className="px-4 py-3 text-center">Historial</th>
                   <th className="px-4 py-3 text-right">Acción</th>
@@ -428,10 +465,10 @@ export default function AdminVehicles() {
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr><td colSpan={7} className="p-10 text-center text-slate-400">Cargando flota...</td></tr>
-                ) : items.length === 0 ? (
+                ) : sortedItems.length === 0 ? (
                   <tr><td colSpan={7} className="p-10 text-center text-slate-400">No hay vehículos registrados.</td></tr>
                 ) : (
-                  items.map((v) => (
+                  sortedItems.map((v) => (
                     <tr key={v.plate} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3 font-medium text-slate-700">
                         {v.brand || "Generico"} {v.line || ""}

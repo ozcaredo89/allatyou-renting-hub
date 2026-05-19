@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
+import { useSortableData } from "../hooks/useSortableData";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -39,6 +40,19 @@ export default function Reports() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const limit = 20;
+
+  const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
+
+  const SortIcon = ({ columnKey }: { columnKey: string }) => {
+    if (sortConfig?.key !== columnKey) {
+      return <ChevronsUpDown className="w-3 h-3 opacity-30" />;
+    }
+    return sortConfig.direction === "asc" ? (
+      <ArrowUp className="w-3 h-3" />
+    ) : (
+      <ArrowDown className="w-3 h-3" />
+    );
+  };
 
   async function load(nextOffset = 0) {
     setLoading(true);
@@ -237,16 +251,40 @@ export default function Reports() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-left">
               <tr>
-                <th className="px-4 py-3 font-semibold">Conductor</th>
-                <th className="px-4 py-3 font-semibold">Placa</th>
-                <th className="px-4 py-3 font-semibold">Fecha último pago</th>
-                <th className="px-4 py-3 font-semibold">Monto último pago</th>
-                <th className="px-4 py-3 font-semibold">Cuota #</th> 
-                <th className="px-4 py-3 font-semibold">Estado</th>
+                <th className="px-4 py-3 font-semibold">
+                  <div onClick={() => requestSort('owner_name')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                    Conductor <SortIcon columnKey="owner_name" />
+                  </div>
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <div onClick={() => requestSort('plate')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                    Placa <SortIcon columnKey="plate" />
+                  </div>
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <div onClick={() => requestSort('payment_date')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                    Fecha último pago <SortIcon columnKey="payment_date" />
+                  </div>
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <div onClick={() => requestSort('amount')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                    Monto último pago <SortIcon columnKey="amount" />
+                  </div>
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <div onClick={() => requestSort('installment_number')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                    Cuota # <SortIcon columnKey="installment_number" />
+                  </div>
+                </th> 
+                <th className="px-4 py-3 font-semibold">
+                  <div onClick={() => requestSort('days_since')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                    Estado <SortIcon columnKey="days_since" />
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {items.map((r) => {
+              {sortedItems.map((r) => {
                 const overdue = r.is_overdue === true;
                 const color = overdue ? "text-red-600" : "";
 
@@ -294,7 +332,7 @@ export default function Reports() {
                   </tr>
                 );
               })}
-              {items.length === 0 && !loading && (
+              {sortedItems.length === 0 && !loading && (
                 <tr>
                   <td className="px-4 py-6 text-gray-500" colSpan={6}>
                     Sin resultados.

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Camera, X, Image as ImageIcon } from "lucide-react";
+import { Camera, X, Image as ImageIcon, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
+import { useSortableData } from "../hooks/useSortableData";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -49,6 +50,13 @@ const EMPTY_DRIVER: Omit<Driver, "id" | "created_at"> = {
 
 export default function AdminDrivers() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
+  const { items: sortedItems, requestSort, sortConfig } = useSortableData(drivers);
+
+  const SortIcon = ({ columnKey }: { columnKey: string }) => {
+    if (sortConfig?.key !== columnKey) return <ChevronsUpDown className="w-3 h-3 opacity-30" />;
+    return sortConfig.direction === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
+  };
+
   const [loading, setLoading] = useState(false);
 
   // Modal State
@@ -283,10 +291,26 @@ export default function AdminDrivers() {
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-left uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200">
                 <tr>
-                  <th className="px-4 py-3">Nombre Completo</th>
-                  <th className="px-4 py-3">Documento</th>
-                  <th className="px-4 py-3">Contacto</th>
-                  <th className="px-4 py-3">Estado</th>
+                  <th className="px-4 py-3">
+                    <div onClick={() => requestSort('full_name')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
+                      Nombre Completo <SortIcon columnKey="full_name" />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3">
+                    <div onClick={() => requestSort('document_number')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
+                      Documento <SortIcon columnKey="document_number" />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3">
+                    <div onClick={() => requestSort('phone')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
+                      Contacto <SortIcon columnKey="phone" />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3">
+                    <div onClick={() => requestSort('status')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
+                      Estado <SortIcon columnKey="status" />
+                    </div>
+                  </th>
                   <th className="px-4 py-3">Documentación</th>
                   <th className="px-4 py-3 text-right">Acción</th>
                 </tr>
@@ -294,10 +318,10 @@ export default function AdminDrivers() {
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr><td colSpan={6} className="p-10 text-center text-slate-400">Cargando...</td></tr>
-                ) : drivers.length === 0 ? (
+                ) : sortedItems.length === 0 ? (
                   <tr><td colSpan={6} className="p-10 text-center text-slate-400">No hay conductores registrados.</td></tr>
                 ) : (
-                  drivers.map((d) => (
+                  sortedItems.map((d) => (
                     <tr key={d.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import CompanyLock from "../components/CompanyLock"; // <--- 1. IMPORTAR
-
+import { ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
+import { useSortableData } from "../hooks/useSortableData";
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
 
@@ -316,9 +317,16 @@ export default function AdminProfit() {
 
   const items = data?.items || [];
   const totals = data?.totals;
+  const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
 
   const dailyItems = dailyData?.items || [];
   const dailyTotals = dailyData?.totals;
+  const { items: sortedDailyItems, requestSort: requestSortDaily, sortConfig: sortConfigDaily } = useSortableData(dailyItems);
+
+  const SortIcon = ({ columnKey, config }: { columnKey: string, config: any }) => {
+    if (config?.key !== columnKey) return <ChevronsUpDown className="w-3 h-3 opacity-30" />;
+    return config.direction === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
+  };
 
   // 2. ENVOLVER EL RETURN COMPLETO CON <CompanyLock>
   return (
@@ -380,17 +388,45 @@ export default function AdminProfit() {
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50 text-left">
                   <tr>
-                    <th className="px-4 py-3 font-semibold">Fecha</th>
-                    <th className="px-4 py-3 font-semibold">Ingreso Neto</th>
-                    <th className="px-4 py-3 font-semibold">Depósitos</th>
-                    <th className="px-4 py-3 font-semibold">Anticipos</th>
-                    <th className="px-4 py-3 font-semibold">Prov. Mant.</th>
-                    <th className="px-4 py-3 font-semibold">Gastos</th>
-                    <th className="px-4 py-3 font-semibold">Utilidad Diaria</th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div onClick={() => requestSortDaily('date')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                        Fecha <SortIcon columnKey="date" config={sortConfigDaily} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div onClick={() => requestSortDaily('pure_income')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                        Ingreso Neto <SortIcon columnKey="pure_income" config={sortConfigDaily} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div onClick={() => requestSortDaily('deposits')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                        Depósitos <SortIcon columnKey="deposits" config={sortConfigDaily} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div onClick={() => requestSortDaily('advances')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                        Anticipos <SortIcon columnKey="advances" config={sortConfigDaily} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div onClick={() => requestSortDaily('maintenance')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                        Prov. Mant. <SortIcon columnKey="maintenance" config={sortConfigDaily} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div onClick={() => requestSortDaily('expense')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                        Gastos <SortIcon columnKey="expense" config={sortConfigDaily} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div onClick={() => requestSortDaily('daily_profit')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                        Utilidad Diaria <SortIcon columnKey="daily_profit" config={sortConfigDaily} />
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {dailyItems.map((r) => (
+                  {sortedDailyItems.map((r) => (
                     <tr key={r.date} className="border-t">
                       <td className="px-4 py-3 font-medium">{fmtDayLabel(r.date)}</td>
                       <td className="px-4 py-3">${fmtCOP.format(r.pure_income)}</td>
@@ -404,7 +440,7 @@ export default function AdminProfit() {
                     </tr>
                   ))}
 
-                  {dailyItems.length === 0 && !dailyLoading && (
+                  {sortedDailyItems.length === 0 && !dailyLoading && (
                     <tr>
                       <td className="px-4 py-6 text-gray-500" colSpan={7}>Sin datos para este mes.</td>
                     </tr>
@@ -436,23 +472,71 @@ export default function AdminProfit() {
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 text-left">
                 <tr>
-                  <th className="px-4 py-3 font-semibold">Placa</th>
-                  <th className="px-4 py-3 font-semibold">Ingreso Neto</th>
-                  <th className="px-4 py-3 font-semibold">Depósitos</th>
-                  <th className="px-4 py-3 font-semibold">Anticipos</th>
-                  <th className="px-4 py-3 font-semibold">Gastos</th>
-                  <th className="px-4 py-3 font-semibold">Ajustes</th>
-                  <th className="px-4 py-3 font-semibold">Prov. Mant.</th>
-                  <th className="px-4 py-3 font-semibold">Utilidad</th>
-                  <th className="px-4 py-3 font-semibold">Acum.</th>
-                  <th className="px-4 py-3 font-semibold">Inversión</th>
-                  <th className="px-4 py-3 font-semibold">Restante</th>
-                  <th className="px-4 py-3 font-semibold">Liberado</th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('plate')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Placa <SortIcon columnKey="plate" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('pure_income')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Ingreso Neto <SortIcon columnKey="pure_income" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('deposits_total')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Depósitos <SortIcon columnKey="deposits_total" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('advances_total')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Anticipos <SortIcon columnKey="advances_total" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('expense')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Gastos <SortIcon columnKey="expense" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('adjustments')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Ajustes <SortIcon columnKey="adjustments" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('maintenance_provision')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Prov. Mant. <SortIcon columnKey="maintenance_provision" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('profit')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Utilidad <SortIcon columnKey="profit" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('cum_profit')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Acum. <SortIcon columnKey="cum_profit" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('investment_total')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Inversión <SortIcon columnKey="investment_total" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('remaining')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Restante <SortIcon columnKey="remaining" config={sortConfig} />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 font-semibold">
+                    <div onClick={() => requestSort('is_released')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      Liberado <SortIcon columnKey="is_released" config={sortConfig} />
+                    </div>
+                  </th>
                   <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((r) => (
+                {sortedItems.map((r) => (
                   <tr key={r.plate} className="border-t">
                     <td className="px-4 py-3 font-medium">{r.plate}</td>
 
@@ -525,7 +609,7 @@ export default function AdminProfit() {
                   </tr>
                 ))}
 
-                {items.length === 0 && !loading && (
+                {sortedItems.length === 0 && !loading && (
                   <tr>
                     <td className="px-4 py-6 text-gray-500" colSpan={13}>
                       Sin datos.
