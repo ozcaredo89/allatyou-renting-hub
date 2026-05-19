@@ -49,30 +49,28 @@ import { syncGpsImeis } from "./oraculo/sync-imei";
 
 const app = express();
 
-/** CORS: WEB_ORIGIN (puede ser lista separada por comas) + localhost + *.vercel.app */
-const corsOptions: CorsOptionsDelegate = (req, cb) => {
-  const origin = (req.headers?.origin as string) || "";
-  const envOrigins = (process.env.WEB_ORIGIN || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const allowList = [
-    ...envOrigins,
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:5175",
-  ];
-  let allowed = false;
-  try {
-    const host = origin ? new URL(origin).host : "";
-    allowed = allowList.includes(origin) || host.endsWith(".vercel.app");
-  } catch { }
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
+  "http://localhost:3000",
+  "https://web.allatyou.com",
+  ...(process.env.WEB_ORIGIN || "").split(",").map(s => s.trim()).filter(Boolean)
+];
 
-  cb(null, {
-    origin: allowed,
-    optionsSuccessStatus: 200,
-    allowedHeaders: ["Content-Type", "Authorization"],
-  });
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    // Permitir si no hay origen (REST tools) o si está en la lista de permitidos
+    if (!origin || allowedOrigins.includes(origin) || origin.endsWith(".vercel.app")) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  credentials: true,
+  optionsSuccessStatus: 200
 };
 
 app.use(cors(corsOptions));
