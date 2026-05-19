@@ -27,7 +27,55 @@ r.get("/", async (req: Request, res: Response) => {
       .order("plate", { ascending: true });
 
     if (error) return res.status(500).json({ error: error.message });
-    return res.json(data);
+
+    // Fetch dynamic metrics efficiently
+    const plates = data.map((v: any) => v.plate);
+
+    // 1. Obtener el kilometraje más reciente para cada placa
+    const { data: mileages } = await supabase
+      .from("vehicle_mileage_logs")
+      .select("plate, mileage_km")
+      .in("plate", plates)
+      .order("recorded_at", { ascending: false });
+
+    const mileageMap = new Map();
+    if (mileages) {
+      for (const m of mileages) {
+        if (!mileageMap.has(m.plate)) {
+          mileageMap.set(m.plate, m.mileage_km);
+        }
+      }
+    }
+
+    // 2. Obtener la última fecha de cambio de aceite para cada placa
+    const { data: expenses } = await supabase
+      .from("expenses")
+      .select("date, expense_vehicles!inner(plate)")
+      .eq("category", "Cambio de aceite")
+      .in("expense_vehicles.plate", plates)
+      .order("date", { ascending: false });
+
+    const oilMap = new Map();
+    if (expenses) {
+      for (const e of expenses) {
+        // e.expense_vehicles could be array depending on relation setup
+        const pArr = Array.isArray(e.expense_vehicles) ? e.expense_vehicles : [e.expense_vehicles];
+        for (const ev of pArr) {
+          if (ev && typeof ev === 'object' && ev.plate && !oilMap.has(ev.plate)) {
+             oilMap.set(ev.plate, e.date);
+          }
+        }
+      }
+    }
+
+    // 3. Adjuntar a los vehículos
+    const enhancedData = data.map((v: any) => ({
+      ...v,
+      current_mileage: mileageMap.get(v.plate) || null,
+      last_oil_change_date: oilMap.get(v.plate) || null
+    }));
+
+    return res.json(enhancedData);
   } catch (err: any) {
     return res.status(500).json({ error: err?.message });
   }

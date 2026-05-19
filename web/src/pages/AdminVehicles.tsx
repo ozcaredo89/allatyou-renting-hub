@@ -32,6 +32,10 @@ type Vehicle = {
   purchase_price?: string;
   purchase_date?: string;
   vehicle_investments?: any[];
+
+  // MÉTRICAS GLOBALES
+  current_mileage?: number;
+  last_oil_change_date?: string;
 };
 
 const EMPTY_VEHICLE: Vehicle = {
@@ -61,6 +65,17 @@ const formatMoneyInput = (value: string | undefined) => {
   if (!clean) return "";
   return new Intl.NumberFormat("es-CO").format(Number(clean));
 };
+
+function getOilChangeStatus(dateStr?: string) {
+  if (!dateStr) return { color: "text-slate-400 bg-slate-100", label: "—" };
+  const diffTime = new Date().getTime() - new Date(dateStr).getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const diffMonths = diffDays / 30;
+
+  if (diffMonths > 4) return { color: "text-red-700 bg-red-100 font-bold", label: dateStr };
+  if (diffMonths > 3) return { color: "text-amber-700 bg-amber-100 font-bold", label: dateStr };
+  return { color: "text-emerald-700 bg-emerald-100 font-medium", label: dateStr };
+}
 
 export default function AdminVehicles() {
   const [items, setItems] = useState<Vehicle[]>([]);
@@ -403,6 +418,8 @@ export default function AdminVehicles() {
                   <th className="px-4 py-3">Conductor Actual</th>
                   <th className="px-4 py-3 text-center">SOAT</th>
                   <th className="px-4 py-3 text-center">Tecno</th>
+                  <th className="px-4 py-3 text-center">Odómetro</th>
+                  <th className="px-4 py-3 text-center">Últ. Aceite</th>
                   <th className="px-4 py-3">Docs</th>
                   <th className="px-4 py-3 text-center">Historial</th>
                   <th className="px-4 py-3 text-right">Acción</th>
@@ -435,6 +452,14 @@ export default function AdminVehicles() {
                       </td>
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.soat_expires_at)}`}>{v.soat_expires_at || "—"}</td>
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.tecno_expires_at)}`}>{v.tecno_expires_at || "—"}</td>
+                      <td className="px-4 py-3 text-center font-mono text-[11px] font-bold text-slate-700">
+                        {v.current_mileage != null ? `${new Intl.NumberFormat("es-CO").format(v.current_mileage)} km` : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`inline-block px-2 py-0.5 rounded text-[11px] ${getOilChangeStatus(v.last_oil_change_date).color}`}>
+                          {getOilChangeStatus(v.last_oil_change_date).label}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-slate-500 space-y-1">
                         {v.ownership_card_front ? <span className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-600 text-[10px] border border-emerald-100">TP OK</span> : <span className="text-[10px] text-slate-300">Sin TP</span>}
                       </td>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
@@ -12,6 +13,7 @@ type Row = {
   days_since: number;
   is_overdue: boolean;
   installment_number: number | null;
+  proof_url: string | null;
 };
 
 
@@ -256,7 +258,24 @@ export default function Reports() {
                     <td className={`px-4 py-3 font-medium ${color}`}>{r.plate}</td>
                     <td className={`px-4 py-3 ${color}`}>{r.payment_date ?? "—"}</td>
                     <td className={`px-4 py-3 ${color}`}>
-                      {r.amount != null ? "$" + fmtCOP.format(r.amount) : "—"}
+                      {r.amount != null ? (
+                        r.proof_url ? (
+                          <a
+                            href={r.proof_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 underline hover:text-black transition-colors"
+                            title="Ver comprobante"
+                          >
+                            {"$" + fmtCOP.format(r.amount)}
+                            <ExternalLink size={14} />
+                          </a>
+                        ) : (
+                          "$" + fmtCOP.format(r.amount)
+                        )
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className={`px-4 py-3 ${color}`}>
                       {r.installment_number != null ? `#${r.installment_number}` : "—"}
