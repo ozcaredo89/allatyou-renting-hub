@@ -15,11 +15,11 @@ const getColTime = () => {
     hour: "2-digit",
     minute: "2-digit",
   });
-  
+
   // Hack rápido para parsear partes
   const parts = formatter.formatToParts(now);
   const get = (type: string) => parts.find((p) => p.type === type)?.value;
-  
+
   const yyyy = get("year");
   const mm = get("month");
   const dd = get("day");
@@ -36,29 +36,16 @@ const getColTime = () => {
 /**
  * GET /collections/pending
  * Devuelve la lista de conductores para notificar hoy.
- * Regla: Hora > 15:45 (3:45 PM) -> DESHABILITADA TEMPORALMENTE
+ * Regla: Ahora muestra a todos los morosos sin importar si ya se les notificó hoy.
  */
 r.get("/pending", async (req: Request, res: Response) => {
   try {
     const { dateStr, hour, minute } = getColTime();
     const force = req.query.force === "true"; // Backdoor para pruebas
 
-    // 1. Validación de Hora (3:45 PM)
-    // --- BLOQUEO SUSPENDIDO PARA PERMITIR GESTIÓN A CUALQUIER HORA ---
-    /*
-    if (!force) {
-      if (hour < 15 || (hour === 15 && minute < 45)) {
-        return res.json({
-          locked: true,
-          message: "El módulo de cobranza se habilita a las 3:45 PM.",
-          serverTime: `${hour}:${minute}`
-        });
-      }
-    }
-    */
+    // 1. Validación de Hora (Suspendida)
 
     // 2. Obtener morosos (Reusando la vista vehicle_last_payment)
-    // Buscamos solo los que tienen is_overdue = true
     const { data: morosos, error: errMora } = await supabase
       .from("vehicle_last_payment")
       .select("*")
@@ -66,91 +53,76 @@ r.get("/pending", async (req: Request, res: Response) => {
 
     if (errMora) throw new Error(errMora.message);
 
-    // 3. Obtener notificados hoy (Para excluirlos)
-    const { data: notificados, error: errNotif } = await supabase
-      .from("payment_notifications")
-      .select("vehicle_plate")
-      .eq("generated_date", dateStr); // Solo hoy
+    // --- SE ELIMINÓ EL FILTRO DE "NOTIFICADOS HOY" PARA PERMITIR MÚLTIPLES ENVÍOS ---
 
-    if (errNotif) throw new Error(errNotif.message);
-
-    // Crear Set de placas ya notificadas para búsqueda rápida O(1)
-    const notificadosSet = new Set(notificados?.map(n => n.vehicle_plate) || []);
-
-    // 4. Filtrar y buscar datos adicionales (Teléfono conductor)
+    // 3. Filtrar y buscar datos adicionales (Teléfono conductor)
     const pendingList = [];
 
-    // Usamos un bucle for-of para poder usar await dentro (consultas secuenciales)
-    // Podría optimizarse con Promise.all si la lista crece mucho.
+    // Usamos un bucle for-of para poder usar await dentro
     if (morosos && morosos.length > 0) {
-        for (const item of morosos) {
-          // Si ya se notificó hoy, saltar
-          if (notificadosSet.has(item.plate)) continue;
+      for (const item of morosos) {
+        // Buscar teléfono real del conductor actual (Prioridad Driver > Vehicle)
+        let phone = null;
+        let driverId = null;
+        let ownerName = item.driver_name; // Default de la vista
 
-          // Buscar teléfono real del conductor actual (Prioridad Driver > Vehicle)
-          let phone = null;
-          let driverId = null;
-          let ownerName = item.driver_name; // Default de la vista
+        // Buscar en tabla vehicles para sacar el driver_id actual
+        const { data: v } = await supabase
+          .from("vehicles")
+          .select("current_driver_id, owner_whatsapp, company_id")
+          .eq("plate", item.plate)
+          .single();
 
-          // Buscar en tabla vehicles para sacar el driver_id actual
-          const { data: v } = await supabase
-            .from("vehicles")
-            .select("current_driver_id, owner_whatsapp, company_id")
-            .eq("plate", item.plate)
-            .single();
+        if (v) {
+          if (v.current_driver_id) {
+            driverId = v.current_driver_id;
+            const { data: d } = await supabase
+              .from("drivers")
+              .select("phone, full_name")
+              .eq("id", driverId)
+              .single();
 
-          if (v) {
-            // Aquí podrías filtrar por company_id si lo recibes en el query
-
-            if (v.current_driver_id) {
-              driverId = v.current_driver_id;
-              const { data: d } = await supabase
-                .from("drivers")
-                .select("phone, full_name")
-                .eq("id", driverId)
-                .single();
-              
-              if (d) {
-                  if (d.phone) phone = d.phone;
-                  if (d.full_name) ownerName = d.full_name; // Actualizamos nombre si tenemos el driver real
-              }
-            }
-            
-            // Fallback al whatsapp del dueño del vehículo si no hay conductor o no tiene tel
-            if (!phone && v.owner_whatsapp) phone = v.owner_whatsapp;
-          }
-
-          // Calcular monto real: tarifa base 70,000 + cuotas de préstamos
-          let dailyDebt = 70000;
-          const { data: advances } = await supabase
-            .from("operational_advances")
-            .select("daily_installment")
-            .eq("plate", item.plate)
-            .eq("status", "active");
-
-          if (advances && advances.length > 0) {
-            for (const adv of advances) {
-              if (adv.daily_installment) {
-                dailyDebt += Number(adv.daily_installment);
-              }
+            if (d) {
+              if (d.phone) phone = d.phone;
+              if (d.full_name) ownerName = d.full_name; // Actualizamos nombre si tenemos el driver real
             }
           }
 
-          const totalDebt = dailyDebt * item.days_since;
-
-          pendingList.push({
-            plate: item.plate,
-            owner_name: ownerName,
-            driver_id: driverId,
-            contact_phone: phone,
-            days_overdue: item.days_since,
-            amount: totalDebt 
-          });
+          // Fallback al whatsapp del dueño del vehículo si no hay conductor o no tiene tel
+          if (!phone && v.owner_whatsapp) phone = v.owner_whatsapp;
         }
+
+        // Calcular monto real: tarifa base 70,000 + cuotas de préstamos
+        let dailyDebt = 70000;
+        const { data: advances } = await supabase
+          .from("operational_advances")
+          .select("daily_installment")
+          .eq("plate", item.plate)
+          .eq("status", "active");
+
+        if (advances && advances.length > 0) {
+          for (const adv of advances) {
+            if (adv.daily_installment) {
+              dailyDebt += Number(adv.daily_installment);
+            }
+          }
+        }
+
+        const totalDebt = dailyDebt * item.days_since;
+
+        pendingList.push({
+          plate: item.plate,
+          owner_name: ownerName,
+          driver_id: driverId,
+          contact_phone: phone,
+          days_overdue: item.days_since,
+          amount: totalDebt
+        });
+      }
     }
 
     return res.json({
-      locked: false, // Siempre desbloqueado
+      locked: false,
       items: pendingList
     });
 
@@ -165,12 +137,12 @@ r.get("/pending", async (req: Request, res: Response) => {
  * Registra que se dio click en "Enviar" y saca al conductor de la lista pendiente.
  */
 r.post("/send", async (req: Request, res: Response) => {
-  const { 
-    vehicle_plate, 
-    driver_id, 
-    sent_by_user_id, 
-    days_overdue, 
-    message_snapshot 
+  const {
+    vehicle_plate,
+    driver_id,
+    sent_by_user_id,
+    days_overdue,
+    message_snapshot
   } = req.body;
 
   const { dateStr } = getColTime();
@@ -241,14 +213,14 @@ r.post("/resend/:id", async (req: Request, res: Response) => {
       .select("resend_count")
       .eq("id", id)
       .single();
-    
+
     if (current) {
       await supabase
         .from("payment_notifications")
         .update({ resend_count: (current.resend_count || 0) + 1 })
         .eq("id", id);
     }
-    
+
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -266,7 +238,7 @@ r.get("/templates", async (req: Request, res: Response) => {
     .eq("company_id", companyId)
     .order("is_default", { ascending: false })
     .order("id", { ascending: true });
-  
+
   if (error) return res.status(500).json({ error: error.message });
   return res.json(data || []);
 });
@@ -274,7 +246,7 @@ r.get("/templates", async (req: Request, res: Response) => {
 // Endpoint para crear plantilla
 r.post("/templates", async (req: Request, res: Response) => {
   const { company_id, template_name, message_body, is_default } = req.body;
-  
+
   if (!company_id || !template_name || !message_body) {
     return res.status(400).json({ error: "company_id, template_name y message_body son requeridos" });
   }
@@ -304,11 +276,11 @@ r.put("/templates/:id", async (req: Request, res: Response) => {
 
   try {
     if (is_default && company_id) {
-       await supabase.from("reminder_templates").update({ is_default: false }).eq("company_id", company_id);
+      await supabase.from("reminder_templates").update({ is_default: false }).eq("company_id", company_id);
     }
 
     const updates: any = { template_name, message_body, is_default: !!is_default };
-    
+
     const { data, error } = await supabase
       .from("reminder_templates")
       .update(updates)
