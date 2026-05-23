@@ -32,10 +32,45 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
     referral: { referralCodeUsed: referralCode || "" }
   });
 
-  const handleNext = () => setStep(prev => prev + 1);
-  const handleBack = () => setStep(prev => prev - 1);
+  const validateStep = (currentStep: number) => {
+    setError(null);
+    if (currentStep === 1) {
+      if (formData.personal.address.trim().length < 8) {
+        setError("La dirección de residencia debe tener mínimo 8 caracteres.");
+        return false;
+      }
+    }
+    if (currentStep === 2) {
+      if (formData.license.hasValidLicense && !formData.license.licenseNumberCat.trim()) {
+        setError("Por favor ingresa la categoría de tu licencia.");
+        return false;
+      }
+    }
+    if (currentStep === 3) {
+      const { acceptsWorkConditions, understandsDamageLiability, truthDeclarationAccepted } = formData.confirmations;
+      if (!acceptsWorkConditions || !understandsDamageLiability || !truthDeclarationAccepted) {
+        setError("Debes aceptar todas las confirmaciones legales para continuar.");
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const handleNext = () => {
+    if (validateStep(step)) setStep(prev => prev + 1);
+  };
+  
+  const handleBack = () => {
+    setError(null);
+    setStep(prev => prev - 1);
+  };
 
   const handleSubmit = async () => {
+    // Validar todos los pasos anteriores por seguridad antes de enviar
+    if (!validateStep(1) || !validateStep(2) || !validateStep(3)) {
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -87,6 +122,7 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
           </div>
           <input className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white" placeholder="Celular" onChange={e => setFormData({...formData, personal: {...formData.personal, phoneMobile: e.target.value}})} />
           <input className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white" placeholder="Correo" onChange={e => setFormData({...formData, personal: {...formData.personal, email: e.target.value}})} />
+          <input className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white" placeholder="Dirección de residencia" required minLength={8} onChange={e => setFormData({...formData, personal: {...formData.personal, address: e.target.value}})} />
           <button onClick={handleNext} className="w-full rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400">Siguiente</button>
         </div>
       )}
@@ -94,9 +130,14 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
       {step === 2 && (
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-white">2. Experiencia</h3>
-          <div className="flex items-center gap-3 py-2">
-            <input type="checkbox" className="h-4 w-4 accent-emerald-500" onChange={e => setFormData({...formData, license: {...formData.license, hasValidLicense: e.target.checked}})} />
-            <span className="text-sm text-slate-300">Tengo licencia vigente</span>
+          <div className="flex flex-col gap-3 py-2">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" className="h-4 w-4 accent-emerald-500" checked={formData.license.hasValidLicense} onChange={e => setFormData({...formData, license: {...formData.license, hasValidLicense: e.target.checked}})} />
+              <span className="text-sm text-slate-300">Tengo licencia vigente</span>
+            </label>
+            {formData.license.hasValidLicense && (
+              <input className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white" placeholder="Categoría de licencia (Ej. C1, C2)" required onChange={e => setFormData({...formData, license: {...formData.license, licenseNumberCat: e.target.value}})} />
+            )}
           </div>
           <input className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white" placeholder="Años de experiencia" onChange={e => setFormData({...formData, workExperience: {...formData.workExperience, drivingExpTime: e.target.value}})} />
           <textarea className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white h-24" placeholder="Describe tu experiencia previa..." onChange={e => setFormData({...formData, workExperience: {...formData.workExperience, similarJobExp: e.target.value}})} />
@@ -120,8 +161,16 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
               Acepto pruebas de toxicología aleatorias
             </label>
             <label className="flex items-start gap-3 text-xs text-slate-300">
-              <input type="checkbox" className="mt-1 accent-emerald-500" onChange={() => setFormData({...formData, confirmations: {...formData.confirmations, truthDeclarationAccepted: true, acceptsWorkConditions: true, understandsDamageLiability: true}})} />
-              Certifico que toda la información es verídica
+              <input type="checkbox" className="mt-1 accent-emerald-500" required checked={formData.confirmations.acceptsWorkConditions} onChange={e => setFormData({...formData, confirmations: {...formData.confirmations, acceptsWorkConditions: e.target.checked}})} />
+              Acepto las condiciones de trabajo y reglas del renting
+            </label>
+            <label className="flex items-start gap-3 text-xs text-slate-300">
+              <input type="checkbox" className="mt-1 accent-emerald-500" required checked={formData.confirmations.understandsDamageLiability} onChange={e => setFormData({...formData, confirmations: {...formData.confirmations, understandsDamageLiability: e.target.checked}})} />
+              Entiendo mi responsabilidad civil sobre los daños
+            </label>
+            <label className="flex items-start gap-3 text-xs text-slate-300">
+              <input type="checkbox" className="mt-1 accent-emerald-500" required checked={formData.confirmations.truthDeclarationAccepted} onChange={e => setFormData({...formData, confirmations: {...formData.confirmations, truthDeclarationAccepted: e.target.checked}})} />
+              Certifico que toda la información ingresada es verídica
             </label>
           </div>
           <div className="flex gap-3 pt-2">
