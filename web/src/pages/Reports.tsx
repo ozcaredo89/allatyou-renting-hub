@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ExternalLink, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
+import { ExternalLink, ArrowUp, ArrowDown, ChevronsUpDown, Trash2 } from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { useSortableData } from "../hooks/useSortableData";
 
@@ -42,6 +42,33 @@ export default function Reports() {
   const limit = 20;
 
   const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
+
+  async function handleDeleteLastPayment(plate: string) {
+    if (!window.confirm(`⚠️ ¿Estás seguro de deshacer el último pago de la placa ${plate}? Esta acción no se puede revertir.`)) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const auth = ensureBasicAuth();
+      const res = await fetch(`${API}/payments/last/${plate}`, {
+        method: 'DELETE',
+        headers: { Authorization: auth },
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Error al eliminar el pago");
+      }
+
+      alert("Pago deshecho correctamente.");
+      load(offset);
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const SortIcon = ({ columnKey }: { columnKey: string }) => {
     if (sortConfig?.key !== columnKey) {
@@ -281,6 +308,7 @@ export default function Reports() {
                     Estado <SortIcon columnKey="days_since" />
                   </div>
                 </th>
+                <th className="px-4 py-3 font-semibold text-right">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -329,12 +357,23 @@ export default function Reports() {
                         </span>
                       )}
                     </td>
+                    <td className="px-4 py-3 text-right">
+                      {r.payment_date && (
+                        <button
+                          onClick={() => handleDeleteLastPayment(r.plate)}
+                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Deshacer último pago"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
               {sortedItems.length === 0 && !loading && (
                 <tr>
-                  <td className="px-4 py-6 text-gray-500" colSpan={6}>
+                  <td className="px-4 py-6 text-gray-500" colSpan={7}>
                     Sin resultados.
                   </td>
                 </tr>

@@ -719,5 +719,82 @@ r.get("/last-amount", async (req: Request, res: Response) => {
     last_installment_number: data.installment_number,
   });
 });
+// -------------------- DELETE /last/:plate (Undo Last Payment) --------------------
+r.delete("/last/:plate", async (req: Request, res: Response) => {
+  const plate = String(req.params.plate || "").toUpperCase().trim();
+  if (!PLATE_RE.test(plate)) {
+    return res.status(400).json({ error: "invalid plate" });
+  }
+
+  // 1. Buscar el pago más reciente
+  const { data: lastPayment, error: fetchErr } = await supabase
+    .from("payments")
+    .select("*")
+    .eq("plate", plate)
+    .order("payment_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  // @ts-ignore
+  if (fetchErr && fetchErr.code !== "PGRST116") {
+    return res.status(500).json({ error: fetchErr.message });
+  }
+  if (!lastPayment) {
+    return res.status(404).json({ error: "no payments found for this plate" });
+  }
+
+  const { id: payment_id, installment_number } = lastPayment;
+
+  // 2. Si tiene cuota asociada, hacer rollback del schedule
+  if (installment_number != null) {
+    // Buscar el préstamo más reciente de esta placa
+    const { data: latestAdvance, error: advErr } = await supabase
+      .from("operational_advances")
+      .select("id, status")
+      .eq("plate", plate)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!advErr && latestAdvance) {
+      // Revertir el schedule a pending
+      await supabase
+        .from("operational_advance_schedule")
+        .update({ status: "pending", paid_date: null })
+        .eq("advance_id", latestAdvance.id)
+        .eq("installment_no", installment_number);
+
+      // Si el préstamo estaba cerrado, reabrirlo
+      if (latestAdvance.status === "closed") {
+        await supabase
+          .from("operational_advances")
+          .update({ status: "active" })
+          .eq("id", latestAdvance.id);
+      }
+    }
+  }
+
+  // 3. Borrar físicamente el pago
+  const { error: delErr } = await supabase
+    .from("payments")
+    .delete()
+    .eq("id", payment_id);
+
+  if (delErr) {
+    return res.status(500).json({ error: delErr.message });
+  }
+
+  await logInconsistency({
+    payment_id: null,
+    plate: plate,
+    payment_date: lastPayment.payment_date,
+    issue_code: "PAYMENT_HARD_DELETED",
+    message: "User explicitly deleted the most recent payment via UI rollback.",
+    metadata: { deleted_id: payment_id, amount: lastPayment.amount }
+  });
+
+  return res.json({ success: true, deleted_id: payment_id });
+});
 
 export default r;
