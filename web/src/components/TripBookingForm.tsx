@@ -150,7 +150,17 @@ export function TripBookingForm() {
       finalRecurrence = `custom: ${customDetails}`;
     }
 
-    const formData = new FormData(e.currentTarget);
+    let finalPickupTime = formData.get("pickup_time") as string;
+    if (recurrenceType !== "none") {
+      const startDate = formData.get("start_date") as string;
+      const timeVal = formData.get("pickup_time_field") as string;
+      if (!startDate || !timeVal) {
+        setError("Por favor completa la fecha de inicio y la hora.");
+        return;
+      }
+      finalPickupTime = `${startDate}T${timeVal}`;
+    }
+
     const payload = {
       client_phone: formData.get("client_phone"),
       client_email: formData.get("client_email"),
@@ -161,7 +171,7 @@ export function TripBookingForm() {
       dest_lat: destData.lat,
       dest_lng: destData.lng,
       distance_km: parseFloat(distanceKm),
-      pickup_time: formData.get("pickup_time"),
+      pickup_time: finalPickupTime,
       recurrence: finalRecurrence,
       waypoints: validWaypoints.map(wp => ({ address: wp.address, lat: wp.lat, lng: wp.lng })),
     };
@@ -333,24 +343,8 @@ export function TripBookingForm() {
 
             {/* Timing & Recurrence */}
             <div className="space-y-5 border-t border-slate-800 pt-5">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-400">Fecha y Hora de recogida inicial</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                    <CalendarIcon className="w-4 h-4" />
-                  </div>
-                  <input
-                    type="datetime-local"
-                    name="pickup_time"
-                    required
-                    min={minDateTime}
-                    style={{ colorScheme: "dark" }}
-                    onClick={(e) => { try { e.currentTarget.showPicker(); } catch (err) {} }}
-                    className="w-full cursor-pointer rounded-xl border border-slate-700 bg-slate-900/50 py-3 pl-10 pr-4 text-sm text-white focus:border-blue-500 focus:outline-none transition-all"
-                  />
-                </div>
-              </div>
-
+              
+              {/* Bloque 1: Tipo de Viaje (Frecuencia) */}
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-400">Tipo de Viaje</label>
                 <select
@@ -397,6 +391,67 @@ export function TripBookingForm() {
                   </div>
                 )}
               </div>
+
+              {/* Bloque 2: Fecha y Hora (Dinámico) */}
+              {recurrenceType === "none" ? (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-400">
+                    Fecha y Hora de recogida
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                      <CalendarIcon className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="datetime-local"
+                      name="pickup_time"
+                      required
+                      min={minDateTime}
+                      style={{ colorScheme: "dark" }}
+                      onClick={(e) => { try { e.currentTarget.showPicker(); } catch (err) {} }}
+                      className="w-full cursor-pointer rounded-xl border border-slate-700 bg-slate-900/50 py-3 pl-10 pr-4 text-sm text-white focus:border-blue-500 focus:outline-none transition-all"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-400">
+                      A partir de qué fecha iniciamos
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                        <CalendarIcon className="w-4 h-4" />
+                      </div>
+                      <input
+                        type="date"
+                        name="start_date"
+                        required
+                        min={minDateTime.slice(0, 10)}
+                        style={{ colorScheme: "dark" }}
+                        onClick={(e) => { try { e.currentTarget.showPicker(); } catch (err) {} }}
+                        className="w-full cursor-pointer rounded-xl border border-slate-700 bg-slate-900/50 py-3 pl-10 pr-4 text-sm text-white focus:border-blue-500 focus:outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-400">
+                      Hora de recogida
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="time"
+                        name="pickup_time_field"
+                        required
+                        style={{ colorScheme: "dark" }}
+                        onClick={(e) => { try { e.currentTarget.showPicker(); } catch (err) {} }}
+                        className="w-full cursor-pointer rounded-xl border border-slate-700 bg-slate-900/50 py-3 px-4 text-sm text-white focus:border-blue-500 focus:outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
 
             {error && (
