@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useJsApiLoader, GoogleMap, DirectionsRenderer } from "@react-google-maps/api";
-import { MapPin, Navigation, Calendar as CalendarIcon, Phone, Mail, Loader2, CheckCircle2 } from "lucide-react";
+import { MapPin, Navigation, Calendar as CalendarIcon, Phone, Mail, Loader2, CheckCircle2, GripVertical } from "lucide-react";
 
 const LIBRARIES: ("places" | "geometry")[] = ["places", "geometry"];
 
@@ -35,7 +35,21 @@ export function TripBookingForm() {
 
   const [originData, setOriginData] = useState<PlaceData | null>(null);
   const [destData, setDestData] = useState<PlaceData | null>(null);
-  const [waypoints, setWaypoints] = useState<(PlaceData | null)[]>([]);
+  const [waypoints, setWaypoints] = useState<{id: string, data: PlaceData | null}[]>([]);
+
+  // Drag and drop state for waypoints
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  const handleSort = () => {
+    if (draggedIndex === null || dragOverIndex === null || draggedIndex === dragOverIndex) return;
+    const newWaypoints = [...waypoints];
+    const item = newWaypoints.splice(draggedIndex, 1)[0];
+    newWaypoints.splice(dragOverIndex, 0, item);
+    setWaypoints(newWaypoints);
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
 
   // Recurrence state
   const [recurrenceType, setRecurrenceType] = useState("none");
@@ -52,7 +66,7 @@ export function TripBookingForm() {
     }
 
     const directionsService = new window.google.maps.DirectionsService();
-    const validWaypoints = waypoints.filter((wp): wp is PlaceData => wp !== null);
+    const validWaypoints = waypoints.map(w => w.data).filter((wp): wp is PlaceData => wp !== null);
     
     const waypts = validWaypoints.map(wp => ({
       location: new window.google.maps.LatLng(wp.lat, wp.lng),
@@ -83,14 +97,14 @@ export function TripBookingForm() {
     e.preventDefault();
     setError(null);
 
-    const validWaypoints = waypoints.filter((wp): wp is PlaceData => wp !== null);
+    const validWaypoints = waypoints.map(w => w.data).filter((wp): wp is PlaceData => wp !== null);
 
     if (!originData || !destData) {
       setError("Por favor selecciona direcciones de origen y destino válidas.");
       return;
     }
 
-    if (waypoints.some(wp => wp === null)) {
+    if (waypoints.some(wp => wp.data === null)) {
       setError("Por favor completa todas las paradas agregadas o elimínalas.");
       return;
     }
@@ -232,18 +246,29 @@ export function TripBookingForm() {
             {waypoints.length > 0 && (
               <div className="space-y-3 pl-4 border-l-2 border-slate-700/50 pt-2">
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Paradas Intermedias</label>
-                {waypoints.map((_wp, idx) => (
-                  <div key={idx} className="flex items-start gap-3">
+                {waypoints.map((wp, idx) => (
+                  <div 
+                    key={wp.id} 
+                    className={`flex items-start gap-3 p-2 -ml-2 rounded-xl transition-colors ${draggedIndex === idx ? 'opacity-50 bg-slate-800' : ''} ${dragOverIndex === idx ? 'border-t-2 border-emerald-500 bg-slate-800/50' : ''}`}
+                    draggable
+                    onDragStart={() => setDraggedIndex(idx)}
+                    onDragEnter={() => setDragOverIndex(idx)}
+                    onDragEnd={handleSort}
+                    onDragOver={(e) => e.preventDefault()}
+                  >
+                    <div className="flex items-center pt-8 cursor-grab text-slate-600 hover:text-white active:cursor-grabbing" title="Arrastrar para reordenar">
+                      <GripVertical className="w-5 h-5" />
+                    </div>
                     <div className="flex-1">
                       <CustomPlaceAutocomplete 
                         label={`Parada ${idx + 1}`} 
                         placeholder="Ej: Terminal de Transportes"
                         iconColor="text-emerald-500"
-                        hasValidSelection={waypoints[idx] !== null}
+                        hasValidSelection={wp.data !== null}
                         isLoaded={isLoaded}
                         onPlaceSelected={(place) => {
                           const newWp = [...waypoints];
-                          newWp[idx] = place;
+                          newWp[idx].data = place;
                           setWaypoints(newWp);
                         }}
                       />
@@ -251,7 +276,7 @@ export function TripBookingForm() {
                     <button 
                       type="button" 
                       onClick={() => setWaypoints(waypoints.filter((_, i) => i !== idx))}
-                      className="mt-6 flex h-[46px] w-[46px] items-center justify-center rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors"
+                      className="mt-6 flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors"
                       title="Eliminar parada"
                     >
                       <span className="font-bold">✕</span>
@@ -265,7 +290,7 @@ export function TripBookingForm() {
             <div className="w-full border-b border-slate-800/50 pb-5">
               <button 
                 type="button"
-                onClick={() => setWaypoints([...waypoints, null])}
+                onClick={() => setWaypoints([...waypoints, { id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 10), data: null }])}
                 className="mx-auto text-xs font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-400/10 hover:bg-emerald-400/20 px-4 py-2 rounded-full transition-colors flex items-center justify-center gap-1"
               >
                 <span>+</span> Agregar Parada Intermedia
