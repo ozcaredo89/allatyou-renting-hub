@@ -105,16 +105,29 @@ export function TripBookingForm() {
       return;
     }
 
-    // Calcular distancia
-    const points = [originData, ...validWaypoints, destData];
-    let distanceMeters = 0;
-    for (let i = 0; i < points.length - 1; i++) {
-      distanceMeters += google.maps.geometry.spherical.computeDistanceBetween(
-        new google.maps.LatLng(points[i].lat, points[i].lng),
-        new google.maps.LatLng(points[i + 1].lat, points[i + 1].lng)
-      );
+    // Calcular distancia sumando todos los tramos de la ruta real (Directions API)
+    let distanceKmVal = 0;
+    
+    if (directionsResponse && directionsResponse.routes && directionsResponse.routes[0]) {
+      const legs = directionsResponse.routes[0].legs;
+      let totalMeters = 0;
+      for (let i = 0; i < legs.length; i++) {
+        totalMeters += legs[i].distance?.value || 0;
+      }
+      distanceKmVal = totalMeters / 1000;
+    } else {
+      // Fallback a distancia de línea recta si por alguna razón la ruta no está cargada
+      const points = [originData, ...validWaypoints, destData];
+      let distanceMeters = 0;
+      for (let i = 0; i < points.length - 1; i++) {
+        distanceMeters += google.maps.geometry.spherical.computeDistanceBetween(
+          new google.maps.LatLng(points[i].lat, points[i].lng),
+          new google.maps.LatLng(points[i + 1].lat, points[i + 1].lng)
+        );
+      }
+      distanceKmVal = (distanceMeters / 1000) * 1.3; // Ajuste empírico x1.3
     }
-    const distanceKm = (distanceMeters / 1000).toFixed(2);
+    const distanceKm = distanceKmVal.toFixed(2);
 
     let finalRecurrence = "none";
     if (recurrenceType === "weekly") {
