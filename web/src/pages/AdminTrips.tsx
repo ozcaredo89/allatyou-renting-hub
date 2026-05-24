@@ -8,13 +8,19 @@ type Trip = {
   id: string;
   client_phone: string;
   client_email: string;
+  origin_name?: string;
   origin_address: string;
+  origin_lat: number;
+  origin_lng: number;
+  dest_name?: string;
   dest_address: string;
+  dest_lat: number;
+  dest_lng: number;
   distance_km: number;
   pickup_time: string;
   status: string;
   created_at: string;
-  waypoints?: { address: string; lat: number; lng: number }[];
+  waypoints?: { name?: string; address: string; lat: number; lng: number }[];
 };
 
 type Offer = {
@@ -83,7 +89,22 @@ export default function AdminTrips() {
     const domain = window.location.origin;
     const bidLink = `${domain}/bid/${trip.id}`;
     
-    const msg = `*🚗 Nuevo Viaje Disponible!*\n\n📍 *Origen:* ${trip.origin_address}\n🏁 *Destino:* ${trip.dest_address}\n📏 *Distancia:* ${trip.distance_km ?? "N/A"} km\n\n👉 Haz tu oferta para ganar el viaje aquí:\n${bidLink}`;
+    // Map Link
+    let mapUrl = `https://www.google.com/maps/dir/?api=1&origin=${trip.origin_lat},${trip.origin_lng}&destination=${trip.dest_lat},${trip.dest_lng}`;
+    if (trip.waypoints && trip.waypoints.length > 0) {
+      const waypointsStr = trip.waypoints.map(wp => `${wp.lat},${wp.lng}`).join('%7C');
+      mapUrl += `&waypoints=${waypointsStr}`;
+    }
+
+    const originText = trip.origin_name ? `${trip.origin_name} (${trip.origin_address})` : trip.origin_address;
+    const destText = trip.dest_name ? `${trip.dest_name} (${trip.dest_address})` : trip.dest_address;
+    
+    let waypointsText = "";
+    if (trip.waypoints && trip.waypoints.length > 0) {
+      waypointsText = "\n🚦 *Paradas intermedias:*\n" + trip.waypoints.map((wp, i) => `  ${i + 1}. ${wp.name ? wp.name + " - " : ""}${wp.address}`).join("\n");
+    }
+
+    const msg = `*🚗 Nuevo Viaje Disponible!*\n\n📍 *Origen:* ${originText}${waypointsText}\n🏁 *Destino:* ${destText}\n📏 *Distancia:* ${trip.distance_km ?? "N/A"} km\n\n*🗺️ Ver Ruta en Mapa:*\n${mapUrl}\n\n👉 Haz tu oferta para ganar el viaje aquí:\n${bidLink}`;
     
     const encodedMsg = encodeURIComponent(msg);
     // Open generic WhatsApp api to allow selecting group
@@ -174,17 +195,17 @@ export default function AdminTrips() {
                       </div>
                     </td>
                     <td className="p-4 align-top">
-                      <div className="font-medium text-slate-800 mb-1">{trip.origin_address}</div>
+                      <div className="font-medium text-slate-800 mb-1">{trip.origin_name ? `${trip.origin_name} (${trip.origin_address})` : trip.origin_address}</div>
                       
                       {trip.waypoints && trip.waypoints.length > 0 && trip.waypoints.map((wp, idx) => (
                         <div key={idx} className="my-1 pl-2 border-l-2 border-slate-300">
                           <div className="text-slate-400 text-[10px] uppercase font-bold">Parada {idx + 1}</div>
-                          <div className="text-slate-600 text-xs">{wp.address}</div>
+                          <div className="text-slate-600 text-xs">{wp.name ? `${wp.name} - ${wp.address}` : wp.address}</div>
                         </div>
                       ))}
 
                       <div className="text-slate-500 text-xs my-1">↓ hacia ↓</div>
-                      <div className="font-medium text-slate-800 mb-1">{trip.dest_address}</div>
+                      <div className="font-medium text-slate-800 mb-1">{trip.dest_name ? `${trip.dest_name} (${trip.dest_address})` : trip.dest_address}</div>
                       <div className="text-emerald-600 font-bold text-xs">{trip.distance_km} km</div>
                     </td>
                     <td className="p-4 align-top">

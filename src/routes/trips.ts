@@ -19,8 +19,8 @@ const tripCreationLimiter = rateLimit({
 r.post("/", tripCreationLimiter, async (req: Request, res: Response) => {
   try {
     const { 
-      client_phone, client_email, origin_address, origin_lat, origin_lng,
-      dest_address, dest_lat, dest_lng, distance_km, pickup_time, recurrence,
+      client_phone, client_email, origin_name, origin_address, origin_lat, origin_lng,
+      dest_name, dest_address, dest_lat, dest_lng, distance_km, pickup_time, recurrence,
       waypoints = []
     } = req.body;
 
@@ -29,8 +29,8 @@ r.post("/", tripCreationLimiter, async (req: Request, res: Response) => {
     }
 
     const { data, error } = await supabase.from("trips").insert([{
-      client_phone, client_email, origin_address, origin_lat, origin_lng,
-      dest_address, dest_lat, dest_lng, distance_km, pickup_time, recurrence,
+      client_phone, client_email, origin_name, origin_address, origin_lat, origin_lng,
+      dest_name, dest_address, dest_lat, dest_lng, distance_km, pickup_time, recurrence,
       status: "pending",
       waypoints
     }]).select().single();
@@ -40,13 +40,16 @@ r.post("/", tripCreationLimiter, async (req: Request, res: Response) => {
     // Send email notification to admin
     try {
       const waypointsText = waypoints.length > 0 
-        ? `\nParadas intermedias: ${waypoints.map((wp: any, i: number) => `\n  ${i + 1}. ${wp.address}`).join("")}` 
+        ? `\nParadas intermedias: ${waypoints.map((wp: any, i: number) => `\n  ${i + 1}. ${wp.name ? wp.name + " - " : ""}${wp.address}`).join("")}` 
         : "";
+
+      const originText = origin_name ? `${origin_name} (${origin_address})` : origin_address;
+      const destText = dest_name ? `${dest_name} (${dest_address})` : dest_address;
 
       await sendEmail({
         to: "oscar.hv89@gmail.com",
         subject: "🚗 Nuevo Viaje / Ruta Solicitada",
-        text: `Se ha solicitado un nuevo viaje.\n\nOrigen: ${origin_address}${waypointsText}\nDestino: ${dest_address}\nDistancia: ${distance_km}km\nTeléfono Cliente: ${client_phone}\n\nRevisa el panel administrativo para enviarlo a los conductores.`,
+        text: `Se ha solicitado un nuevo viaje.\n\nOrigen: ${originText}${waypointsText}\nDestino: ${destText}\nDistancia: ${distance_km}km\nTeléfono Cliente: ${client_phone}\n\nRevisa el panel administrativo para enviarlo a los conductores.`,
       });
     } catch (emailErr) {
       console.error("Error enviando email de notificación de viaje:", emailErr);

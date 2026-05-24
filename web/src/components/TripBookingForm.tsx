@@ -18,6 +18,7 @@ const DAYS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
 type PlaceData = {
+  name?: string;
   address: string;
   lat: number;
   lng: number;
@@ -150,6 +151,8 @@ export function TripBookingForm() {
       finalRecurrence = `custom: ${customDetails}`;
     }
 
+    const formData = new FormData(e.currentTarget);
+    
     let finalPickupTime = formData.get("pickup_time") as string;
     if (recurrenceType !== "none") {
       const startDate = formData.get("start_date") as string;
@@ -164,16 +167,18 @@ export function TripBookingForm() {
     const payload = {
       client_phone: formData.get("client_phone"),
       client_email: formData.get("client_email"),
+      origin_name: originData.name,
       origin_address: originData.address,
       origin_lat: originData.lat,
       origin_lng: originData.lng,
+      dest_name: destData.name,
       dest_address: destData.address,
       dest_lat: destData.lat,
       dest_lng: destData.lng,
       distance_km: parseFloat(distanceKm),
-      pickup_time: finalPickupTime,
+      pickup_time: new Date(finalPickupTime).toISOString(),
       recurrence: finalRecurrence,
-      waypoints: validWaypoints.map(wp => ({ address: wp.address, lat: wp.lat, lng: wp.lng })),
+      waypoints: validWaypoints.map(wp => ({ name: wp.name, address: wp.address, lat: wp.lat, lng: wp.lng })),
     };
 
     try {
@@ -614,6 +619,7 @@ function CustomPlaceAutocomplete({
       if (status === window.google.maps.GeocoderStatus.OK && results && results[0]) {
         const location = results[0].geometry.location;
         onPlaceSelected({
+          name: prediction.structured_formatting.main_text,
           address: results[0].formatted_address,
           lat: location.lat(),
           lng: location.lng(),
