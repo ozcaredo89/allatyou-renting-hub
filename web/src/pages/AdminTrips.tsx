@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import CompanyLock from "../components/CompanyLock";
 import { ensureBasicAuth } from "../lib/auth";
 import { ChevronDown, ChevronUp, Share2, CheckCircle2, Trash2 } from "lucide-react";
 
@@ -141,8 +140,7 @@ export default function AdminTrips() {
   if (loading) return <div className="p-8">Cargando panel de viajes...</div>;
 
   return (
-    <CompanyLock>
-      <div className="max-w-6xl mx-auto p-4 md:p-8">
+    <div className="max-w-6xl mx-auto p-4 md:p-8">
         <header className="mb-8">
           <h1 className="text-2xl font-bold text-slate-800">Panel de Subastas y Rutas</h1>
           <p className="text-slate-500">Administra las rutas solicitadas bajo demanda y sus ofertas.</p>
@@ -273,6 +271,5 @@ export default function AdminTrips() {
           </table>
         </div>
       </div>
-    </CompanyLock>
   );
 }
