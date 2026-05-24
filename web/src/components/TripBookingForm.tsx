@@ -96,6 +96,7 @@ export function TripBookingForm() {
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    const formElement = e.currentTarget;
     setError(null);
 
     const validWaypoints = waypoints.map(w => w.data).filter((wp): wp is PlaceData => wp !== null);
@@ -151,7 +152,7 @@ export function TripBookingForm() {
       finalRecurrence = `custom: ${customDetails}`;
     }
 
-    const formData = new FormData(e.currentTarget);
+    const formData = new FormData(formElement);
     
     let finalPickupTime = formData.get("pickup_time") as string;
     if (recurrenceType !== "none") {
@@ -193,7 +194,7 @@ export function TripBookingForm() {
       if (!res.ok) throw new Error(data.error || "Error al solicitar la ruta");
 
       setSuccess(true);
-      e.currentTarget.reset();
+      formElement.reset();
       setOriginData(null);
       setDestData(null);
       setWaypoints([]);
