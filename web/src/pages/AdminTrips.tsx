@@ -18,6 +18,7 @@ type Trip = {
   dest_lng: number;
   distance_km: number;
   pickup_time: string;
+  recurrence?: string;
   status: string;
   created_at: string;
   waypoints?: { name?: string; address: string; lat: number; lng: number }[];
@@ -104,7 +105,18 @@ export default function AdminTrips() {
       waypointsText = "\n🚦 *Paradas intermedias:*\n" + trip.waypoints.map((wp, i) => `  ${i + 1}. ${wp.name ? wp.name + " - " : ""}${wp.address}`).join("\n");
     }
 
-    const msg = `*🚗 Nuevo Viaje Disponible!*\n\n📍 *Origen:* ${originText}${waypointsText}\n🏁 *Destino:* ${destText}\n📏 *Distancia:* ${trip.distance_km ?? "N/A"} km\n\n*🗺️ Ver Ruta en Mapa:*\n${mapUrl}\n\n👉 Haz tu oferta para ganar el viaje aquí:\n${bidLink}`;
+    const formattedDate = new Date(trip.pickup_time).toLocaleString("es-CO", { dateStyle: "full", timeStyle: "short" });
+    
+    let formattedRecurrence = "Viaje Único";
+    if (trip.recurrence && trip.recurrence.startsWith("weekly:")) {
+      const days = trip.recurrence.split(":")[1];
+      formattedRecurrence = `Viaje Semanal (${days})`;
+    } else if (trip.recurrence && trip.recurrence.startsWith("custom:")) {
+      const customTxt = trip.recurrence.split(":")[1];
+      formattedRecurrence = `Días específicos (${customTxt.trim()})`;
+    }
+
+    const msg = `*🚗 Nuevo Viaje Disponible!*\n\n📍 *Origen:* ${originText}${waypointsText}\n🏁 *Destino:* ${destText}\n📏 *Distancia:* ${trip.distance_km ?? "N/A"} km\n📅 *Fecha y Hora:* ${formattedDate}\n🔄 *Frecuencia:* ${formattedRecurrence}\n\n*🗺️ Ver Ruta en Mapa:*\n${mapUrl}\n\n👉 Haz tu oferta para ganar el viaje aquí:\n${bidLink}`;
     
     const encodedMsg = encodeURIComponent(msg);
     // Open generic WhatsApp api to allow selecting group
