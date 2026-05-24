@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import CompanyLock from "../components/CompanyLock";
 import { ensureBasicAuth } from "../lib/auth";
-import { ChevronDown, ChevronUp, Share2, CheckCircle2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Share2, CheckCircle2, Trash2 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
@@ -89,6 +89,26 @@ export default function AdminTrips() {
     const encodedMsg = encodeURIComponent(msg);
     // Open generic WhatsApp api to allow selecting group
     window.open(`https://api.whatsapp.com/send?text=${encodedMsg}`, "_blank");
+  };
+
+  const handleDeleteTrip = async (tripId: string) => {
+    if (!window.confirm("⚠ ¿Estás seguro de eliminar esta ruta? Las ofertas asociadas también se perderán.")) return;
+
+    try {
+      const res = await fetch(`${API_URL}/trips/${tripId}`, {
+        method: "DELETE",
+        headers: { Authorization: ensureBasicAuth() },
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Error al eliminar el viaje");
+      }
+
+      setTrips(trips.filter(t => t.id !== tripId));
+    } catch (err: any) {
+      alert(err.message);
+    }
   };
 
   const handleAcceptOffer = async (trip: Trip, offer: Offer) => {
@@ -189,6 +209,12 @@ export default function AdminTrips() {
                       >
                         {expandedTripId === trip.id ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                         Ofertas
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteTrip(trip.id)}
+                        className="inline-flex items-center gap-1 border border-red-200 hover:bg-red-50 text-red-500 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors w-full justify-center"
+                      >
+                        <Trash2 className="w-3 h-3" /> Eliminar
                       </button>
                     </td>
                   </tr>

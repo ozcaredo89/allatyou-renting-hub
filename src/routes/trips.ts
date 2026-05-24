@@ -164,4 +164,31 @@ r.post("/:id/assign/:offerId", basicAuth, async (req: Request, res: Response) =>
   }
 });
 
+// PROTECTED: Eliminar un viaje y sus ofertas (Admin)
+r.delete("/:id", basicAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Primero eliminar las ofertas asociadas
+    const { error: offersErr } = await supabase
+      .from("trip_offers")
+      .delete()
+      .eq("trip_id", id);
+      
+    if (offersErr) throw offersErr;
+
+    // Luego eliminar el viaje
+    const { error: tripErr } = await supabase
+      .from("trips")
+      .delete()
+      .eq("id", id);
+
+    if (tripErr) throw tripErr;
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default r;
