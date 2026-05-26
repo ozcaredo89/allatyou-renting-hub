@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ensureBasicAuth } from "../lib/auth";
+import { useSortableData } from "../hooks/useSortableData";
 import { 
   Search, 
   Eye, 
@@ -65,6 +66,13 @@ export default function AdminDeposits() {
     s.vehicle_plate.toLowerCase().includes(search.toLowerCase())
   );
 
+  const { items: sortedItems, requestSort, sortConfig } = useSortableData(filtered);
+
+  const renderSortIndicator = (key: string) => {
+    if (!sortConfig || sortConfig.key !== key) return null;
+    return sortConfig.direction === "asc" ? " ↑" : " ↓";
+  };
+
   // LÓGICA DE NEGOCIO: 
   // Solo sumamos al "Fondo Total" a los conductores que tienen carro asignado (Activos).
   // Los "Sin Asignar" se excluyen de la suma global.
@@ -114,20 +122,28 @@ export default function AdminDeposits() {
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200 text-left">
               <tr>
-                <th className="px-6 py-4 font-semibold text-slate-700">Conductor</th>
-                <th className="px-6 py-4 font-semibold text-slate-700">Vehículo Actual</th>
-                <th className="px-6 py-4 font-semibold text-slate-700">Estado</th>
-                <th className="px-6 py-4 font-semibold text-slate-700 text-right">Saldo Acumulado</th>
+                <th className="px-6 py-4 font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort("full_name")}>
+                  Conductor{renderSortIndicator("full_name")}
+                </th>
+                <th className="px-6 py-4 font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort("vehicle_plate")}>
+                  Vehículo Actual{renderSortIndicator("vehicle_plate")}
+                </th>
+                <th className="px-6 py-4 font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort("is_active")}>
+                  Estado{renderSortIndicator("is_active")}
+                </th>
+                <th className="px-6 py-4 font-semibold text-slate-700 text-right cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort("total_balance")}>
+                  Saldo Acumulado{renderSortIndicator("total_balance")}
+                </th>
                 <th className="px-6 py-4 font-semibold text-slate-700 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr><td colSpan={5} className="p-8 text-center text-slate-400">Cargando billeteras...</td></tr>
-              ) : filtered.length === 0 ? (
+              ) : sortedItems.length === 0 ? (
                 <tr><td colSpan={5} className="p-8 text-center text-slate-500">No se encontraron conductores.</td></tr>
               ) : (
-                filtered.map((item) => {
+                sortedItems.map((item) => {
                   // REGLA VISUAL: Si no tiene placa, es Inactivo (rojo)
                   const isRealActive = item.vehicle_plate !== "Sin Asignar";
                   
