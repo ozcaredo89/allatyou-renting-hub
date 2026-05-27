@@ -379,10 +379,10 @@ r.post("/", async (req: Request, res: Response) => {
 
   const upperPlate = plate.toUpperCase();
 
-  // validar placa existe
+  // validar placa existe y obtener el conductor actual
   const { data: v, error: vErr } = await supabase
     .from("vehicles")
-    .select("plate")
+    .select("plate, current_driver_id")
     .eq("plate", upperPlate)
     .single();
 
@@ -530,6 +530,7 @@ r.post("/", async (req: Request, res: Response) => {
   const insertPayload: any = {
     payer_name: payer_name.trim(),
     plate: upperPlate,
+    driver_id: v.current_driver_id || null, // Se inyecta el ID del conductor activo
     payment_date,
     amount: amt,
     installment_number: instNo,
