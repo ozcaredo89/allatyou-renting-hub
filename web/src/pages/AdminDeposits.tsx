@@ -51,7 +51,11 @@ export default function AdminDeposits() {
       const res = await fetch(`${API}/deposits`, { headers: { Authorization: auth } });
       if (!res.ok) throw new Error(await res.text());
       const json = await res.json();
-      setSummaries(json);
+      const mapped = json.map((s: any) => ({
+        ...s,
+        is_active: s.vehicle_plate !== "Sin Asignar",
+      }));
+      setSummaries(mapped);
     } catch (e) {
       console.error(e);
       alert("Error cargando depósitos");
@@ -144,8 +148,8 @@ export default function AdminDeposits() {
                 <tr><td colSpan={5} className="p-8 text-center text-slate-500">No se encontraron conductores.</td></tr>
               ) : (
                 sortedItems.map((item) => {
-                  // REGLA VISUAL: Si no tiene placa, es Inactivo (rojo)
-                  const isRealActive = item.vehicle_plate !== "Sin Asignar";
+                  // is_active ya está sincronizado con la placa desde que se carga
+                  const isRealActive = item.is_active;
                   
                   return (
                     <tr key={item.id} className="hover:bg-slate-50 transition-colors group">

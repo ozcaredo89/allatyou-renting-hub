@@ -6,63 +6,20 @@ const r = Router();
 // 1. RESUMEN: Listado de conductores con su saldo total calculado
 r.get("/", async (req: Request, res: Response) => {
   try {
-    // CORRECCIÓN: 
-    // 1. Usamos 'status' que SÍ existe en tu tabla.
-    // 2. Quitamos 'active_vehicle_id' que NO existe.
-    // 3. Traemos 'vehicles(plate)' asumiendo que vehicles tiene foreign key hacia drivers.
-    const { data: drivers, error: errDrivers } = await supabase
-      .from("drivers")
-      .select("id, full_name, status, vehicles(plate)")
+    const { data, error } = await supabase
+      .from("driver_balances_view")
+      .select("*")
       .order("full_name");
 
-    if (errDrivers) throw new Error(errDrivers.message);
+    if (error) throw new Error(error.message);
 
-    // B. Traer la suma de seguros pagados por conductor
-    const { data: payments } = await supabase
-      .from("payments")
-      .select("driver_id, insurance_amount")
-      .gt("insurance_amount", 0)
-      .not("driver_id", "is", null);
-
-    // C. Traer la suma de movimientos manuales
-    const { data: movements } = await supabase
-      .from("driver_deposit_movements")
-      .select("driver_id, amount");
-
-    // D. Calcular saldos en memoria
-    const saldoMap = new Map<number, number>();
-
-    payments?.forEach((p) => {
-      const current = saldoMap.get(p.driver_id) || 0;
-      saldoMap.set(p.driver_id, current + Number(p.insurance_amount));
-    });
-
-    movements?.forEach((m) => {
-      const current = saldoMap.get(m.driver_id) || 0;
-      saldoMap.set(m.driver_id, current + Number(m.amount));
-    });
-
-    // E. Armar respuesta final
-    const report = drivers.map((d: any) => {
-      // Manejo seguro de la placa (Supabase devuelve array en relaciones inversas)
-      let plate = "Sin Asignar";
-      if (d.vehicles) {
-         if (Array.isArray(d.vehicles) && d.vehicles.length > 0) {
-            plate = d.vehicles[0].plate;
-         } else if (!Array.isArray(d.vehicles) && d.vehicles.plate) {
-            plate = d.vehicles.plate;
-         }
-      }
-
-      return {
-        id: d.id,
-        full_name: d.full_name,
-        vehicle_plate: plate,
-        // Usamos el status real de tu DB
-        is_active: d.status === 'active', 
-        total_balance: saldoMap.get(d.id) || 0,
-      };
-    });
+    const report = data.map((d: any) => ({
+      id: d.id,
+      full_name: d.full_name,
+      vehicle_plate: d.vehicle_plate || "Sin Asignar",
+      is_active: d.status === "active",
+      total_balance: Number(d.total_balance) || 0,
+    }));
 
     return res.json(report);
   } catch (err: any) {
