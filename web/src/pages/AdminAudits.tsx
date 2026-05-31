@@ -101,7 +101,7 @@ function RulesModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-3xl shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95">
-                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <div className="p-4 md:p-6 border-b border-slate-100 flex justify-between items-start md:items-center bg-slate-50 gap-4">
                     <div>
                         <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                             <Settings className="w-5 h-5 text-emerald-600" />
@@ -111,29 +111,30 @@ function RulesModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void 
                             Ajusta el precio máximo tolerado y la frecuencia esperada en días para cada insumo.
                         </p>
                     </div>
-                    <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-700 bg-white rounded-full shadow-sm">
+                    <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-700 bg-white rounded-full shadow-sm shrink-0">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
 
-                <div className="p-6 overflow-y-auto bg-slate-50/50 flex-1">
+                <div className="p-4 md:p-6 overflow-y-auto bg-slate-50/50 flex-1">
                     {loading ? (
                         <div className="flex justify-center py-10">
                             <div className="w-8 h-8 rounded-full border-4 border-emerald-500 border-t-transparent animate-spin" />
                         </div>
                     ) : (
-                        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                            <table className="w-full text-left border-collapse">
-                                <thead>
-                                    <tr className="bg-slate-100 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
-                                        <th className="p-3 font-bold">Insumo</th>
-                                        <th className="p-3 font-bold">Precio Promed. Histórico</th>
-                                        <th className="p-3 font-bold">Tope Máx Permitido</th>
-                                        <th className="p-3 font-bold">Frecuencia (Días)</th>
-                                        <th className="p-3 font-bold text-center">Activa</th>
-                                        <th className="p-3 font-bold text-center">Acciones</th>
-                                    </tr>
-                                </thead>
+                        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden w-full">
+                            <div className="overflow-x-auto w-full">
+                                <table className="w-full text-left border-collapse min-w-max">
+                                    <thead>
+                                        <tr className="bg-slate-100 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                                            <th className="p-3 font-bold whitespace-nowrap">Insumo</th>
+                                            <th className="p-3 font-bold whitespace-nowrap">Precio Promed. Histórico</th>
+                                            <th className="p-3 font-bold whitespace-nowrap">Tope Máx Permitido</th>
+                                            <th className="p-3 font-bold whitespace-nowrap">Frecuencia (Días)</th>
+                                            <th className="p-3 font-bold text-center whitespace-nowrap">Activa</th>
+                                            <th className="p-3 font-bold text-center whitespace-nowrap">Acciones</th>
+                                        </tr>
+                                    </thead>
                                 <tbody>
                                     {rules.map(r => {
                                         const isEditing = editingId === r.id;
@@ -212,6 +213,7 @@ function RulesModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void 
                                     })}
                                 </tbody>
                             </table>
+                            </div>
                         </div>
                     )}
                 </div>
