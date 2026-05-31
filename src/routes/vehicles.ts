@@ -9,7 +9,7 @@ const r = Router();
  */
 r.get("/", async (req: Request, res: Response) => {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from("vehicles")
       .select(`
         *,
@@ -25,6 +25,12 @@ r.get("/", async (req: Request, res: Response) => {
         )
       `)
       .order("plate", { ascending: true });
+
+    if (req.query.status !== 'all') {
+      query = query.in("status", ["active", "maintenance"]);
+    }
+
+    const { data, error } = await query;
 
     if (error) return res.status(500).json({ error: error.message });
 
@@ -120,6 +126,7 @@ r.post("/", async (req: Request, res: Response) => {
       model_year: body.model_year,
       current_driver_id: body.current_driver_id || null,
       owner_name: ownerName,
+      status: body.status || 'active',
 
       // Legal & Seguridad
       alarm_code: body.alarm_code,
@@ -200,6 +207,7 @@ r.put("/:plate", async (req: Request, res: Response) => {
       line: body.line,
       model_year: body.model_year,
       current_driver_id: body.current_driver_id,
+      status: body.status,
 
       // Legal & Seguridad
       alarm_code: body.alarm_code,
@@ -223,8 +231,11 @@ r.put("/:plate", async (req: Request, res: Response) => {
       updated_at: new Date().toISOString(),
     };
 
-    // 2. Sincronización de nombre
-    if (body.current_driver_id !== undefined) {
+    // 2. Sincronización de nombre e inactivación lógica
+    if (body.status === 'sold' || body.status === 'inactive') {
+      updates.current_driver_id = null;
+      updates.owner_name = "SIN CONDUCTOR ASIGNADO";
+    } else if (body.current_driver_id !== undefined) {
       if (body.current_driver_id === null) {
         updates.owner_name = "SIN CONDUCTOR ASIGNADO";
       } else {

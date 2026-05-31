@@ -37,6 +37,8 @@ type Vehicle = {
   // MÉTRICAS GLOBALES
   current_mileage?: number;
   last_oil_change_date?: string;
+
+  status?: 'active' | 'maintenance' | 'sold' | 'inactive';
 };
 
 const EMPTY_VEHICLE: Vehicle = {
@@ -57,7 +59,8 @@ const EMPTY_VEHICLE: Vehicle = {
   ownership_card_front: null,
   ownership_card_back: null,
   purchase_price: "",
-  purchase_date: new Date().toISOString().slice(0, 10)
+  purchase_date: new Date().toISOString().slice(0, 10),
+  status: 'active'
 };
 
 const formatMoneyInput = (value: string | undefined) => {
@@ -78,9 +81,18 @@ function getOilChangeStatus(dateStr?: string) {
   return { color: "text-emerald-700 bg-emerald-100 font-medium", label: dateStr };
 }
 
+const StatusBadge = ({ status }: { status?: string }) => {
+  if (status === 'maintenance') return <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200">Mantenimiento</span>;
+  if (status === 'sold') return <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700 border border-slate-300">Vendido</span>;
+  if (status === 'inactive') return <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">Inactivo</span>;
+  return <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Activo</span>;
+};
+
 export default function AdminVehicles() {
   const [items, setItems] = useState<Vehicle[]>([]);
-  const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
+  const [statusFilter, setStatusFilter] = useState<'active' | 'inactive'>('active');
+  const filteredItems = items.filter(v => statusFilter === 'active' ? (v.status === 'active' || v.status === 'maintenance' || !v.status) : (v.status === 'sold' || v.status === 'inactive'));
+  const { items: sortedItems, requestSort, sortConfig } = useSortableData(filteredItems);
 
   const SortIcon = ({ columnKey }: { columnKey: string }) => {
     if (sortConfig?.key !== columnKey) {
@@ -134,7 +146,7 @@ export default function AdminVehicles() {
       const auth = ensureBasicAuth();
       const headers = { Authorization: auth };
 
-      const rsV = await fetch(`${API}/vehicles`, { headers });
+      const rsV = await fetch(`${API}/vehicles?status=all`, { headers });
       if (rsV.status === 401) {
         clearBasicAuth();
         window.location.reload();
@@ -420,6 +432,12 @@ export default function AdminVehicles() {
           </div>
         </div>
 
+        {/* TABS */}
+        <div className="mb-4 flex gap-2">
+          <button onClick={() => setStatusFilter('active')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>Operativos</button>
+          <button onClick={() => setStatusFilter('inactive')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'inactive' ? 'bg-slate-700 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>Vendidos / Inactivos</button>
+        </div>
+
         {/* TABLA */}
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
@@ -437,6 +455,7 @@ export default function AdminVehicles() {
                       Conductor Actual <SortIcon columnKey="driver.full_name" />
                     </div>
                   </th>
+                  <th className="px-4 py-3 text-center">Estado</th>
                   <th className="px-4 py-3 text-center">
                     <div onClick={() => requestSort('soat_expires_at')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
                       SOAT <SortIcon columnKey="soat_expires_at" />
@@ -486,6 +505,9 @@ export default function AdminVehicles() {
                             </span>
                           </div>
                         ) : <span className="text-slate-400 italic text-[11px]">Sin asignar</span>}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <StatusBadge status={v.status} />
                       </td>
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.soat_expires_at)}`}>{v.soat_expires_at || "—"}</td>
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.tecno_expires_at)}`}>{v.tecno_expires_at || "—"}</td>
@@ -690,6 +712,19 @@ export default function AdminVehicles() {
                         {drivers.map(d => (<option key={d.id} value={d.id}>{d.full_name}</option>))}
                       </select>
                       <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-emerald-600">▼</div>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-200">
+                    <label className="block text-xs font-bold text-slate-800 mb-2">Estado Operativo</label>
+                    <div className="relative">
+                      <select className="w-full appearance-none rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none" value={editing.status || "active"} onChange={e => setEditing({ ...editing, status: e.target.value as any })}>
+                        <option value="active">Activo</option>
+                        <option value="maintenance">Mantenimiento</option>
+                        <option value="inactive">Inactivo</option>
+                        <option value="sold">Vendido</option>
+                      </select>
+                      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-500">▼</div>
                     </div>
                   </div>
                 </div>
