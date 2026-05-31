@@ -39,11 +39,12 @@ r.get("/profit", async (req: Request, res: Response) => {
   // 1) Get all vehicles (ensures rows even when 0 activity)
   const { data: vehicles, error: vErr } = await supabase
     .from("vehicles")
-    .select("plate")
+    .select("plate, status")
     .order("plate", { ascending: true });
   if (vErr) return res.status(500).json({ error: vErr.message });
 
   const allPlates = (vehicles || []).map(v => v.plate);
+  const allStatuses = new Map((vehicles || []).map(v => [v.plate, v.status]));
   const filterPlates = plateFilter ? allPlates.filter(p => p === plateFilter) : allPlates;
 
   // 2) Monthly profit rows for the month (only for those with activity)
@@ -92,6 +93,7 @@ r.get("/profit", async (req: Request, res: Response) => {
 
     return {
       plate,
+      status: allStatuses.get(plate) || 'active',
       month: monthStart,
       pure_income,
       deposits_total,

@@ -8,6 +8,7 @@ const fmtCOP = new Intl.NumberFormat("es-CO");
 
 type ProfitRow = {
   plate: string;
+  status?: 'active' | 'maintenance' | 'sold' | 'inactive';
   month: string;
   pure_income: number;
   deposits_total: number;
@@ -98,12 +99,20 @@ function fmtDayLabel(iso: string): string {
   return `${days[d.getDay()]} ${d.getDate()}`;
 }
 
+const StatusBadge = ({ status }: { status?: string }) => {
+  if (status === 'maintenance') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200">Mantenimiento</span>;
+  if (status === 'sold') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700 border border-slate-300">Vendido</span>;
+  if (status === 'inactive') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">Inactivo</span>;
+  return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Activo</span>;
+};
+
 export default function AdminProfit() {
   const todayYm = new Date().toISOString().slice(0, 7);
   const [month, setMonth] = useState(todayYm);
   const [plate, setPlate] = useState("");
   const [data, setData] = useState<ProfitResp | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showInactive, setShowInactive] = useState(true);
 
   // View mode & daily data
   const [viewMode, setViewMode] = useState<"monthly" | "daily">("monthly");
@@ -315,8 +324,22 @@ export default function AdminProfit() {
     await load();
   }
 
-  const items = data?.items || [];
-  const totals = data?.totals;
+  const rawItems = data?.items || [];
+  const items = showInactive ? rawItems : rawItems.filter(r => r.status !== 'sold' && r.status !== 'inactive');
+
+  const totals = showInactive ? data?.totals : items.reduce((acc, r) => {
+    acc.pure_income += r.pure_income;
+    acc.deposits_total += r.deposits_total;
+    acc.advances_total += r.advances_total;
+    acc.maintenance_provision += r.maintenance_provision;
+    acc.expense += r.expense;
+    acc.adjustments += r.adjustments;
+    acc.profit += r.profit;
+    acc.investment_total += Number(r.investment_total || 0);
+    if (r.remaining != null) acc.remaining += Number(r.remaining || 0);
+    return acc;
+  }, { pure_income: 0, deposits_total: 0, advances_total: 0, maintenance_provision: 0, expense: 0, adjustments: 0, profit: 0, investment_total: 0, remaining: 0 });
+
   const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
 
   const dailyItems = dailyData?.items || [];
@@ -357,29 +380,43 @@ export default function AdminProfit() {
           </form>
 
           {/* Tab toggle */}
-          <div className="mb-4 inline-flex rounded-xl border bg-gray-100 p-1">
-            <button
-              type="button"
-              onClick={() => setViewMode("monthly")}
-              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                viewMode === "monthly"
-                  ? "bg-white text-black shadow-sm"
-                  : "text-gray-500 hover:text-black"
-              }`}
-            >
-              📈 Mensual
-            </button>
-            <button
-              type="button"
-              onClick={() => { setViewMode("daily"); if (!dailyData) loadDaily(); }}
-              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                viewMode === "daily"
-                  ? "bg-white text-black shadow-sm"
-                  : "text-gray-500 hover:text-black"
-              }`}
-            >
-              📊 Diario
-            </button>
+          {/* Tab toggle */}
+          <div className="mb-4 flex items-center gap-4 flex-wrap">
+            <div className="inline-flex rounded-xl border bg-gray-100 p-1">
+              <button
+                type="button"
+                onClick={() => setViewMode("monthly")}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  viewMode === "monthly"
+                    ? "bg-white text-black shadow-sm"
+                    : "text-gray-500 hover:text-black"
+                }`}
+              >
+                📈 Mensual
+              </button>
+              <button
+                type="button"
+                onClick={() => { setViewMode("daily"); if (!dailyData) loadDaily(); }}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  viewMode === "daily"
+                    ? "bg-white text-black shadow-sm"
+                    : "text-gray-500 hover:text-black"
+                }`}
+              >
+                📊 Diario
+              </button>
+            </div>
+            {viewMode === "monthly" && (
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 px-3 py-2 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors shadow-sm">
+                <input
+                  type="checkbox"
+                  checked={showInactive}
+                  onChange={(e) => setShowInactive(e.target.checked)}
+                  className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                />
+                Incluir vehículos inactivos/vendidos
+              </label>
+            )}
           </div>
 
           {/* ========== VISTA DIARIA ========== */}
@@ -538,7 +575,12 @@ export default function AdminProfit() {
               <tbody>
                 {sortedItems.map((r) => (
                   <tr key={r.plate} className="border-t">
-                    <td className="px-4 py-3 font-medium">{r.plate}</td>
+                    <td className="px-4 py-3 font-medium">
+                      <div className="flex items-center gap-2">
+                        {r.plate}
+                        <StatusBadge status={r.status} />
+                      </div>
+                    </td>
 
                     {/* Ingreso Neto: clickeable para ver detalle */}
                     <td className="px-4 py-3">
