@@ -35,8 +35,22 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   const { data, error, count } = await query;
 
   if (error) return res.status(500).json({ error: error.message });
+
+  // Hacemos JOIN en código para no alterar la vista SQL subyacente
+  let items = data ?? [];
+  if (items.length > 0) {
+    const plates = items.map(r => r.plate);
+    const { data: vData } = await supabase.from("vehicles").select("plate, status").in("plate", plates);
+    const statusMap = new Map((vData || []).map(v => [v.plate, v.status]));
+    
+    items = items.map(r => ({
+      ...r,
+      status: statusMap.get(r.plate) || 'active'
+    }));
+  }
+
   return res.json({
-    items: data ?? [],
+    items,
     total: count ?? 0,
     limit,
     offset,

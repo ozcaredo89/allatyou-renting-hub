@@ -15,6 +15,7 @@ type Row = {
   is_overdue: boolean;
   installment_number: number | null;
   proof_url: string | null;
+  status?: 'active' | 'maintenance' | 'sold' | 'inactive';
 };
 
 
@@ -29,11 +30,19 @@ type Payment = {
   status: "pending" | "confirmed" | "rejected";
 };
 
+const StatusBadge = ({ status }: { status?: string }) => {
+  if (status === 'maintenance') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200">Mantenimiento</span>;
+  if (status === 'sold') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700 border border-slate-300">Vendido</span>;
+  if (status === 'inactive') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">Inactivo</span>;
+  return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Activo</span>;
+};
+
 export default function Reports() {
   const todayYm = new Date().toISOString().slice(0, 7); // YYYY-MM
   const [month, setMonth] = useState<string>(todayYm);
   const [q, setQ] = useState("");
   const [onlyOverdue, setOnlyOverdue] = useState(false);
+  const [showInactive, setShowInactive] = useState(true);
   const [items, setItems] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -42,6 +51,7 @@ export default function Reports() {
   const limit = 20;
 
   const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
+  const visibleItems = showInactive ? sortedItems : sortedItems.filter(r => r.status !== 'sold' && r.status !== 'inactive');
 
   async function handleDeleteLastPayment(plate: string) {
     if (!window.confirm(`⚠️ ¿Estás seguro de deshacer el último pago de la placa ${plate}? Esta acción no se puede revertir.`)) {
@@ -266,6 +276,18 @@ export default function Reports() {
           </div>
         </div>
 
+        <div className="mb-4">
+          <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 px-3 py-2 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors shadow-sm w-max">
+            <input
+              type="checkbox"
+              checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+              className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+            />
+            Incluir vehículos inactivos/vendidos
+          </label>
+        </div>
+
         {/* Errores */}
         {errorMsg && (
           <div className="mb-3 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">
@@ -312,17 +334,22 @@ export default function Reports() {
               </tr>
             </thead>
             <tbody>
-              {sortedItems.map((r) => {
+              {visibleItems.map((r) => {
                 const overdue = r.is_overdue === true;
                 const color = overdue ? "text-red-600" : "";
 
                 return (
-                  <tr key={r.plate} className="border-t">
-                    <td className={`px-4 py-3 ${overdue ? "font-medium " + color : ""}`}>
-                      {r.owner_name ?? "—"}
-                    </td>
-                    <td className={`px-4 py-3 font-medium ${color}`}>{r.plate}</td>
-                    <td className={`px-4 py-3 ${color}`}>{r.payment_date ?? "—"}</td>
+                    <tr key={r.plate} className="border-t">
+                      <td className={`px-4 py-3 ${overdue ? "font-medium " + color : ""}`}>
+                        {r.owner_name ?? "—"}
+                      </td>
+                      <td className={`px-4 py-3 font-medium ${color}`}>
+                        <div className="flex items-center gap-2">
+                          {r.plate}
+                          <StatusBadge status={r.status} />
+                        </div>
+                      </td>
+                      <td className={`px-4 py-3 ${color}`}>{r.payment_date ?? "—"}</td>
                     <td className={`px-4 py-3 ${color}`}>
                       {r.amount != null ? (
                         r.proof_url ? (
@@ -371,7 +398,7 @@ export default function Reports() {
                   </tr>
                 );
               })}
-              {sortedItems.length === 0 && !loading && (
+              {visibleItems.length === 0 && !loading && (
                 <tr>
                   <td className="px-4 py-6 text-gray-500" colSpan={7}>
                     Sin resultados.
