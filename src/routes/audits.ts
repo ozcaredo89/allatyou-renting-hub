@@ -69,7 +69,7 @@ r.get("/dashboard", async (req: Request, res: Response) => {
         // traeremos los gastos recientes y sumaremos en memoria. Es un approach válido para volúmenes medianos.
         const { data: expenses, error: expErr } = await supabase
             .from("expenses")
-            .select("item, total_amount, category")
+            .select("item, total_amount, category, date")
             // Vamos a analizar el histórico completo o últimos 12 meses
             .gte("date", new Date(new Date().setFullYear(new Date().getFullYear() - 1)).toISOString().split('T')[0]);
 
@@ -136,6 +136,34 @@ r.get("/dashboard", async (req: Request, res: Response) => {
 
         if (alertErr) throw alertErr;
 
+        // --- D. HISTÓRICO DE GASTOS (ÚLTIMOS 6 MESES) ---
+        const last6Months: string[] = [];
+        const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+        const historyMap: Record<string, { label: string; total: number }> = {};
+        
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(1); // FIX: prevent month skipping on the 31st
+            d.setMonth(d.getMonth() - i);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            const label = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+            last6Months.push(key);
+            historyMap[key] = { label, total: 0 };
+        }
+
+        (expenses || []).forEach(e => {
+            if (!e.date) return;
+            const key = e.date.substring(0, 7); // YYYY-MM
+            if (historyMap[key]) {
+                historyMap[key].total += (Number(e.total_amount) || 0);
+            }
+        });
+
+        const expensesHistory = last6Months.map(key => ({
+            month: historyMap[key]!.label,
+            total: historyMap[key]!.total
+        }));
+
         return res.json({
             summary: {
                 total_expenses_year: totalExpensesSum,
@@ -143,7 +171,8 @@ r.get("/dashboard", async (req: Request, res: Response) => {
             },
             top_expense_items: topItems,
             worst_roi_vehicles: worstVehicles,
-            active_alerts: alerts || []
+            active_alerts: alerts || [],
+            expenses_history: expensesHistory
         });
 
     } catch (err: any) {

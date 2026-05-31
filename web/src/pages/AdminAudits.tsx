@@ -33,6 +33,7 @@ type AuditsDashboard = {
     top_expense_items: TopItem[];
     worst_roi_vehicles: WorstVehicle[];
     active_alerts: AuditAlert[];
+    expenses_history: { month: string; total: number }[];
 };
 
 function formatCurrencyStr(val: number) {
@@ -343,6 +344,50 @@ export default function AdminAudits() {
                                     </div>
                                 ))
                             )}
+                        </div>
+                    </div>
+
+                    {/* HISTÓRICO DE GASTOS */}
+                    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-100 relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-32 h-32 bg-indigo-100 rounded-full blur-3xl opacity-50 -translate-y-1/2 -translate-x-1/2" />
+                        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                            <TrendingDown className="w-6 h-6 text-indigo-400" />
+                            Histórico de Gastos
+                            <span className="text-xs font-normal bg-slate-100 text-slate-500 px-2 py-1 rounded-full ml-auto">Últimos 6 meses</span>
+                        </h2>
+
+                        <div className="h-64 flex items-end gap-2 md:gap-4 mt-8 pb-6 border-b border-slate-100">
+                            {(() => {
+                                const history = dashboard.expenses_history || [];
+                                if (history.length === 0) return <p className="text-slate-500 text-center w-full pb-10">No hay datos suficientes para graficar</p>;
+                                
+                                const maxTotal = Math.max(...history.map(h => h.total));
+                                
+                                return history.map(item => {
+                                    const pct = maxTotal > 0 ? (item.total / maxTotal) * 100 : 0;
+                                    return (
+                                        <div key={item.month} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                                            {/* Tooltip / Valor formateado */}
+                                            <div className="absolute -top-8 bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10 shadow-lg">
+                                                {formatCurrency(item.total)}
+                                            </div>
+                                            
+                                            {/* Barra contenedor (fondo claro) */}
+                                            <div className="w-full max-w-[48px] bg-slate-50 rounded-t-xl h-full relative flex items-end justify-center transition-all group-hover:bg-slate-100">
+                                                <div 
+                                                    className="w-full bg-slate-800 rounded-t-xl transition-all duration-700 ease-out group-hover:bg-indigo-600"
+                                                    style={{ height: `${pct}%` }}
+                                                />
+                                            </div>
+                                            
+                                            {/* Etiqueta del Mes */}
+                                            <div className="mt-3 text-xs font-semibold text-slate-500 text-center whitespace-nowrap">
+                                                {item.month}
+                                            </div>
+                                        </div>
+                                    );
+                                });
+                            })()}
                         </div>
                     </div>
 
