@@ -307,6 +307,11 @@ export default function AdminDrivers() {
                     </div>
                   </th>
                   <th className="px-4 py-3">
+                    <div onClick={() => requestSort('created_at')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
+                      Registro <SortIcon columnKey="created_at" />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3">
                     <div onClick={() => requestSort('status')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
                       Estado <SortIcon columnKey="status" />
                     </div>
@@ -317,9 +322,9 @@ export default function AdminDrivers() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  <tr><td colSpan={6} className="p-10 text-center text-slate-400">Cargando...</td></tr>
+                  <tr><td colSpan={7} className="p-10 text-center text-slate-400">Cargando...</td></tr>
                 ) : sortedItems.length === 0 ? (
-                  <tr><td colSpan={6} className="p-10 text-center text-slate-400">No hay conductores registrados.</td></tr>
+                  <tr><td colSpan={7} className="p-10 text-center text-slate-400">No hay conductores registrados.</td></tr>
                 ) : (
                   sortedItems.map((d) => (
                     <tr key={d.id} className="hover:bg-slate-50 transition-colors">
@@ -341,6 +346,9 @@ export default function AdminDrivers() {
                           <span className="font-medium">{d.phone}</span>
                           <span className="text-[10px] text-slate-400">{d.email}</span>
                         </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 font-mono text-xs">
+                        {new Date(d.created_at).toLocaleDateString("es-CO", { year: "numeric", month: "short", day: "numeric" })}
                       </td>
                       <td className="px-4 py-3">{statusBadge(d.status)}</td>
                       <td className="px-4 py-3">
