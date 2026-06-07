@@ -1,8 +1,9 @@
 import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
+import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useSortableData } from "../hooks/useSortableData";
+import { TopDwellLocations } from "../components/TopDwellLocations";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -116,7 +117,7 @@ export default function AdminVehicles() {
   const [vehicleExpenses, setVehicleExpenses] = useState<any[]>([]);
   const [vehicleMileage, setVehicleMileage] = useState<any[]>([]); // Historial Kilometraje
   const [loadingExpenses, setLoadingExpenses] = useState(false);
-  const [viewingHistory, setViewingHistory] = useState<{ plate: string; category: 'Mantenimiento' | 'Cambio de aceite' | 'Kilometraje' } | null>(null);
+  const [viewingHistory, setViewingHistory] = useState<{ plate: string; category: 'Mantenimiento' | 'Cambio de aceite' | 'Kilometraje' | 'Hotspots' } | null>(null);
   const [viewingExpenseDetail, setViewingExpenseDetail] = useState<any | null>(null);
   const [viewingImages, setViewingImages] = useState<{ urls: { url: string, title?: string }[]; startingIndex: number } | null>(null);
 
@@ -211,7 +212,7 @@ export default function AdminVehicles() {
     setIsCreating(false);
   }
 
-  function openHistory(plate: string, category: 'Mantenimiento' | 'Cambio de aceite' | 'Kilometraje') {
+  function openHistory(plate: string, category: 'Mantenimiento' | 'Cambio de aceite' | 'Kilometraje' | 'Hotspots') {
     setVehicleExpenses([]);
     setVehicleMileage([]);
     setViewingHistory({ plate, category });
@@ -546,6 +547,13 @@ export default function AdminVehicles() {
                             >
                               <Droplets size={14} />
                             </button>
+                            <button
+                              onClick={() => openHistory(v.plate, 'Hotspots')}
+                              title="Top 3 Parqueaderos GPS"
+                              className="p-1.5 text-slate-400 hover:text-violet-500 hover:bg-white rounded shadow-sm hover:shadow transition-all"
+                            >
+                              <MapPin size={14} />
+                            </button>
                           </div>
                         </div>
                       </td>
@@ -795,6 +803,8 @@ export default function AdminVehicles() {
                     <><Wrench className="text-blue-500 w-5 h-5" /> Mantenimientos</>
                   ) : viewingHistory.category === 'Cambio de aceite' ? (
                     <><Droplets className="text-amber-500 w-5 h-5" /> Cambios Aceite</>
+                  ) : viewingHistory.category === 'Hotspots' ? (
+                    <><MapPin className="text-violet-500 w-5 h-5" /> Top Parqueaderos</>
                   ) : (
                     <><span className="text-emerald-500 font-black">KM</span> Odométro</>
                   )}
@@ -968,6 +978,16 @@ export default function AdminVehicles() {
                 )}
               </div>
             </div>
+
+            {/* Hotspots panel rendered inline when the Hotspots tab is active */}
+            {viewingHistory.category === 'Hotspots' && (
+              <div className="flex-1 overflow-y-auto p-5">
+                <TopDwellLocations
+                  plate={viewingHistory.plate}
+                  authHeader={ensureBasicAuth()}
+                />
+              </div>
+            )}
 
           </div>
         </div>
