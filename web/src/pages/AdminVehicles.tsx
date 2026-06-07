@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin } from "lucide-react";
+import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useSortableData } from "../hooks/useSortableData";
 import { TopDwellLocations } from "../components/TopDwellLocations";
+import FleetMap from "../components/FleetMap";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -120,6 +121,7 @@ export default function AdminVehicles() {
   const [viewingHistory, setViewingHistory] = useState<{ plate: string; category: 'Mantenimiento' | 'Cambio de aceite' | 'Kilometraje' | 'Hotspots' } | null>(null);
   const [viewingExpenseDetail, setViewingExpenseDetail] = useState<any | null>(null);
   const [viewingImages, setViewingImages] = useState<{ urls: { url: string, title?: string }[]; startingIndex: number } | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
 
   // Estado para Reporte Manual Odómetro
   const [newMileage, setNewMileage] = useState<{ mileage_km: string; date: string }>({ mileage_km: "", date: new Date().toISOString().slice(0, 10) });
@@ -425,7 +427,21 @@ export default function AdminVehicles() {
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Gestión de Flota</h1>
             <p className="text-sm text-slate-500">Hoja de vida, mantenimientos y asignación.</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex items-center gap-4">
+            <div className="flex bg-slate-200 p-1 rounded-xl">
+              <button
+                onClick={() => setViewMode('list')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'list' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <List className="w-4 h-4" /> Lista
+              </button>
+              <button
+                onClick={() => setViewMode('map')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'map' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <Map className="w-4 h-4" /> Mapa
+              </button>
+            </div>
             <button onClick={loadData} className="text-sm text-emerald-600 hover:underline font-medium px-3">Refrescar</button>
             <button onClick={handleCreate} className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-lg hover:bg-black transition-all">
               <span>+</span> Registrar Vehículo
@@ -439,9 +455,12 @@ export default function AdminVehicles() {
           <button onClick={() => setStatusFilter('inactive')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'inactive' ? 'bg-slate-700 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>Vendidos / Inactivos</button>
         </div>
 
-        {/* TABLA */}
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
+        {/* TABLA O MAPA */}
+        <div className={`overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm ${viewMode === 'map' ? 'h-[700px]' : ''}`}>
+          {viewMode === 'map' ? (
+            <FleetMap />
+          ) : (
+            <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-left uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200">
                 <tr>
@@ -566,6 +585,7 @@ export default function AdminVehicles() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       </div>
 

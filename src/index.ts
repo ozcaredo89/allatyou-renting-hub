@@ -42,6 +42,7 @@ import auditsRoutes from "./routes/audits";
 import inventoryRoutes from "./routes/inventory";
 
 import oracleRoutes from "./routes/oracle";
+import fleetMapRoutes from "./routes/fleetMap";
 
 // --- MÓDULO DAEMON PROTRACK KILÓMETROS ---
 import { syncProtrackMileage } from "./oraculo/mileage-daemon";
@@ -138,6 +139,7 @@ app.use("/inspections", basicAuth, inspectionsRoutes);
 app.use("/audits", basicAuth, auditsRoutes);
 app.use("/inventory", basicAuth, inventoryRoutes);
 app.use("/oracle", basicAuth, oracleRoutes);
+app.use("/fleet-map", basicAuth, fleetMapRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
