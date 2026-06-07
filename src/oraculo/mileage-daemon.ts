@@ -47,14 +47,37 @@ export async function syncProtrackMileage() {
         // Restamos 12 o 24 horas dependiendo del cron, asumimos que este ciclo corre de forma segura cubriendo baches
         const windowStart = new Date(now.getTime() - (12 * 60 * 60 * 1000)).toISOString();
 
-        // Obtener los puntos de telemetría recientes
-        const { data: rawTelemetry } = await supabase
-            .from('raw_telemetry')
-            .select('imei, lat, lng, report_time')
-            .gte('report_time', windowStart)
-            .order('report_time', { ascending: true });
+        // Obtener los puntos de telemetría recientes (Paginado para evitar límite de 1000 de Supabase)
+        const rawTelemetry: any[] = [];
+        let hasMore = true;
+        let page = 0;
+        const PAGE_SIZE = 1000;
 
-        if (!rawTelemetry || rawTelemetry.length === 0) {
+        while (hasMore) {
+            const { data, error } = await supabase
+                .from('raw_telemetry')
+                .select('imei, lat, lng, report_time')
+                .gte('report_time', windowStart)
+                .order('report_time', { ascending: true })
+                .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+            if (error) {
+                throw error;
+            }
+
+            if (data && data.length > 0) {
+                rawTelemetry.push(...data);
+                if (data.length < PAGE_SIZE) {
+                    hasMore = false;
+                } else {
+                    page++;
+                }
+            } else {
+                hasMore = false;
+            }
+        }
+
+        if (rawTelemetry.length === 0) {
             console.log("[MILEAGE-DAEMON] No hay pings de telemetría recientes en la BD para analizar.");
             return;
         }
@@ -106,8 +129,8 @@ export async function syncProtrackMileage() {
         }
 
         console.log(`[MILEAGE-DAEMON] ✅ Ciclo Terminado. Se calcularon distancias diarias para ${insertedCount} vehículos.`);
-    } catch (err: any) {
-        console.error("[MILEAGE-DAEMON] Error fatal:", err.message);
+    } catch (error: any) {
+        console.error("CRITICAL GPS SYNC ERROR:", error);
     }
 }
 
