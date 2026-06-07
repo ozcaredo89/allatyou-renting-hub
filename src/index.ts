@@ -47,6 +47,9 @@ import oracleRoutes from "./routes/oracle";
 import { syncProtrackMileage } from "./oraculo/mileage-daemon";
 import { syncGpsImeis } from "./oraculo/sync-imei";
 
+// --- MÓDULO DAEMON ORÁCULO DE TELEMETRÍA ---
+import { startOracleDaemon } from "./oraculo";
+
 const app = express();
 
 const allowedOrigins = [
@@ -139,6 +142,10 @@ app.use("/oracle", basicAuth, oracleRoutes);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`API up on http://localhost:${PORT}`);
+
+  // Encender el Demonio del Oráculo de Telemetría
+  console.log("Iniciando daemon de telemetría (Oráculo)...");
+  startOracleDaemon().catch(err => console.error("Fallo al iniciar el Oráculo:", err));
 
   // Arrancar el Daemon de Kilometraje al inicio (con delay para no bloquear)
   setTimeout(() => {

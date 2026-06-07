@@ -7,7 +7,7 @@ import { startMonetizationApi } from './api';
 
 const POLLING_INTERVAL_MINS = 3;
 
-async function startOracleDaemon() {
+export async function startOracleDaemon() {
     console.log("==========================================");
     console.log(`👁️ EL ORÁCULO DE NODOS HA DESPERTADO`);
     console.log(`==========================================`);
@@ -41,5 +41,3 @@ async function startOracleDaemon() {
         }
     }, 24 * 60 * 60 * 1000); // 24 Horas
 }
-
-startOracleDaemon();
