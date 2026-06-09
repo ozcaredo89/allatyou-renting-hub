@@ -6,7 +6,7 @@ import {
   InfoWindow,
 } from "@react-google-maps/api";
 import { ensureBasicAuth } from "../lib/auth";
-import { MapPin, RefreshCw, Car, Clock, AlertCircle, Layers } from "lucide-react";
+import { Car, Clock, AlertCircle, Layers } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
@@ -133,8 +133,6 @@ export default function FleetMap() {
   }
 
   // ── Status helpers ─────────────────────────────────────────────────────────
-  const activeCount      = pins.filter(p => p.status === "active").length;
-  const maintenanceCount = pins.filter(p => p.status === "maintenance").length;
 
   // ── Render states ──────────────────────────────────────────────────────────
   if (loadError) {
