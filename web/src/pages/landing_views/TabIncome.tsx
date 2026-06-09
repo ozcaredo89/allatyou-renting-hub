@@ -5,7 +5,6 @@ import { VehicleApplicationForm } from "../../components/VehicleApplicationForm"
 import { ShareButton } from "../../components/ShareButton";
 import { IncomeSimulator } from "../../components/IncomeSimulator";
 import { ProcessSteps, MoneyFlow } from "../../components/MarketingSections";
-import { ModelOverview } from "../../components/ModelOverview"; 
 import { InvestmentVaki } from "../../components/InvestmentVaki";
 
 export function TabIncome({ referralCode }: { referralCode: string | null }) {
@@ -70,15 +69,16 @@ export function TabIncome({ referralCode }: { referralCode: string | null }) {
 
           {/* Right: Simulador */}
           <div id="simulador" className="relative z-10">
-            <ModelOverview /> 
             <IncomeSimulator onAction={() => setShowRegisterModal(true)} />
           </div>
         </section>
       </div>
 
       <div className="mx-auto max-w-6xl px-4 mt-12">
-        {/* COMPONENTE VAKI */}
-        <InvestmentVaki />
+        {/* SECCIÓN VAKI (Ancho completo) */}
+        <div className="mb-20">
+          <InvestmentVaki />
+        </div>
 
         <section id="como" className="rounded-3xl border border-white/10 bg-[#101a33]/50 p-8 backdrop-blur-sm mb-16">
           <h2 className="text-2xl font-bold text-white mb-2">Cómo funciona (Propietarios)</h2>

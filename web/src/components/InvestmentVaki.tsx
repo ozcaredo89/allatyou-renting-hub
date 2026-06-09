@@ -90,7 +90,7 @@ export function InvestmentVaki() {
   }
 
   return (
-    <section id="vaki" className="rounded-3xl border border-white/10 bg-[#0d1b2a] p-8 md:p-10 shadow-2xl backdrop-blur-sm mb-20">
+    <section id="vaki" className="rounded-3xl border border-white/10 bg-[#0d1b2a] p-8 md:p-10 shadow-2xl backdrop-blur-sm">
 
       {/* ── Header ── */}
       <div className="mb-8">
