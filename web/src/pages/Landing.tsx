@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Instagram, Facebook } from "lucide-react";
 import Logo from "../components/Logo";
 import { TrustSection } from "../components/TrustSection";
 import { FaqSection } from "../components/MarketingSections";
@@ -70,8 +71,21 @@ export default function Landing() {
             )}
             <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
           </nav>
-          <div className="flex gap-3">
-             <a href={WHATSAPP_URL} target="_blank" className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 transition-all">
+          <div className="flex items-center gap-2 md:gap-4">
+            {/* Social Icons */}
+            <div className="hidden sm:flex items-center gap-2 md:gap-3 pr-2 md:pr-3 border-r border-white/10">
+              <a href="https://www.instagram.com/allatyourenting/" target="_blank" rel="noopener noreferrer" aria-label="Instagram" className="text-slate-400 hover:text-pink-500 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+                <Instagram className="w-5 h-5" />
+              </a>
+              <a href="https://www.facebook.com/profile.php?id=61587315881723" target="_blank" rel="noopener noreferrer" aria-label="Facebook" className="text-slate-400 hover:text-blue-500 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+                <Facebook className="w-5 h-5" />
+              </a>
+              <a href="https://www.tiktok.com/@allatyourenting" target="_blank" rel="noopener noreferrer" aria-label="TikTok" className="text-slate-400 hover:text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
+              </a>
+            </div>
+            {/* WhatsApp CTA */}
+             <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 transition-all hover:-translate-y-1">
                WhatsApp
              </a>
           </div>
@@ -142,9 +156,21 @@ export default function Landing() {
       </main>
 
       <footer className="border-t border-white/10 pt-12 pb-8 text-center text-xs text-slate-500">
-        <div className="flex justify-center gap-6 mb-8">
-          <a href={WHATSAPP_URL} className="hover:text-emerald-400 transition-colors">WhatsApp Soporte</a>
-          <a href="mailto:contacto@allatyou.com" className="hover:text-emerald-400 transition-colors">Email</a>
+        <div className="flex justify-center items-center gap-6 mb-4">
+          <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors text-sm font-medium">WhatsApp Soporte</a>
+          <a href="mailto:contacto@allatyou.com" className="hover:text-emerald-400 transition-colors text-sm font-medium">Email</a>
+        </div>
+        {/* Social Icons - Mobile Friendly */}
+        <div className="flex justify-center items-center gap-5 mb-8">
+           <a href="https://www.instagram.com/allatyourenting/" target="_blank" rel="noopener noreferrer" aria-label="Instagram" className="text-slate-400 hover:text-pink-500 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+              <Instagram className="w-5 h-5" />
+           </a>
+           <a href="https://www.facebook.com/profile.php?id=61587315881723" target="_blank" rel="noopener noreferrer" aria-label="Facebook" className="text-slate-400 hover:text-blue-500 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+              <Facebook className="w-5 h-5" />
+           </a>
+           <a href="https://www.tiktok.com/@allatyourenting" target="_blank" rel="noopener noreferrer" aria-label="TikTok" className="text-slate-400 hover:text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
+           </a>
         </div>
         <p className="mb-2">© {new Date().getFullYear()} AllAtYou Renting S.A.S — NIT 901.995.593 — Cali, Colombia.</p>
       </footer>
