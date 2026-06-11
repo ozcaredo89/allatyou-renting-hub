@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map } from "lucide-react";
+import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3 } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useSortableData } from "../hooks/useSortableData";
 import { TopDwellLocations } from "../components/TopDwellLocations";
 import FleetMap from "../components/FleetMap";
+import { GlobalOilReport } from "../components/GlobalOilReport";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -122,6 +123,7 @@ export default function AdminVehicles() {
   const [viewingExpenseDetail, setViewingExpenseDetail] = useState<any | null>(null);
   const [viewingImages, setViewingImages] = useState<{ urls: { url: string, title?: string }[]; startingIndex: number } | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+  const [showGlobalOilReport, setShowGlobalOilReport] = useState(false);
 
   // Estado para Reporte Manual Odómetro
   const [newMileage, setNewMileage] = useState<{ mileage_km: string; date: string }>({ mileage_km: "", date: new Date().toISOString().slice(0, 10) });
@@ -443,6 +445,13 @@ export default function AdminVehicles() {
               </button>
             </div>
             <button onClick={loadData} className="text-sm text-emerald-600 hover:underline font-medium px-3">Refrescar</button>
+            {/* Global oil report trigger — lives in the header so context is clearly fleet-wide */}
+            <button
+              onClick={() => setShowGlobalOilReport(true)}
+              className="flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-lg transition-all"
+            >
+              <BarChart3 className="w-4 h-4" /> Reporte Global
+            </button>
             <button onClick={handleCreate} className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-lg hover:bg-black transition-all">
               <span>+</span> Registrar Vehículo
             </button>
@@ -1156,6 +1165,12 @@ export default function AdminVehicles() {
           onClose={() => setViewingImages(null)}
         />
       )}
+
+      {/* ── Global Oil Report slide-over (fleet-wide, z-50 same level as other overlays) ── */}
+      <GlobalOilReport
+        isOpen={showGlobalOilReport}
+        onClose={() => setShowGlobalOilReport(false)}
+      />
 
     </div>
   );
