@@ -154,7 +154,7 @@ export default function GlobalMileageReport({ isOpen, onClose }: Props) {
     return (
       v.plate.toLowerCase().includes(q) ||
       v.brand.toLowerCase().includes(q) ||
-      v.model.toLowerCase().includes(q)
+      (v.line ?? "").toLowerCase().includes(q)
     );
   });
 
@@ -401,9 +401,9 @@ export default function GlobalMileageReport({ isOpen, onClose }: Props) {
                             {/* GPS indicator */}
                             <td className="px-2 py-3 text-center">
                               {v.has_gps ? (
-                                <Wifi className="mx-auto h-3.5 w-3.5 text-blue-500" title="GPS Activo" />
+                                <Wifi className="mx-auto h-3.5 w-3.5 text-blue-500" aria-label="GPS Activo" />
                               ) : (
-                                <WifiOff className="mx-auto h-3.5 w-3.5 text-slate-300" title="Sin GPS" />
+                                <WifiOff className="mx-auto h-3.5 w-3.5 text-slate-300" aria-label="Sin GPS" />
                               )}
                             </td>
 
