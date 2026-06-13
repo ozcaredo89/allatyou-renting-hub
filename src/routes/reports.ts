@@ -174,5 +174,27 @@ r.get("/global-oil", async (_req: Request, res: Response) => {
   }
 });
 
+// ── GET /reports/global-mileage ───────────────────────────────────────────────
+// Delegates all aggregation to the get_global_mileage_stats PostgreSQL RPC.
+// The RPC computes per-vehicle utilization across four temporal windows
+// (daily, weekly, monthly, yearly) and the true current odometer value
+// (latest manual reading + cumulative GPS km recorded after it).
+r.get("/global-mileage", async (_req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase.rpc("get_global_mileage_stats");
+
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      vehicles: data ?? [],
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("[global-mileage] aggregation error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default r;
+
 
