@@ -1,12 +1,13 @@
 import { Router, Request, Response } from "express";
+import crypto from "crypto";
 import { supabase } from "../lib/supabase";
 import { sendEmail } from "../lib/email";
 import { sendWhatsApp } from "../lib/whatsapp";
 
 const r = Router();
 
-// Generar un código aleatorio de 6 dígitos
-const generateCode = () => Math.floor(100000 + Math.random() * 900000).toString();
+// Generar un código aleatorio de 6 dígitos de forma segura
+const generateCode = () => crypto.randomInt(100000, 1000000).toString();
 
 /**
  * GET /companies
