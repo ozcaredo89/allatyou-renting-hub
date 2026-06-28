@@ -2,9 +2,14 @@
 import { Request, Response, NextFunction } from "express";
 
 export function basicAuth(req: Request, res: Response, next: NextFunction) {
+  const expectedUser = process.env.ADMIN_BASIC_USER;
+  const expectedPass = process.env.ADMIN_BASIC_PASS;
+
+  if (!expectedUser || !expectedPass) {
+    return res.status(401).send("Authentication credentials are not configured on the server");
+  }
+
   const header = req.headers.authorization || "";
-  const expectedUser = process.env.ADMIN_BASIC_USER || "admin";
-  const expectedPass = process.env.ADMIN_BASIC_PASS || "";
 
   if (!header.startsWith("Basic ")) {
     res.setHeader("WWW-Authenticate", 'Basic realm="AllAtYou Admin"');
