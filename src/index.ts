@@ -26,6 +26,9 @@ import depositsRoutes from "./routes/deposits";
 // --- MÓDULO MARKETING ---
 import marketingRoutes from "./routes/marketing";
 
+// --- CHAT CONVERSACIONAL (GEMINI) ---
+import chatRoutes from "./routes/chat";
+
 // --- MÓDULO INSPECCIONES ---
 import inspectionsRoutes from "./routes/inspections";
 
@@ -106,6 +109,9 @@ app.use("/reminders", remindersRoutes);
 
 // --- RUTA DE MARKETING (PÚBLICA PARA LA LANDING) ---
 app.use("/marketing", marketingRoutes);
+
+// --- RUTA CHAT (PÚBLICA) ---
+app.use("/chat", chatRoutes);
 
 // --- RUTA MARKETPLACE (PÚBLICA: CATÁLOGO Y UPLOAD) ---
 app.use("/marketplace", marketplaceRoutes);
