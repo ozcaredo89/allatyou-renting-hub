@@ -21,6 +21,8 @@
     "express-rate-limit": "^8.4.1",
     "multer": "^2.0.2",
     "node-fetch": "^3.3.2",
+    "openai": "^6.45.0",
+    "p-limit": "^3.1.0",
     "puppeteer": "^24.37.5",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

@@ -341,6 +341,12 @@ r.post("/", async (req: Request, res: Response) => {
     delivery_amount,
     credit_installment_amount,
     force_override,
+
+    // ID del comprobante devuelto por POST /uploads
+    upload_id,
+
+    // Cuando el usuario confirma explícitamente a pesar de la alerta de duplicado
+    skip_receipt_check,
   } = req.body || {};
 
   // Validaciones base
@@ -526,6 +532,99 @@ r.post("/", async (req: Request, res: Response) => {
     }
   }
 
+  // ---------------- Validación de Comprobante (Lectura DB + Anomalías) ----------------
+  let finalReceiptStatus = "unverified";
+  let receiptWarning = "";
+  let reference_number = null;
+  let provider_name = null;
+  let receipt_date = null;
+
+  // Extraemos info de la tabla receipt_uploads (Zero-Trust al cliente)
+  let uploadData: any = null;
+  if (upload_id) {
+    const { data: _uploadData, error: upErr } = await supabase
+      .from("receipt_uploads")
+      .select("*")
+      .eq("id", upload_id)
+      .single();
+      
+    if (upErr || !_uploadData) {
+      return res.status(400).json({ error: "Comprobante no encontrado." });
+    }
+    if (_uploadData.linked_payment_id !== null) {
+      return res.status(400).json({ error: "Este comprobante ya fue utilizado en otro pago." });
+    }
+    uploadData = _uploadData;
+
+    // Aplicamos normalización por si acaso (aunque OCR ya lo hace)
+    reference_number = uploadData.reference_number ? String(uploadData.reference_number).trim().toUpperCase() : null;
+    provider_name = uploadData.provider_name;
+    receipt_date = uploadData.receipt_date;
+    finalReceiptStatus = uploadData.ocr_status || "unverified";
+  }
+
+  if (finalReceiptStatus === "verified" || finalReceiptStatus === "unverified") {
+    // Recolectamos TODAS las anomalías antes de decidir si bloqueamos
+    const warnings: string[] = [];
+
+    // 1. Buscar duplicado por referencia exacta (normalizada)
+    if (reference_number) {
+      const { data: dupRef } = await supabase
+        .from("payments")
+        .select("id")
+        .eq("reference_number", reference_number)
+        .limit(1);
+
+      if (dupRef && dupRef.length > 0) {
+        warnings.push("Se detectó otro pago con el mismo número de referencia.");
+      }
+    }
+
+    // 2. Si no hay dup por referencia, buscar por monto y fecha idénticos PARA LA MISMA PLACA
+    if (warnings.length === 0 && amt > 0 && receipt_date) {
+      const { data: dupAmt } = await supabase
+        .from("payments")
+        .select("id")
+        .eq("amount", amt)
+        .eq("receipt_date", receipt_date)
+        .eq("plate", upperPlate)
+        .limit(1);
+
+      if (dupAmt && dupAmt.length > 0) {
+        warnings.push("Monto y fecha del comprobante idénticos a otro pago existente para este vehículo.");
+      }
+    }
+
+    // 3. Validar que el monto del comprobante coincida con el monto ingresado
+    const ocrAmount = uploadData?.amount ?? null;
+    if (ocrAmount !== null && ocrAmount !== amt) {
+      warnings.push(
+        `El monto ingresado ($${amt.toLocaleString("es-CO")}) no coincide con el valor del comprobante ($${ocrAmount.toLocaleString("es-CO")}).`
+      );
+    }
+
+    if (warnings.length > 0) {
+      if (skip_receipt_check === true) {
+        // El usuario confirmó: solo marcamos como sospechoso y continuamos
+        finalReceiptStatus = "suspicious_duplicate";
+        receiptWarning = warnings.join(" | ");
+      } else {
+        // Primera vez: bloqueamos con 409 para que el frontend muestre el modal
+        return res.status(409).json({
+          code: "RECEIPT_WARNING",
+          error: warnings.join(" "),
+          warnings,
+          ocr_reference: reference_number,
+          ocr_amount: ocrAmount ?? amt,
+          ocr_date: receipt_date,
+        });
+      }
+    }
+  } else if (finalReceiptStatus === "suspicious_ocr_failed" || finalReceiptStatus === "timeout") {
+    receiptWarning = "El comprobante no pudo ser leído claramente o hubo un error en la validación automática.";
+  }
+
+
   // ---------------- Insert payment ----------------
   const insertPayload: any = {
     payer_name: payer_name.trim(),
@@ -543,6 +642,13 @@ r.post("/", async (req: Request, res: Response) => {
     credit_installment_amount: splitCredit,
     installment_status: installment_status,
     installment_shortfall: installment_shortfall,
+    
+    // Si el usuario confirmó un duplicado, anulamos reference_number para no colisionar
+    // con el índice UNIQUE de la DB. Los datos OCR quedan en receipt_uploads para auditoría.
+    reference_number: (skip_receipt_check === true) ? null : (reference_number || null),
+    provider_name: provider_name || null,
+    receipt_date: receipt_date || null,
+    receipt_status: finalReceiptStatus,
   };
 
   const { data: payment, error: insErr } = await supabase
@@ -551,7 +657,29 @@ r.post("/", async (req: Request, res: Response) => {
     .select()
     .single();
 
-  if (insErr) return res.status(500).json({ error: insErr.message });
+  if (insErr) {
+    if (insErr.code === '23505') {
+      return res.status(400).json({ error: "Este comprobante ya fue registrado (Número de referencia duplicado)." });
+    }
+    return res.status(500).json({ error: insErr.message });
+  }
+
+  // ---------------- Update receipt_uploads linked_payment_id (Atomically) ----------------
+  if (upload_id) {
+    const { data: linkedRows, error: linkErr } = await supabase
+      .from("receipt_uploads")
+      .update({ linked_payment_id: payment.id })
+      .eq("id", upload_id)
+      .is("linked_payment_id", null)
+      .select();
+      
+    if (linkErr || !linkedRows || linkedRows.length === 0) {
+      // Race condition detected! Another payment already claimed this upload_id concurrently.
+      // We must rollback this payment.
+      await supabase.from("payments").delete().eq("id", payment.id);
+      return res.status(400).json({ error: "Este comprobante acaba de ser utilizado en otro pago concurrentemente." });
+    }
+  }
 
   // ---------------- Update schedule (solo si installment_number != null) ----------------
   // Protección: si payment fue rejected, NO tocamos schedule.
@@ -633,10 +761,75 @@ r.post("/", async (req: Request, res: Response) => {
     });
   }
 
-  return res.status(201).json(payment);
+  return res.status(201).json({
+    ...payment,
+    warning: receiptWarning || undefined
+  });
+});
+
+// -------------------- GET /payments/flagged --------------------
+// Retorna pagos marcados para revisión manual con filtros opcionales.
+// Query params: plate, driver_id, date_from, date_to, flag_reason, limit, offset
+r.get("/flagged", async (req: Request, res: Response) => {
+  const rawLimit = parseInt(String(req.query.limit || "50"), 10);
+  const limit = Math.max(1, Math.min(isNaN(rawLimit) ? 50 : rawLimit, 500));
+  const rawOffset = parseInt(String(req.query.offset || "0"), 10);
+  const offset = Math.max(isNaN(rawOffset) ? 0 : rawOffset, 0);
+
+  const plate      = String(req.query.plate       || "").toUpperCase().trim();
+  const driver_id  = String(req.query.driver_id   || "").trim();
+  const date_from  = String(req.query.date_from   || "").trim();
+  const date_to    = String(req.query.date_to     || "").trim();
+  const flag_reason = String(req.query.flag_reason || "").trim();
+
+  if (plate && !PLATE_RE.test(plate)) {
+    return res.status(400).json({ error: "invalid plate (expected ABC123)" });
+  }
+  if (date_from && !isISODate(date_from)) {
+    return res.status(400).json({ error: "date_from must be YYYY-MM-DD" });
+  }
+  if (date_to && !isISODate(date_to)) {
+    return res.status(400).json({ error: "date_to must be YYYY-MM-DD" });
+  }
+
+  const allowedReasons = new Set(["duplicate_reference", "duplicate_amount_date", "amount_mismatch", ""]);
+  if (!allowedReasons.has(flag_reason)) {
+    return res.status(400).json({ error: "invalid flag_reason" });
+  }
+
+  let q = supabase
+    .from("payments")
+    .select(`
+      id, plate, payment_date, amount, status, proof_url,
+      reference_number, flag_reason, flagged_for_review,
+      payer_name, receipt_status, receipt_date,
+      drivers (id, full_name)
+    `, { count: "exact" })
+    .eq("flagged_for_review", true)
+    .order("payment_date", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (plate)       q = q.eq("plate", plate);
+  if (driver_id)   q = q.eq("driver_id", driver_id);
+  if (date_from)   q = q.gte("payment_date", date_from);
+  if (date_to)     q = q.lte("payment_date", date_to);
+  if (flag_reason) q = q.eq("flag_reason", flag_reason);
+
+  const { data, error, count } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Aplanar el join de drivers para simplificar el consumo desde el frontend
+  const items = (data ?? []).map((p: any) => ({
+    ...p,
+    driver_name: p.drivers?.full_name ?? null,
+    drivers: undefined,
+  }));
+
+  return res.json({ items, total: count ?? 0, limit, offset });
 });
 
 // -------------------- GET /payments (igual que antes) --------------------
+
 r.get("/", async (req: Request, res: Response) => {
   const rawLimit = parseInt(String(req.query.limit || "10"), 10);
   const limit = Math.max(1, Math.min(isNaN(rawLimit) ? 10 : rawLimit, 1000));

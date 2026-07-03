@@ -1,6 +1,8 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { uploadToR2 } from "../lib/r2";
+import { parseReceipt } from "../lib/ocr";
+import { supabase } from "../lib/supabase";
 
 const r = Router();
 
@@ -33,15 +35,49 @@ r.post("/", upload.single("file"), async (req: Request, res: Response) => {
 
     console.log(`📤 Subiendo a R2 [${folder}]: ${file.originalname}`);
 
-    // --- 3. SUBIDA A CLOUDFLARE R2 ---
-    // Esta función hace toda la magia y nos devuelve la URL pública final
-    const publicUrl = await uploadToR2(file, folder);
+    // --- 3. SUBIDA A CLOUDFLARE R2 Y OCR CONCURRENTE ---
+    let publicUrl: string;
+    let ocrData = null;
+    let upload_id: number | null = null;
+
+    if (folder === "proofs" && isImage) {
+      // Ejecutamos OCR y Upload concurrentemente para ahorrar tiempo (< 5s en total)
+      const [urlResult, ocrResult] = await Promise.all([
+        uploadToR2(file, folder),
+        parseReceipt(file.buffer, file.mimetype)
+      ]);
+      publicUrl = urlResult;
+      ocrData = ocrResult;
+      
+      // Guardar en la DB de forma segura (Zero-Trust)
+      const { data: dbRecord, error: dbError } = await supabase
+        .from("receipt_uploads")
+        .insert([{
+          url: publicUrl,
+          reference_number: ocrData.reference_number,
+          provider_name: ocrData.provider_name,
+          receipt_date: ocrData.receipt_date,
+          amount: ocrData.amount,
+          ocr_status: ocrData.status
+        }])
+        .select("id")
+        .single();
+        
+      if (!dbError && dbRecord) {
+        upload_id = dbRecord.id;
+      } else {
+        console.error("❌ Error guardando receipt_uploads:", dbError);
+      }
+    } else {
+      // Solo subimos a R2
+      publicUrl = await uploadToR2(file, folder);
+    }
 
     console.log(`✅ Éxito: ${publicUrl}`);
 
     // 4. Respuesta al Frontend
-    // El frontend recibe { url: "..." } tal como antes. ¡No se dará ni cuenta del cambio!
-    return res.status(201).json({ url: publicUrl });
+    // El frontend recibe { url: "...", upload_id: 123, ocrData: {...} }
+    return res.status(201).json({ url: publicUrl, upload_id, ocrData });
 
   } catch (e: any) {
     console.error("❌ Error en upload:", e);

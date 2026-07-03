@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { executeWithModel, geminiClient } from "../lib/ai-registry";
 
 const router = Router();
 
@@ -49,25 +49,27 @@ router.post("/", async (req: Request, res: Response) => {
       parts: msg.parts || [{ text: msg.text || '' }]
     }));
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
+    if (!geminiClient) {
       console.error("GEMINI_API_KEY is missing");
       return res.status(500).json({ error: "Internal Server Error" });
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
-      systemInstruction: SYSTEM_INSTRUCTION
-    });
+    const { responseText, newHistory } = await executeWithModel("gemini-2.5-flash", async () => {
+      const model = geminiClient!.getGenerativeModel({
+        model: "gemini-2.5-flash",
+        systemInstruction: SYSTEM_INSTRUCTION
+      });
 
-    const chat = model.startChat({
-      history: formattedHistory
-    });
+      const chat = model.startChat({
+        history: formattedHistory
+      });
 
-    const result = await chat.sendMessage(message);
-    const responseText = result.response.text();
-    const newHistory = await chat.getHistory();
+      const result = await chat.sendMessage(message);
+      return {
+        responseText: result.response.text(),
+        newHistory: await chat.getHistory()
+      };
+    });
 
     // Upsert new history to Supabase
     const { error: upsertError } = await supabase

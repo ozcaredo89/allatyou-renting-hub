@@ -145,6 +145,29 @@ export default function App() {
   const [noPayHint, setNoPayHint] = useState<{ noPay: boolean; reason?: string; suggestedDate?: string } | null>(null);
   const [lastSuggestion, setLastSuggestion] = useState<LastAmountResp | null>(null);
 
+  // Progress steps
+  type ProgressStep = "idle" | "uploading" | "verifying" | "saving" | "done";
+  const [progressStep, setProgressStep] = useState<ProgressStep>("idle");
+  const STEP_LABELS: Record<ProgressStep, string> = {
+    idle: "",
+    uploading: "📤 Subiendo comprobante...",
+    verifying: "🔍 Verificando referencia...",
+    saving: "💾 Guardando pago...",
+    done: "✅ Pago guardado",
+  };
+  const STEP_ORDER: ProgressStep[] = ["idle", "uploading", "verifying", "saving", "done"];
+  const stepPct = progressStep === "idle" ? 0 : Math.round((STEP_ORDER.indexOf(progressStep) / (STEP_ORDER.length - 1)) * 100);
+
+  // Duplicate warning modal state
+  type DuplicateWarning = {
+    message: string;
+    ocr_reference: string | null;
+    ocr_amount: number | null;
+    ocr_date: string | null;
+    pendingBody: any;
+  };
+  const [dupWarning, setDupWarning] = useState<DuplicateWarning | null>(null);
+
   const [f, setF] = useState({
     payer_name: "",
     plate: "",
@@ -197,14 +220,14 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [f.plate, f.payment_date, plateValid, plateExists]);
 
-  async function uploadProofIfNeeded(): Promise<string | null> {
-    if (!file) return null;
+  async function uploadProofIfNeeded(): Promise<{ url: string | null; upload_id: number | null }> {
+    if (!file) return { url: null, upload_id: null };
     const fd = new FormData();
     fd.append("file", file);
     const rs = await fetch(`${API}/uploads`, { method: "POST", body: fd });
     if (!rs.ok) throw new Error("upload failed");
-    const { url } = await rs.json();
-    return url as string;
+    const { url, upload_id } = await rs.json();
+    return { url, upload_id };
   }
 
   // ---------- Auto-split: recalcular por defecto cuando cambia amount o installment_number, si NO está editando ----------
@@ -442,6 +465,48 @@ export default function App() {
     return lines;
   }, [amountN, installmentN, editSplit, splitN.i, splitN.d, splitN.c]);
 
+  // Helper: do the actual payment POST (with optional skip_receipt_check)
+  async function createPayment(body: any, skipCheck = false) {
+    setProgressStep("saving");
+    const rs = await fetch(`${API}/payments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, ...(skipCheck ? { skip_receipt_check: true } : {}) }),
+    });
+
+    if (!rs.ok) {
+      const json = await rs.json().catch(() => ({}));
+
+      // 409 RECEIPT_WARNING: el backend quiere que el usuario confirme (duplicados o montos que no coinciden)
+      if (rs.status === 409 && (json.code === "RECEIPT_WARNING" || json.code === "DUPLICATE_RECEIPT")) {
+        setProgressStep("idle");
+        setLoading(false);
+        setDupWarning({
+          message: json.error,
+          ocr_reference: json.ocr_reference ?? null,
+          ocr_amount: json.ocr_amount ?? null,
+          ocr_date: json.ocr_date ?? null,
+          pendingBody: body,
+        });
+        return; // detenemos aquí — el modal tomará el control
+      }
+
+      const msg = json.error || json.message || "Error creando pago";
+      throw new Error(msg);
+    }
+
+    // Pago exitoso
+    setProgressStep("done");
+    setDupWarning(null);
+    setF((prev) => ({ ...prev, amountStr: "", installment_number: "" }));
+    setFile(null);
+    setEditSplit(false);
+    setSplit({ insurance_amount: "", delivery_amount: "", credit_installment_amount: "" });
+    await loadRecentByPlate(body.plate);
+    await fetchLastSuggestion(body.plate);
+    setTimeout(() => setProgressStep("idle"), 2000);
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!plateValid) {
@@ -454,6 +519,7 @@ export default function App() {
     }
 
     setLoading(true);
+    setProgressStep("uploading");
     try {
       const check = await checkNoPay(f.plate, f.payment_date);
       if (check?.noPay) {
@@ -465,10 +531,11 @@ export default function App() {
           .filter(Boolean)
           .join(" ");
         const proceed = window.confirm(msg);
-        if (!proceed) { setLoading(false); return; }
+        if (!proceed) { setLoading(false); setProgressStep("idle"); return; }
       }
 
-      const proof_url = await uploadProofIfNeeded();
+      const { url: proof_url, upload_id } = await uploadProofIfNeeded();
+      setProgressStep("verifying");
 
       const body: any = {
         payer_name: f.payer_name.trim(),
@@ -477,6 +544,7 @@ export default function App() {
         amount: amountN,
         installment_number: f.installment_number ? Number(f.installment_number) : null,
         proof_url,
+        upload_id,
         status: f.status as Payment["status"],
       };
 
@@ -488,25 +556,11 @@ export default function App() {
         body.credit_installment_amount = splitN.c;
       }
 
-      const rs = await fetch(`${API}/payments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!rs.ok) throw new Error(await rs.text());
-
-      // Limpiar campos variables y recargar lista
-      setF((prev) => ({ ...prev, amountStr: "", installment_number: "" }));
-      setFile(null);
-      setEditSplit(false);
-      setSplit({ insurance_amount: "", delivery_amount: "", credit_installment_amount: "" });
-
-      await loadRecentByPlate(body.plate);
-      await fetchLastSuggestion(body.plate);
+      await createPayment(body);
     } catch (err: any) {
-      // Si el backend rechaza por múltiples advances, mostrará tu mensaje
       const msg = String(err?.message || "Error creando pago");
-      alert(msg.includes("No puede haber más de un préstamo activo") ? msg : "Error creando pago");
+      alert(msg);
+      setProgressStep("idle");
     } finally {
       setLoading(false);
     }
@@ -737,16 +791,89 @@ export default function App() {
               </select>
             </div>
 
+            {/* Barra de progreso */}
+            {progressStep !== "idle" && (
+              <div className="md:col-span-3 mt-1">
+                <div className="flex items-center justify-between text-xs font-medium mb-1">
+                  <span className={progressStep === "done" ? "text-green-600" : "text-gray-600"}>
+                    {STEP_LABELS[progressStep]}
+                  </span>
+                  <span className="text-gray-400">{stepPct}%</span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
+                  <div
+                    className={`h-2 rounded-full transition-all duration-500 ${
+                      progressStep === "done" ? "bg-green-500" : "bg-black"
+                    }`}
+                    style={{ width: `${stepPct}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="md:col-span-3 flex justify-end">
               <button
                 disabled={loading || !plateValid || !plateExists || !file}
                 className="rounded-xl bg-black px-5 py-2.5 font-medium text-white shadow hover:opacity-90 disabled:opacity-50"
               >
-                {loading ? "Guardando..." : "Guardar pago"}
+                {loading ? "Procesando..." : "Guardar pago"}
               </button>
             </div>
           </form>
         </div>
+
+        {/* Modal: Advertencia de duplicado */}
+        {dupWarning && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="text-2xl">⚠️</span>
+                <h3 className="text-lg font-bold text-gray-900">Comprobante sospechoso</h3>
+              </div>
+              <p className="mt-2 text-sm text-gray-700">{dupWarning.message}</p>
+              {(dupWarning.ocr_reference || dupWarning.ocr_amount || dupWarning.ocr_date) && (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900 space-y-1">
+                  {dupWarning.ocr_reference && (
+                    <div><span className="font-semibold">Referencia OCR:</span> {dupWarning.ocr_reference}</div>
+                  )}
+                  {dupWarning.ocr_amount && (
+                    <div><span className="font-semibold">Monto OCR:</span> ${fmtCOP.format(dupWarning.ocr_amount)}</div>
+                  )}
+                  {dupWarning.ocr_date && (
+                    <div><span className="font-semibold">Fecha OCR:</span> {dupWarning.ocr_date}</div>
+                  )}
+                </div>
+              )}
+              <p className="mt-3 text-xs text-gray-500">
+                Si procedes, este pago quedará marcado como <strong>sospechoso</strong> y será revisado por el equipo.
+              </p>
+              <div className="mt-5 flex gap-3">
+                <button
+                  className="flex-1 rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  onClick={() => setDupWarning(null)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="flex-1 rounded-xl bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600"
+                  onClick={async () => {
+                    setLoading(true);
+                    try {
+                      await createPayment(dupWarning.pendingBody, true);
+                    } catch (err: any) {
+                      alert(err?.message || "Error al guardar");
+                      setProgressStep("idle");
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                >
+                  Guardar de todas formas
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Card: Soporte y emergencias */}
         <div id="soporte" className="mt-8 rounded-2xl border bg-white p-5 shadow-sm">
