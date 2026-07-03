@@ -828,7 +828,7 @@ export default function App() {
             <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
               <div className="mb-1 flex items-center gap-2">
                 <span className="text-2xl">⚠️</span>
-                <h3 className="text-lg font-bold text-gray-900">Comprobante sospechoso</h3>
+                <h3 className="text-lg font-bold text-gray-900">Inconsistencias en el comprobante</h3>
               </div>
               <p className="mt-2 text-sm text-gray-700">{dupWarning.message}</p>
               {(dupWarning.ocr_reference || dupWarning.ocr_amount || dupWarning.ocr_date) && (
@@ -845,7 +845,7 @@ export default function App() {
                 </div>
               )}
               <p className="mt-3 text-xs text-gray-500">
-                Si procedes, este pago quedará marcado como <strong>sospechoso</strong> y será revisado por el equipo.
+                Si procedes, este pago quedará marcado para <strong>revisión</strong> por el equipo.
               </p>
               <div className="mt-5 flex gap-3">
                 <button
