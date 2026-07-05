@@ -3,22 +3,10 @@ import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { sendEmail } from "../lib/email";
 import { sendWhatsApp } from "../lib/whatsapp";
+import { isNoPayDay } from "../lib/noPay";
 
 const r = Router();
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
-
-// =====================================================================
-// 1. CONFIGURACIÓN DE PICO Y PLACA (CALI - ROTACIÓN ACTUALIZADA)
-// =====================================================================
-// Mapeo: Dígito final -> Día de la semana (1=Lun, 2=Mar, 3=Mié, 4=Jue, 5=Vie)
-// Lógica aplicada: Rotación movida un día adelante respecto al ciclo anterior.
-const PICO_PDAY: Record<number, number> = {
-  1: 1, 2: 1, // Lunes
-  3: 2, 4: 2, // Martes
-  5: 3, 6: 3, // Miércoles
-  7: 4, 8: 4, // Jueves
-  9: 5, 0: 5, // Viernes
-};
 
 type ReminderRow = {
   id: number;
@@ -190,18 +178,11 @@ r.post("/run", async (req: Request, res: Response) => {
         }
       }
 
-      // 3. Revisar Pico y Placa (LÓGICA CORREGIDA)
-      // Solo alerta si es el día correcto de la semana
+      // 3. Revisar Pico y Placa (LÓGICA DINÁMICA)
       if (sub.notify_pico && sub.pico_notify_hour === currentHour) {
-        const lastChar = sub.plate.slice(-1);
-        const lastDigit = parseInt(lastChar, 10);
-        
-        if (!isNaN(lastDigit)) {
-            const expectedDay = PICO_PDAY[lastDigit];
-            // Comparación estricta: Hoy vs Día asignado
-            if (currentDayOfWeek === expectedDay) {
-                reasons.push("Hoy tienes Pico y Placa en Cali.");
-            }
+        const noPayCheck = await isNoPayDay(sub.plate, todayStr, "Cali");
+        if (noPayCheck && noPayCheck.noPay) {
+            reasons.push("Hoy tienes Pico y Placa en Cali.");
         }
       }
 
