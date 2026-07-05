@@ -168,3 +168,82 @@ export async function nextPayableDate(
   }
   throw new Error("No payable date found in 60 days");
 }
+
+/**
+ * Optimizado: Obtiene las reglas una sola vez y genera un arreglo de fechas válidas (días hábiles de pago).
+ */
+export async function getAmortizationDates(
+  plate: string,
+  startDate: string,
+  totalDaysToGenerate: number,
+  city = "Cali"
+): Promise<{ dates: string[] }> {
+  const p = plate.toUpperCase().trim();
+  if (!isValidPlate(p)) throw new Error("Invalid plate format");
+  if (!isValidISODate(startDate)) throw new Error("Invalid startDate format");
+
+  const last = lastDigitOfPlate(p);
+
+  const calPromise = supabase
+    .from("no_pay_calendar")
+    .select("date, reason, applies_to_scope, applies_to")
+    .eq("city", city)
+    .gte("date", startDate);
+
+  const rulesPromise = supabase
+    .from("no_pay_rules")
+    .select("ends_in, active_from, active_to, weekday")
+    .eq("city", city)
+    .gte("active_to", startDate);
+
+  const [calRes, ruleRes] = await Promise.all([calPromise, rulesPromise]);
+  const cal = calRes.data || [];
+  const rules = ruleRes.data || [];
+
+  const dates: string[] = [];
+  let d = new Date(startDate + "T00:00:00Z");
+
+  // Iteramos hasta encontrar totalDaysToGenerate días válidos (máx 15 años de timeout)
+  const maxIterations = 365 * 15;
+  let iterations = 0;
+
+  while (dates.length < totalDaysToGenerate && iterations < maxIterations) {
+    const iso = d.toISOString().slice(0, 10);
+    const weekday = getWeekday1to7(iso);
+    let noPay = false;
+
+    // Verificar Calendario
+    for (const row of cal) {
+      if (row.date === iso) {
+        if (
+          row.applies_to_scope === "all" ||
+          (row.applies_to_scope === "plates" && Array.isArray(row.applies_to) && row.applies_to.includes(p))
+        ) {
+          noPay = true;
+          break;
+        }
+      }
+    }
+
+    // Verificar Reglas Regulares
+    if (!noPay && last != null) {
+      for (const r of rules) {
+        if (r.weekday === weekday && iso >= r.active_from && iso <= r.active_to) {
+          if (Array.isArray(r.ends_in) && r.ends_in.includes(last)) {
+            noPay = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!noPay) {
+      dates.push(iso);
+    }
+    
+    d.setUTCDate(d.getUTCDate() + 1);
+    iterations++;
+  }
+
+  return { dates };
+}

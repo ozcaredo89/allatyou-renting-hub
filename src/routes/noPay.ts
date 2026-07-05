@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { isNoPayDay, nextPayableDate } from "../lib/noPay";
+import { isNoPayDay, nextPayableDate, getAmortizationDates } from "../lib/noPay";
 
 const r = Router();
 
@@ -52,6 +52,24 @@ r.get("/next-date", async (req: Request, res: Response) => {
 
     const ans = await nextPayableDate(plate, from, includeFrom, "Cali");
     return res.json(ans);
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || "internal error" });
+  }
+});
+
+/** GET /no-pay/amortization-dates?plate=ABC123&start=YYYY-MM-DD&days=1000 */
+r.get("/amortization-dates", async (req: Request, res: Response) => {
+  try {
+    const plate = String(req.query.plate || "").toUpperCase().trim();
+    const start  = String(req.query.start || "").trim();
+    const days = parseInt(String(req.query.days || "1500"), 10);
+
+    if (!plate) return res.status(400).json({ error: "plate required" });
+    if (!/^[A-Z]{3}\d{3}$/.test(plate)) return res.status(400).json({ error: "invalid plate format" });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) return res.status(400).json({ error: "start must be YYYY-MM-DD" });
+
+    const result = await getAmortizationDates(plate, start, days, "Cali");
+    return res.json(result);
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || "internal error" });
   }

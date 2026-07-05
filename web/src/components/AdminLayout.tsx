@@ -127,6 +127,9 @@ export default function AdminLayout() {
             <NavLink to="/profit" className={navItemClass}>
               <span>📈</span> Utilidad Mensual
             </NavLink>
+            <NavLink to="/amortization" className={navItemClass}>
+              <span>🔢</span> Simulador Amort.
+            </NavLink>
             <NavLink to="/reports" className={navItemClass}>
               <span>📑</span> Reportes
             </NavLink>

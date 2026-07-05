@@ -43,6 +43,7 @@ type Vehicle = {
   last_oil_change_date?: string;
 
   status?: 'active' | 'maintenance' | 'sold' | 'inactive';
+  precio_venta?: number | null;
 };
 
 const EMPTY_VEHICLE: Vehicle = {

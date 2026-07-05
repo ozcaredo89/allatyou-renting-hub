@@ -22,6 +22,7 @@ import AdminDeposits from "./pages/AdminDeposits";
 import AdminCollections from "./pages/AdminCollections";
 import AdminVehicles from "./pages/AdminVehicles";
 import AdminProfit from "./pages/AdminProfit";
+import AdminAmortization from "./pages/AdminAmortization";
 import AdminRecruitment from "./pages/AdminRecruitment";
 import RemindersLog from "./pages/RemindersLog";
 import AdminMarketplace from "./pages/AdminMarketplace";
@@ -86,6 +87,7 @@ export default function App() {
               <Route path="/reports" element={<Reports />} />
               <Route path="/advances" element={<AdminAdvances />} />
               <Route path="/profit" element={<AdminProfit />} />
+              <Route path="/amortization" element={<AdminAmortization />} />
               <Route path="/deposits" element={<AdminDeposits />} />
               <Route path="/collections" element={<AdminCollections />} />
 

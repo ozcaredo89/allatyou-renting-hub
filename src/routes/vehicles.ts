@@ -193,6 +193,37 @@ r.post("/", async (req: Request, res: Response) => {
 });
 
 /**
+ * PATCH /vehicles/:plate
+ * Actualiza campos específicos de un vehículo (ej. precio_venta)
+ */
+r.patch("/:plate", async (req: Request, res: Response) => {
+  const { plate } = req.params;
+  const body = req.body;
+
+  try {
+    const updates: any = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (body.precio_venta !== undefined) {
+      updates.precio_venta = body.precio_venta;
+    }
+
+    const { data, error } = await supabase
+      .from("vehicles")
+      .update(updates)
+      .eq("plate", plate)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  }
+});
+
+/**
  * PUT /vehicles/:plate
  * Actualiza vehículo E INVERSIÓN INICIAL.
  */
@@ -227,9 +258,14 @@ r.put("/:plate", async (req: Request, res: Response) => {
       // Documentos
       ownership_card_front: body.ownership_card_front,
       ownership_card_back: body.ownership_card_back,
+      
+      precio_venta: body.precio_venta !== undefined ? body.precio_venta : undefined,
 
       updated_at: new Date().toISOString(),
     };
+
+    // Filtrar undefined
+    Object.keys(updates).forEach(key => updates[key] === undefined && delete updates[key]);
 
     // 2. Sincronización de nombre e inactivación lógica
     if (body.status === 'sold' || body.status === 'inactive') {
