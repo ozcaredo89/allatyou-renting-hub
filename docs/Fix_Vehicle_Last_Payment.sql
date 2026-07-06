@@ -35,7 +35,7 @@ BEGIN
       SELECT 1 FROM no_pay_rules 
       WHERE city = 'Cali' 
         AND weekday = v_dow 
-        AND v_curr >= active_from AND v_curr <= active_to 
+        AND v_curr >= CAST(active_from AS DATE) AND v_curr <= CAST(active_to AS DATE) 
         AND v_last_digit = ANY(ends_in)
     ) THEN
       v_is_no_pay := TRUE;
@@ -44,7 +44,7 @@ BEGIN
     -- B) Chequeo Calendario (Feriados o Excepciones de No Pago)
     IF EXISTS (
       SELECT 1 FROM no_pay_calendar
-      WHERE city = 'Cali' AND date = v_curr::TEXT
+      WHERE city = 'Cali' AND CAST(date AS DATE) = v_curr
       AND (applies_to_scope = 'all' OR (applies_to_scope = 'plates' AND p_plate = ANY(applies_to)))
     ) THEN
       v_is_no_pay := TRUE;

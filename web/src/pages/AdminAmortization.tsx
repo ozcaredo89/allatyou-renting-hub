@@ -36,7 +36,11 @@ export default function AdminAmortization() {
   const [displayCapital, setDisplayCapital] = useState<string>("30.000.000");
   const [monthlyRate, setMonthlyRate] = useState<string>("3.5");
   const [dailyQuota, setDailyQuota] = useState<string>("70000");
+  const [displayDailyQuota, setDisplayDailyQuota] = useState<string>("70.000");
   const [adminExpenses, setAdminExpenses] = useState<string>("11000");
+  const [displayAdminExpenses, setDisplayAdminExpenses] = useState<string>("11.000");
+  const [maintenanceFund, setMaintenanceFund] = useState<string>("10000");
+  const [displayMaintenanceFund, setDisplayMaintenanceFund] = useState<string>("10.000");
   
   // Format YYYY-MM-DD
   const [startDate, setStartDate] = useState<string>(new Date().toISOString().slice(0, 10));
@@ -100,16 +104,20 @@ export default function AdminAmortization() {
     }
   };
 
-  const handleCapitalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCurrencyChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    setRaw: (v: string) => void,
+    setDisplay: (v: string) => void
+  ) => {
     const rawValue = e.target.value.replace(/\D/g, "");
     if (rawValue === "") {
-      setCapital("");
-      setDisplayCapital("");
+      setRaw("");
+      setDisplay("");
       return;
     }
     const numericValue = parseInt(rawValue, 10);
-    setCapital(String(numericValue));
-    setDisplayCapital(new Intl.NumberFormat("es-CO").format(numericValue));
+    setRaw(String(numericValue));
+    setDisplay(new Intl.NumberFormat("es-CO").format(numericValue));
   };
 
   const handleSavePrice = async () => {
@@ -256,10 +264,11 @@ export default function AdminAmortization() {
     doc.text(`Capital: ${fmtCOP.format(parseFloat(capital))}`, 14, 30);
     doc.text(`Cuota Diaria Estimada: ${fmtCOP.format(parseFloat(dailyQuota))}`, 14, 36);
     doc.text(`Gastos Administrativos: ${fmtCOP.format(parseFloat(adminExpenses))}`, 14, 42);
+    doc.text(`Fondo de Mantenimiento: ${fmtCOP.format(parseFloat(maintenanceFund))}`, 14, 48);
     
     const finalD = schedule.length > 0 ? schedule[schedule.length - 1].date : "-";
-    doc.text(`Plazo Total (pagos): ${schedule.filter(s => s.isPaymentDay).length}`, 100, 30);
-    doc.text(`Fecha Final: ${finalD}`, 100, 36);
+    doc.text(`Plazo Total (pagos): ${schedule.filter(s => s.isPaymentDay).length}`, 110, 30);
+    doc.text(`Fecha Final: ${finalD}`, 110, 36);
 
     const tableData = schedule.map(row => [
       row.dayNumber,
@@ -272,7 +281,7 @@ export default function AdminAmortization() {
     ]);
 
     autoTable(doc, {
-      startY: 50,
+      startY: 55,
       head: [['Día', 'Fecha', 'Pago', 'Cuota', 'Interés', 'Abono', 'Saldo']],
       body: tableData,
       theme: 'grid',
@@ -288,7 +297,7 @@ export default function AdminAmortization() {
   const totalDays = schedule.length;
   
   const finalDate = schedule.length > 0 ? schedule[schedule.length - 1].date : "-";
-  const totalDailyPayment = parseFloat(dailyQuota || "0") + parseFloat(adminExpenses || "0");
+  const totalDailyPayment = parseFloat(dailyQuota || "0") + parseFloat(adminExpenses || "0") + parseFloat(maintenanceFund || "0");
 
   let changedField = null;
   if (lastSimulatedParams && schedule.length > 0) {
@@ -345,7 +354,7 @@ export default function AdminAmortization() {
               <input
                 type="text"
                 value={displayCapital}
-                onChange={handleCapitalChange}
+                onChange={(e) => handleCurrencyChange(e, setCapital, setDisplayCapital)}
                 placeholder="0"
                 className="w-full rounded-xl border border-slate-300 bg-white pl-8 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-black/60"
               />
@@ -371,9 +380,9 @@ export default function AdminAmortization() {
             <div className="relative">
               <span className="absolute left-4 top-2.5 text-slate-500">$</span>
               <input
-                type="number"
-                value={dailyQuota}
-                onChange={(e) => setDailyQuota(e.target.value)}
+                type="text"
+                value={displayDailyQuota}
+                onChange={(e) => handleCurrencyChange(e, setDailyQuota, setDisplayDailyQuota)}
                 className="w-full rounded-xl border border-slate-300 bg-white pl-8 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-black/60"
               />
             </div>
@@ -384,9 +393,29 @@ export default function AdminAmortization() {
             <div className="relative">
               <span className="absolute left-4 top-2.5 text-slate-500">$</span>
               <input
-                type="number"
-                value={adminExpenses}
-                onChange={(e) => setAdminExpenses(e.target.value)}
+                type="text"
+                value={displayAdminExpenses}
+                onChange={(e) => handleCurrencyChange(e, setAdminExpenses, setDisplayAdminExpenses)}
+                className="w-full rounded-xl border border-slate-300 bg-white pl-8 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-black/60"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-1 relative group">
+               <label className="block text-sm font-semibold text-slate-700">Fondo de Mantenimiento</label>
+               <Info className="h-4 w-4 text-slate-400 cursor-help" />
+               <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block w-72 bg-slate-900 text-white text-xs p-3 rounded-lg shadow-lg z-50">
+                  Este dinero aprovisiona el mantenimiento del carro (llantas, aceite, daños imprevistos). Aligera la carga económica para el comprador y facilita llevar un mantenimiento adecuado.
+                  <div className="absolute top-full left-4 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+               </div>
+            </div>
+            <div className="relative">
+              <span className="absolute left-4 top-2.5 text-slate-500">$</span>
+              <input
+                type="text"
+                value={displayMaintenanceFund}
+                onChange={(e) => handleCurrencyChange(e, setMaintenanceFund, setDisplayMaintenanceFund)}
                 className="w-full rounded-xl border border-slate-300 bg-white pl-8 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-black/60"
               />
             </div>
