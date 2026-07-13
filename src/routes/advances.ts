@@ -285,7 +285,7 @@ r.patch("/:id/schedule/:rowId", async (req: Request, res: Response) => {
   const rowId = Number(req.params.rowId);
   
   // Datos que queremos editar
-  const { status, date, amount } = req.body; // date puede ser due_date o paid_date según el status
+  const { status, date, amount, upload_id, proof_url } = req.body; // date puede ser due_date o paid_date según el status
 
   if (!advanceId || !rowId) return res.status(400).json({ error: "Invalid IDs" });
 
@@ -299,6 +299,9 @@ r.patch("/:id/schedule/:rowId", async (req: Request, res: Response) => {
     const updates: any = {};
     if (amount !== undefined) updates.installment_amount = Number(amount);
     
+    if (upload_id !== undefined) updates.upload_id = upload_id || null;
+    if (proof_url !== undefined) updates.proof_url = proof_url || null;
+
     if (status === "paid") {
       updates.status = "paid";
       updates.paid_date = date || new Date().toISOString().slice(0, 10); // Si es paid, necesitamos fecha de pago

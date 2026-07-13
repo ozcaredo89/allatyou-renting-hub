@@ -35,6 +35,8 @@ type ScheduleRow = {
   paid_date?: string | null;
   status: "pending" | "paid" | "overdue";
   overdue?: boolean; // decorado por backend
+  upload_id?: number | null;
+  proof_url?: string | null;
 };
 
 const badgeTone = (k: string) => {
@@ -369,26 +371,61 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
    ========================= */
 function EditRowModal({
   advanceId,
+  personType,
   row,
   onClose,
   onSuccess,
 }: {
   advanceId: number;
+  personType?: string;
   row: ScheduleRow;
   onClose: () => void;
   onSuccess: () => void;
 }) {
   const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<"idle" | "uploading" | "saving">("idle");
   // Estado inicial basado en la fila actual
   const [amount, setAmount] = useState(row.installment_amount);
   const [status, setStatus] = useState<"pending" | "paid">(row.status === "paid" ? "paid" : "pending");
   // Si está pagada, usamos paid_date, si no, due_date como referencia
   const [date, setDate] = useState(row.paid_date || row.due_date);
+  const [file, setFile] = useState<File | null>(null);
+
+  async function uploadProofIfNeeded(): Promise<{ url: string | null; upload_id: number | null }> {
+    if (!file) return { url: null, upload_id: null };
+    const auth = ensureBasicAuth();
+    const fd = new FormData();
+    fd.append("file", file);
+    const rs = await fetch(`${API}/uploads`, { method: "POST", body: fd, headers: { Authorization: auth } });
+    if (!rs.ok) throw new Error("Error al subir comprobante");
+    const { url, upload_id } = await rs.json();
+    return { url, upload_id };
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+
+    // Persuasive logic for collaborator
+    if (personType === "collaborator" && status === "paid" && !file && !row.proof_url) {
+      const ok = window.confirm("Es muy recomendable adjuntar el comprobante de pago para mantener el soporte. ¿Deseas guardar de todas formas sin comprobante?");
+      if (!ok) return;
+    }
+
     setLoading(true);
     try {
+      let finalUploadId = row.upload_id;
+      let finalProofUrl = row.proof_url;
+
+      if (file) {
+        setUploadProgress("uploading");
+        const uploaded = await uploadProofIfNeeded();
+        if (uploaded.url) {
+          finalUploadId = uploaded.upload_id;
+          finalProofUrl = uploaded.url;
+        }
+      }
+
+      setUploadProgress("saving");
       const auth = ensureBasicAuth();
       const res = await fetch(`${API}/advances/${advanceId}/schedule/${row.id}`, {
         method: "PATCH",
@@ -396,7 +433,9 @@ function EditRowModal({
         body: JSON.stringify({
           status,
           amount,
-          date, 
+          date,
+          upload_id: finalUploadId,
+          proof_url: finalProofUrl
         }),
       });
       
@@ -411,6 +450,7 @@ function EditRowModal({
       alert(err.message);
     } finally {
       setLoading(false);
+      setUploadProgress("idle");
     }
   }
 
@@ -454,6 +494,27 @@ function EditRowModal({
             />
           </div>
 
+          {status === "paid" && (
+            <div>
+              <label className="mb-1 block text-sm font-medium">
+                Comprobante (opcional)
+              </label>
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                className="w-full text-sm text-gray-500 file:mr-4 file:rounded-xl file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:text-sm file:font-medium hover:file:bg-gray-200"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+              />
+              {row.proof_url && !file && (
+                <p className="mt-1 text-xs text-blue-600">
+                  <a href={row.proof_url} target="_blank" rel="noreferrer" className="hover:underline">
+                    Ver comprobante actual
+                  </a>
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm hover:bg-gray-100">
               Cancelar
@@ -463,7 +524,7 @@ function EditRowModal({
               disabled={loading}
               className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
-              {loading ? "Guardando..." : "Guardar Cambios"}
+              {uploadProgress === "uploading" ? "Subiendo comprobante..." : uploadProgress === "saving" ? "Guardando..." : "Guardar Cambios"}
             </button>
           </div>
         </form>
@@ -581,6 +642,19 @@ function ScheduleModal({
                             </span>
                           </td>
                           <td className="px-4 py-2">
+                            {r.proof_url && (
+                              <a
+                                href={r.proof_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-gray-500 hover:text-blue-600 transition-colors"
+                                title="Ver comprobante"
+                              >
+                                📎 Ver
+                              </a>
+                            )}
+                          </td>
+                          <td className="px-4 py-2">
                             <button
                                 className="text-blue-600 hover:text-blue-800 font-medium text-xs underline decoration-blue-300 underline-offset-4"
                                 onClick={() => setEditingRow(r)}
@@ -610,6 +684,7 @@ function ScheduleModal({
       {editingRow && (
         <EditRowModal 
           advanceId={advance.id}
+          personType={advance.person_type}
           row={editingRow}
           onClose={() => setEditingRow(null)}
           onSuccess={() => reload()} 
