@@ -600,11 +600,12 @@ r.post("/contracts/generate", async (req: Request, res: Response) => {
     }
     const { data: driver, error: dErr } = await supabase
       .from("drivers")
-      .select("id, full_name, document_number, city, email, phone")
-      .eq("id", driver_id)
+      .select("id, full_name, document_number, address, email, phone")
+      .eq("id", Number(driver_id))
       .single();
 
     if (dErr || !driver) {
+      console.error("Driver fetch error:", dErr, "driver_id received:", driver_id, "casted:", Number(driver_id));
       return res.status(400).json({ error: "Conductor/comprador no encontrado" });
     }
 
@@ -666,7 +667,7 @@ r.post("/contracts/generate", async (req: Request, res: Response) => {
 
       comprador_nombre:   driver.full_name || "",
       comprador_cedula:   driver.document_number || "",
-      comprador_ciudad:   driver.city || (geocerca_descripcion ? "Colombia" : "Cali"),
+      comprador_ciudad:   driver.address || (geocerca_descripcion ? "Colombia" : "Cali"),
       comprador_email:    driver.email || "",
       comprador_telefono: driver.phone || "",
 
