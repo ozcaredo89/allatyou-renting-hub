@@ -41,12 +41,11 @@ const R2_BUCKET = process.env.R2_BUCKET_NAME || "";
 // TTL de las presigned URLs de contratos (datos sensibles — 30 minutos)
 const SIGNED_URL_TTL_SECONDS = 30 * 60;
 
-// ── Ruta de la plantilla HTML (única fuente de verdad) ──────────────────────
-// TODO(sync-plantillas): si en el futuro se necesita una plantilla .docx
-// editable directamente en Word por el abogado (en vez de HTML), evaluar
-// volver a docxtemplater con sincronización manual entre ambas plantillas —
-// por ahora, HTML es la única fuente de verdad.
-const TEMPLATE_PATH = path.resolve(__dirname, "../templates/contrato.html");
+// La plantilla vive en src/templates/ (fuente de verdad). Se usa process.cwd()
+// para resolver desde la raíz del proyecto, funcionando tanto en dev (ts-node,
+// donde __dirname = src/lib) como en producción (node dist/, donde __dirname =
+// dist/lib pero el HTML NO se copia al dist por tsc).
+const TEMPLATE_PATH = path.resolve(process.cwd(), "src/templates/contrato.html");
 
 // =============================================================================
 // Tipos
