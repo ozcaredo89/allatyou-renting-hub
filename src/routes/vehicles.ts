@@ -22,6 +22,12 @@ r.get("/", async (req: Request, res: Response) => {
           amount,
           date,
           concept
+        ),
+        leasing_contracts (
+          status,
+          signed_contract_url,
+          created_at,
+          signed_at
         )
       `)
       .order("plate", { ascending: true });

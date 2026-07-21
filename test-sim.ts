@@ -1,0 +1,1 @@
+import { supabase } from './src/lib/supabase'; async function run() { const { data, error } = await supabase.from('leasing_simulations').select('*'); console.log('ROWS:', data ? data.length : null, error); } run();  

@@ -71,11 +71,7 @@ export default function AdminAmortization() {
   const [displayAdminExpenses, setDisplayAdminExpenses] = useState<string>("11.000");
   const [maintenanceFund, setMaintenanceFund] = useState<string>("10000");
   const [displayMaintenanceFund, setDisplayMaintenanceFund] = useState<string>("10.000");
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
-
-  const [startDate, setStartDate] = useState<string>(tomorrowStr);
+  const [startDate, setStartDate] = useState<string>(new Date().toISOString().slice(0, 10));
 
   // Price modal
   const [showPriceModal, setShowPriceModal] = useState(false);
@@ -99,32 +95,12 @@ export default function AdminAmortization() {
   const [showLeasingModal, setShowLeasingModal] = useState(false);
   const [activatingLeasing, setActivatingLeasing] = useState(false);
   const [leasingModalData, setLeasingModalData] = useState({
+    driver_id: "",
+    start_date: new Date().toISOString().slice(0, 10),
+    down_payment: "0",
     notes: "",
   });
-  const [leasingFile, setLeasingFile] = useState<File | null>(null);
-  const [attachLater, setAttachLater] = useState(false);
   const [leasingSuccess, setLeasingSuccess] = useState<any>(null);
-
-  // Generate Contract modal
-  const [showContractModal, setShowContractModal] = useState(false);
-  const [generatingContract, setGeneratingContract] = useState(false);
-  const [contractResult, setContractResult] = useState<any>(null);
-  const [contractError, setContractError] = useState<string | null>(null);
-  const [contractModalData, setContractModalData] = useState({
-    driver_id: "",
-    down_payment: "0",
-    taller_autorizado: "Taller AllAtYou, Cali",
-    geocerca_descripcion: "área metropolitana de Cali y municipios aledaños autorizados",
-    limite_velocidad_kmh: "100",
-    valor_garantia: "",
-    valor_clausula_penal: "",
-    mora_pct: "",
-    vehiculo_cilindraje: "",
-    vehiculo_combustible: "GASOLINA",
-    vehiculo_color: "",
-    vehiculo_carroceria: "",
-    medio_pago: "transferencia electrónica o consignación en la cuenta designada por EL VENDEDOR",
-  });
 
   useEffect(() => {
     let auth = ensureBasicAuth();
@@ -371,9 +347,9 @@ export default function AdminAmortization() {
     setDisplayMaintenanceFund(new Intl.NumberFormat("es-CO").format(sim.daily_maintenance));
     setAdminExpenses(String(sim.daily_admin));
     setDisplayAdminExpenses(new Intl.NumberFormat("es-CO").format(sim.daily_admin));
-    setStartDate(tomorrowStr);
+    setStartDate(today);
     setSchedule([]);
-    setLeasingModalData((prev) => ({ ...prev, start_date: tomorrowStr }));
+    setLeasingModalData((prev) => ({ ...prev, start_date: today }));
 
     // Auto-simulate immediately using the sim's values directly (bypasses async state)
     handleSimulate({
@@ -387,34 +363,28 @@ export default function AdminAmortization() {
 
   // ── ACTIVATE LEASING ──
   const handleActivateLeasing = async () => {
-    if (!contractResult?.contract_id) return alert("Primero debes generar el contrato oficial.");
-
-    if (!attachLater && !leasingFile) {
-      return alert("Por favor adjunta el contrato firmado, o marca la opción 'Adjuntar después'.");
-    }
+    if (!selectedPlate) return alert("Selecciona una placa primero.");
+    const cap = parseFloat(capital);
+    const rate = parseFloat(monthlyRate);
+    const quota = parseFloat(dailyQuota);
+    if (!cap || !rate || !quota) return alert("Completa Capital, Tasa y Cuota.");
 
     setActivatingLeasing(true);
     try {
-      let contractPdfUrl = null;
-
-      if (!attachLater && leasingFile) {
-        const fd = new FormData();
-        fd.append("file", leasingFile);
-        const upRes = await fetch(`${API}/uploads`, {
-          method: "POST",
-          headers: { Authorization: authHeader },
-          body: fd,
-        });
-        if (!upRes.ok) throw new Error("Error subiendo el archivo del contrato");
-        const upData = await upRes.json();
-        contractPdfUrl = upData.url;
-      }
-
-      const rs = await fetch(`${API}/leasing/contracts/${contractResult.contract_id}/activate`, {
-        method: "PATCH",
+      const rs = await fetch(`${API}/leasing/contracts`, {
+        method: "POST",
         headers: { "Content-Type": "application/json", Authorization: authHeader },
         body: JSON.stringify({
-          signed_contract_url: contractPdfUrl,
+          plate: selectedPlate,
+          driver_id: leasingModalData.driver_id ? Number(leasingModalData.driver_id) : null,
+          purchase_price: cap,
+          down_payment: parseFloat(leasingModalData.down_payment) || 0,
+          monthly_rate_pct: rate,
+          daily_maintenance: parseFloat(maintenanceFund),
+          daily_admin: parseFloat(adminExpenses),
+          start_date: leasingModalData.start_date,
+          notes: leasingModalData.notes || null,
+          generate_schedule: true,
         }),
       });
       if (!rs.ok) {
@@ -423,8 +393,6 @@ export default function AdminAmortization() {
       }
       const data = await rs.json();
       setLeasingSuccess(data);
-      setShowLeasingModal(false);
-      alert("Contrato activado y cronograma generado exitosamente.");
     } catch (err: any) {
       alert(err.message || "Error activando leasing");
     } finally {
@@ -460,66 +428,6 @@ export default function AdminAmortization() {
       styles: { fontSize: 8 },
     });
     doc.save(`Amortizacion_${selectedPlate || "Simulacion"}.pdf`);
-  };
-
-  // ── Generar Contrato Oficial (PDF + DOCX) vía backend ────────────────────
-  const handleGenerateContract = async () => {
-    if (!selectedPlate) {
-      setContractError("Selecciona una placa primero.");
-      return;
-    }
-    if (!contractModalData.driver_id) {
-      setContractError("Debes seleccionar un conductor.");
-      return;
-    }
-    if (!contractModalData.mora_pct) {
-      setContractError("La tasa de mora mensual (%) es requerida.");
-      return;
-    }
-
-    setGeneratingContract(true);
-    setContractError(null);
-    try {
-      const payload = {
-        plate: selectedPlate,
-        driver_id: contractModalData.driver_id,
-        purchase_price: parseFloat(capital),
-        down_payment: parseFloat(contractModalData.down_payment) || 0,
-        monthly_rate_pct: parseFloat(monthlyRate),
-        daily_maintenance: parseFloat(maintenanceFund),
-        daily_admin: parseFloat(adminExpenses),
-        start_date: startDate,
-
-        daily_capital_interest: parseFloat(dailyQuota),
-        mora_pct: parseFloat(contractModalData.mora_pct),
-        taller_autorizado: contractModalData.taller_autorizado,
-        geocerca_descripcion: contractModalData.geocerca_descripcion,
-        limite_velocidad_kmh: contractModalData.limite_velocidad_kmh,
-        valor_garantia: parseFloat(contractModalData.valor_garantia) || 0,
-        valor_clausula_penal: parseFloat(contractModalData.valor_clausula_penal) || 0,
-        vehiculo_cilindraje: contractModalData.vehiculo_cilindraje,
-        vehiculo_combustible: contractModalData.vehiculo_combustible,
-        vehiculo_color: contractModalData.vehiculo_color,
-        vehiculo_carroceria: contractModalData.vehiculo_carroceria,
-        medio_pago: contractModalData.medio_pago,
-      };
-
-      const rs = await fetch(`${API}/leasing/contracts/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: authHeader },
-        body: JSON.stringify(payload),
-      });
-      const data = await rs.json();
-      if (!rs.ok) {
-        setContractError(data.error || "Error generando el contrato");
-        return;
-      }
-      setContractResult(data);
-    } catch (e: any) {
-      setContractError(e.message || "Error de conexión");
-    } finally {
-      setGeneratingContract(false);
-    }
   };
 
   const totalTerm = useMemo(() => schedule.filter((s) => s.isPaymentDay).length, [schedule]);
@@ -675,40 +583,19 @@ export default function AdminAmortization() {
               <button
                 type="button"
                 onClick={handleSaveSimulation}
-                disabled={savingSimulation || !canSaveSimulation || !!changedField}
+                disabled={savingSimulation || !canSaveSimulation}
                 className="flex items-center gap-2 rounded-xl px-5 py-2.5 font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 shadow-sm transition-all disabled:opacity-40"
-                title={changedField ? "Debes regenerar la simulación antes de guardar" : ""}
               >
                 {savingSimulation ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 Guardar Simulación
-              </button>
-
-              {/* Generar Contrato Oficial (PDF+DOCX) */}
-              <button
-                type="button"
-                onClick={() => { 
-                  const v = vehicles.find(x => x.plate === selectedPlate);
-                  const dId = v?.driver?.id ? String(v.driver.id) : "";
-                  setContractModalData(p => ({ ...p, driver_id: dId }));
-                  setShowContractModal(true); 
-                  setContractResult(null); 
-                  setContractError(null); 
-                }}
-                disabled={!canActivateLeasing || !!changedField}
-                className="flex items-center gap-2 rounded-xl px-5 py-2.5 font-semibold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 transition-all disabled:opacity-40"
-                title={changedField ? "Debes regenerar la simulación" : ""}
-              >
-                <Download className="h-4 w-4" />
-                Generar Contrato (Borrador)
               </button>
 
               {/* Activar leasing */}
               <button
                 type="button"
                 onClick={() => { setShowLeasingModal(true); setLeasingSuccess(null); }}
-                disabled={!contractResult?.contract_id || !!changedField}
+                disabled={!canActivateLeasing}
                 className="flex items-center gap-2 rounded-xl px-5 py-2.5 font-semibold text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-40"
-                title={!contractResult?.contract_id ? "Primero genera el contrato borrador" : (changedField ? "Debes regenerar la simulación antes de activar" : "")}
               >
                 <Rocket className="h-4 w-4" />
                 Activar Leasing
@@ -941,7 +828,43 @@ export default function AdminAmortization() {
                   <div><span className="text-slate-500 text-xs block">Cuota Total Diaria</span><span className="font-bold text-blue-600">{fmtCOP.format(totalDailyPayment)}</span></div>
                 </div>
 
+                {/* Fecha de inicio */}
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Fecha de Inicio del Contrato</label>
+                  <input type="date" value={leasingModalData.start_date}
+                    onChange={(e) => setLeasingModalData((p) => ({ ...p, start_date: e.target.value }))}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-black/60" />
+                </div>
 
+                {/* Cuota inicial */}
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Cuota Inicial (Enganche)</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-2.5 text-slate-500">$</span>
+                    <input type="number" value={leasingModalData.down_payment}
+                      onChange={(e) => setLeasingModalData((p) => ({ ...p, down_payment: e.target.value }))}
+                      placeholder="0"
+                      className="w-full rounded-xl border border-slate-300 bg-white pl-8 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-black/60" />
+                  </div>
+                </div>
+
+                {/* ID Conductor */}
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">ID del Conductor (opcional)</label>
+                  <input type="number" value={leasingModalData.driver_id}
+                    onChange={(e) => setLeasingModalData((p) => ({ ...p, driver_id: e.target.value }))}
+                    placeholder="Ej: 42"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-black/60" />
+                  {(() => {
+                    const v = vehicles.find((x) => x.plate === selectedPlate);
+                    if (v?.driver) return (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Conductor asignado: <strong>{v.driver.full_name}</strong> (ID {v.driver.id})
+                        <button className="ml-2 text-blue-600 underline" onClick={() => setLeasingModalData((p) => ({ ...p, driver_id: String(v.driver!.id) }))}>Usar este</button>
+                      </p>
+                    );
+                  })()}
+                </div>
 
                 {/* Notas */}
                 <div>
@@ -950,38 +873,6 @@ export default function AdminAmortization() {
                     onChange={(e) => setLeasingModalData((p) => ({ ...p, notes: e.target.value }))}
                     rows={2} placeholder="Ej: Contrato firmado el 20/07/2026..."
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-black/60 resize-none" />
-                </div>
-
-                {/* Subir Contrato */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <label className="block text-sm font-bold text-slate-700">Contrato Firmado</label>
-                    <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={attachLater}
-                        onChange={(e) => setAttachLater(e.target.checked)}
-                        className="rounded border-slate-300"
-                      />
-                      Adjuntar después
-                    </label>
-                  </div>
-                  
-                  {!attachLater ? (
-                    <div>
-                      <input
-                        type="file"
-                        accept="application/pdf,image/*"
-                        onChange={(e) => setLeasingFile(e.target.files?.[0] || null)}
-                        className="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
-                      />
-                      {leasingFile && <p className="text-xs text-slate-500 mt-2">Archivo: {leasingFile.name}</p>}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-slate-500">
-                      El vehículo quedará con la marca <strong>Pendiente Contrato</strong> en la pantalla de Flota.
-                    </p>
-                  )}
                 </div>
 
                 <div className="flex gap-3 pt-2">
@@ -997,258 +888,6 @@ export default function AdminAmortization() {
                 </div>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* ══ MODAL GENERAR CONTRATO OFICIAL ══ */}
-      {showContractModal && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={(e) => { if (e.target === e.currentTarget) setShowContractModal(false); }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">Generar Contrato Oficial</h2>
-                <p className="text-sm text-slate-500 mt-0.5">Se generará el PDF y DOCX con la amortización completa</p>
-              </div>
-              <button onClick={() => setShowContractModal(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
-            </div>
-
-            <div className="px-6 py-5 space-y-5">
-              {/* ── Conductor y Cuota Inicial ── */}
-              <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-4 grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Conductor Titular</label>
-                  {(() => {
-                    const v = vehicles.find((x) => x.plate === selectedPlate);
-                    if (v?.driver && contractModalData.driver_id === String(v.driver.id)) {
-                      return (
-                        <div className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm flex justify-between items-center shadow-sm">
-                          <span className="font-semibold text-slate-800">{v.driver.full_name}</span>
-                          <button 
-                            type="button"
-                            className="text-[10px] text-blue-600 underline font-semibold bg-blue-50 px-2 py-0.5 rounded-md hover:bg-blue-100" 
-                            onClick={() => setContractModalData(p => ({ ...p, driver_id: "" }))}
-                          >
-                            Cambiar
-                          </button>
-                        </div>
-                      );
-                    }
-                    return (
-                      <div>
-                        <input type="number" value={contractModalData.driver_id}
-                          onChange={(e) => setContractModalData((p) => ({ ...p, driver_id: e.target.value }))}
-                          placeholder="ID del conductor (Ej: 42)"
-                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/40" />
-                        {v?.driver && (
-                          <p className="text-[10px] text-slate-500 mt-1">
-                            El titular asignado al vehículo es <strong>{v.driver.full_name}</strong>
-                            <button type="button" className="ml-2 text-blue-600 underline" onClick={() => setContractModalData((p) => ({ ...p, driver_id: String(v.driver!.id) }))}>Usar original</button>
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Cuota Inicial (Enganche)</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2 text-slate-500">$</span>
-                    <input type="number" value={contractModalData.down_payment}
-                      onChange={(e) => setContractModalData((p) => ({ ...p, down_payment: e.target.value }))}
-                      placeholder="0"
-                      className="w-full rounded-lg border border-slate-200 bg-white pl-7 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/40" />
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Datos de la cotización (solo lectura — ya están fijos) ── */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
-                  Datos tomados de la cotización (no modificables)
-                </p>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                  {[
-                    { label: "Vehículo", value: `${selectedPlate || "—"}` },
-                    { label: "Capital Financiado", value: capital ? `$${Number(capital).toLocaleString("es-CO")}` : "—" },
-                    { label: "Tasa Remuneratoria", value: monthlyRate ? `${monthlyRate}% M.V.` : "—" },
-                    { label: "Cuota Diaria (cap. + int.)", value: dailyQuota ? `$${Number(dailyQuota).toLocaleString("es-CO")}` : "—" },
-                    { label: "Fondo Mantenimiento", value: maintenanceFund ? `$${Number(maintenanceFund).toLocaleString("es-CO")}/día` : "—" },
-                    { label: "Gastos Admin.", value: adminExpenses ? `$${Number(adminExpenses).toLocaleString("es-CO")}/día` : "—" },
-                    { label: "Fecha de Inicio", value: startDate || "—" },
-                    { label: "Total Cuotas (días)", value: totalTerm ? `${totalTerm} días` : "—" },
-                  ].map(({ label, value }) => (
-                    <div key={label} className="flex flex-col">
-                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{label}</span>
-                      <span className="font-semibold text-slate-800">{value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* ── Tasa de mora (único dato financiero nuevo) ── */}
-              <div>
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-                  Tasa de Mora <span className="normal-case font-normal text-slate-400">(diferente a la tasa remuneratoria)</span>
-                </p>
-                <div className="flex items-end gap-3">
-                  <div className="flex-1">
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Tasa de mora mensual (%)</label>
-                    <input
-                      value={contractModalData.mora_pct}
-                      onChange={(e) => setContractModalData(p => ({ ...p, mora_pct: e.target.value }))}
-                      type="number" step="0.01" placeholder="ej: 2.9"
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/40"
-                    />
-                  </div>
-                  <p className="text-xs text-slate-400 pb-2.5 max-w-[200px]">
-                    Se aplica solo en caso de incumplimiento. Validada contra el IBC vigente (máx. 1.5× IBC).
-                  </p>
-                </div>
-              </div>
-
-              {/* ── Datos físicos del vehículo ── */}
-              <div>
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Datos Físicos del Vehículo</p>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { label: "Cilindraje (cc)", key: "vehiculo_cilindraje", placeholder: "ej: 995" },
-                    { label: "Color", key: "vehiculo_color", placeholder: "ej: Blanco" },
-                    { label: "Carrocería", key: "vehiculo_carroceria", placeholder: "ej: Hatchback" },
-                  ].map(({ label, key, placeholder }) => (
-                    <div key={key}>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">{label}</label>
-                      <input
-                        value={(contractModalData as any)[key]}
-                        onChange={(e) => setContractModalData(p => ({ ...p, [key]: e.target.value }))}
-                        placeholder={placeholder}
-                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/40"
-                      />
-                    </div>
-                  ))}
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Combustible</label>
-                    <select
-                      value={contractModalData.vehiculo_combustible}
-                      onChange={(e) => setContractModalData(p => ({ ...p, vehiculo_combustible: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/40 bg-white"
-                    >
-                      <option>GASOLINA</option>
-                      <option>DIESEL</option>
-                      <option>ELÉCTRICO</option>
-                      <option>HÍBRIDO</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Condiciones de operación ── */}
-              <div>
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Condiciones de Operación</p>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Taller Autorizado</label>
-                    <input
-                      value={contractModalData.taller_autorizado}
-                      onChange={(e) => setContractModalData(p => ({ ...p, taller_autorizado: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/40"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Geocerca / Zona de Operación Autorizada</label>
-                    <input
-                      value={contractModalData.geocerca_descripcion}
-                      onChange={(e) => setContractModalData(p => ({ ...p, geocerca_descripcion: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/40"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Límite de Velocidad (km/h)</label>
-                    <input
-                      value={contractModalData.limite_velocidad_kmh}
-                      onChange={(e) => setContractModalData(p => ({ ...p, limite_velocidad_kmh: e.target.value }))}
-                      type="number" min="60" max="200"
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/40"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Garantías ── */}
-              <div>
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Garantías</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Depósito de Garantía ($)</label>
-                    <input
-                      value={contractModalData.valor_garantia}
-                      onChange={(e) => setContractModalData(p => ({ ...p, valor_garantia: e.target.value }))}
-                      type="number" placeholder="ej: 300000"
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/40"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Cláusula Penal ($)</label>
-                    <input
-                      value={contractModalData.valor_clausula_penal}
-                      onChange={(e) => setContractModalData(p => ({ ...p, valor_clausula_penal: e.target.value }))}
-                      type="number" placeholder="ej: 1000000"
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/40"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Errores ── */}
-              {contractError && (
-                <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
-                  ❌ {contractError}
-                </div>
-              )}
-
-              {/* ── Resultado con links de descarga ── */}
-              {contractResult && (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
-                  <p className="text-sm font-bold text-emerald-800">✅ Contrato generado exitosamente</p>
-                  <div className="text-xs text-emerald-700 space-y-1">
-                    <p>No. Contrato: <strong>{contractResult.numero_contrato}</strong></p>
-                    <p>No. Pagaré: <strong>{contractResult.numero_pagare}</strong></p>
-                    <p className="text-amber-700 font-semibold">⏰ Los links expiran en 30 minutos — descarga los archivos ahora</p>
-                  </div>
-                  <div className="flex gap-3">
-                    <a href={contractResult.pdf_url} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-2 bg-red-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-red-700 transition-colors">
-                      <Download className="h-4 w-4" /> Descargar PDF
-                    </a>
-                    <a href={contractResult.docx_url} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
-                      <Download className="h-4 w-4" /> Descargar DOCX
-                    </a>
-                  </div>
-                </div>
-              )}
-            </div>
-
-
-            <div className="px-6 py-4 border-t border-slate-100 flex gap-3 justify-end">
-              <button
-                onClick={() => setShowContractModal(false)}
-                className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-all"
-              >
-                Cerrar
-              </button>
-              {!contractResult && (
-                <button
-                  onClick={handleGenerateContract}
-                  disabled={generatingContract}
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-600/20 transition-all disabled:opacity-40"
-                >
-                  {generatingContract ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                  {generatingContract ? "Generando…" : "Generar Contrato"}
-                </button>
-              )}
-            </div>
           </div>
         </div>
       )}

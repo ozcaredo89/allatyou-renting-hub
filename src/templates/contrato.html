@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contrato de Compraventa con Retención de Dominio — {{numero_contrato}}</title>
+  <style>
+    /* ====================================================================
+       PLANTILLA CONTRATO ALLATYOU — contrato.html
+       Fuente única de verdad (HTML → PDF vía Puppeteer, DOCX vía html-to-docx)
+       TODO(sync-plantillas): si en el futuro se necesita una plantilla .docx
+       editable directamente en Word por el abogado, evaluar volver a
+       docxtemplater con sincronización manual entre ambas plantillas —
+       por ahora, HTML es la única fuente de verdad.
+       ==================================================================== */
+    @page {
+      size: A4;
+      margin: 2cm 2.5cm;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Times New Roman', Times, serif;
+      font-size: 11pt;
+      line-height: 1.6;
+      color: #1a1a1a;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 24pt;
+      border-bottom: 2pt solid #000;
+      padding-bottom: 12pt;
+    }
+    .header h1 {
+      font-size: 13pt;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5pt;
+    }
+    .header .meta {
+      font-size: 10pt;
+      margin-top: 6pt;
+      color: #333;
+    }
+    h2 {
+      font-size: 11pt;
+      font-weight: bold;
+      text-transform: uppercase;
+      margin-top: 18pt;
+      margin-bottom: 6pt;
+      border-bottom: 0.5pt solid #555;
+      padding-bottom: 3pt;
+    }
+    p {
+      text-align: justify;
+      margin-bottom: 8pt;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10pt 0;
+      font-size: 10pt;
+    }
+    table th {
+      background: #1a1a1a;
+      color: #fff;
+      padding: 5pt 7pt;
+      text-align: left;
+      font-weight: bold;
+    }
+    table td {
+      padding: 4pt 7pt;
+      border: 0.5pt solid #bbb;
+    }
+    table tr:nth-child(even) td {
+      background: #f5f5f5;
+    }
+    .data-grid {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8pt 0;
+    }
+    .data-grid td {
+      padding: 3pt 6pt;
+      border: 0.5pt solid #ccc;
+      font-size: 10.5pt;
+    }
+    .data-grid td:first-child {
+      font-weight: bold;
+      width: 40%;
+      background: #f0f0f0;
+    }
+    .firma-block {
+      margin-top: 36pt;
+      display: flex;
+      justify-content: space-between;
+    }
+    .firma-col {
+      width: 45%;
+      text-align: center;
+    }
+    .firma-col .linea {
+      border-top: 1pt solid #000;
+      margin-top: 40pt;
+      padding-top: 4pt;
+      font-size: 10pt;
+    }
+    .page-break { page-break-before: always; }
+    .section-note {
+      font-size: 9.5pt;
+      color: #555;
+      font-style: italic;
+      margin-bottom: 6pt;
+    }
+    .highlight { font-weight: bold; }
+    .footer {
+      margin-top: 24pt;
+      font-size: 9pt;
+      text-align: center;
+      color: #666;
+      border-top: 0.5pt solid #ccc;
+      padding-top: 6pt;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ENCABEZADO
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="header">
+  <h1>Contrato de Compraventa con Retención de Dominio y Pacto de Cuota Diaria</h1>
+  <div class="meta">
+    No. de Contrato: <strong>{{numero_contrato}}</strong> &nbsp;&bull;&nbsp;
+    Pagaré No. <strong>{{numero_pagare}}</strong> &nbsp;&bull;&nbsp;
+    Generado el: {{fecha_generacion}}
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PARTES
+     ═══════════════════════════════════════════════════════════════ -->
+<h2>Primera — Partes del Contrato</h2>
+
+<p>Entre los suscritos, de una parte <span class="highlight">ALLATYOU S.A.S.</span>, sociedad
+comercial debidamente constituida, identificada con NIT, con domicilio en la ciudad de Cali,
+Colombia, representada por su representante legal (en adelante <em>EL VENDEDOR</em>); y de
+otra parte:</p>
+
+<table class="data-grid">
+  <tr><td>Nombre completo</td><td>{{comprador_nombre}}</td></tr>
+  <tr><td>Cédula de ciudadanía</td><td>{{comprador_cedula}}</td></tr>
+  <tr><td>Ciudad</td><td>{{comprador_ciudad}}</td></tr>
+  <tr><td>Correo electrónico</td><td>{{comprador_email}}</td></tr>
+  <tr><td>Teléfono</td><td>{{comprador_telefono}}</td></tr>
+</table>
+
+<p>(En adelante <em>EL COMPRADOR</em>). Hemos convenido celebrar el presente contrato de
+compraventa con retención de dominio, que se regirá por las siguientes cláusulas:</p>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     VEHÍCULO
+     ═══════════════════════════════════════════════════════════════ -->
+<h2>Segunda — Objeto del Contrato (Vehículo)</h2>
+
+<table class="data-grid">
+  <tr><td>Placa</td><td>{{vehiculo_placa}}</td></tr>
+  <tr><td>Marca</td><td>{{vehiculo_marca}}</td></tr>
+  <tr><td>Línea / Referencia</td><td>{{vehiculo_linea}}</td></tr>
+  <tr><td>Modelo (año)</td><td>{{vehiculo_modelo}}</td></tr>
+  <tr><td>Cilindraje (cc)</td><td>{{vehiculo_cilindraje}}</td></tr>
+  <tr><td>Combustible</td><td>{{vehiculo_combustible}}</td></tr>
+  <tr><td>Color</td><td>{{vehiculo_color}}</td></tr>
+  <tr><td>Carrocería</td><td>{{vehiculo_carroceria}}</td></tr>
+</table>
+
+<p>EL VENDEDOR transfiere la posesión del vehículo descrito al COMPRADOR, reservándose el dominio
+del mismo hasta tanto se pague la totalidad del precio pactado con sus respectivos intereses y
+accesorios.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PRECIO Y CONDICIONES FINANCIERAS
+     ═══════════════════════════════════════════════════════════════ -->
+<h2>Tercera — Precio y Condiciones Financieras</h2>
+
+<table class="data-grid">
+  <tr><td>Precio total del vehículo</td><td>$ {{precio_total}} ({{precio_total_letras}})</td></tr>
+  <tr><td>Cuota inicial / Abono</td><td>$ {{cuota_inicial}}</td></tr>
+  <tr><td>Capital financiado</td><td>$ {{capital_financiado}}</td></tr>
+  <tr><td>Cuota diaria capital + interés</td><td>$ {{cuota_capital_interes}}</td></tr>
+  <tr><td>Cuota diaria ahorro / garantía</td><td>$ {{cuota_ahorro}}</td></tr>
+  <tr><td>Cuota diaria administración</td><td>$ {{cuota_administracion}}</td></tr>
+  <tr><td><strong>Cuota diaria total</strong></td><td><strong>$ {{cuota_diaria_total}}</strong></td></tr>
+  <tr><td>Fecha de inicio</td><td>{{fecha_inicio}}</td></tr>
+  <tr><td>Número total de cuotas (días)</td><td>{{total_cuotas}}</td></tr>
+</table>
+
+<p>La cuota diaria total deberá ser pagada por <em>EL COMPRADOR</em> mediante
+{{medio_pago}}, en la cuenta designada por EL VENDEDOR, sin necesidad de cobro previo.
+El incumplimiento de dos (2) o más cuotas consecutivas faculta a EL VENDEDOR para declarar
+el contrato resuelto de pleno derecho y reclamar la restitución del vehículo.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TASAS DE INTERÉS
+     ═══════════════════════════════════════════════════════════════ -->
+<h2>Cuarta — Tasas de Interés</h2>
+
+<table class="data-grid">
+  <tr><td>Tasa de interés remuneratoria mensual</td><td>{{tasa_remuneratoria}}% M.V.</td></tr>
+  <tr><td>Tasa de interés de mora mensual</td><td>{{tasa_mora}}% M.V.</td></tr>
+  <tr><td>Interés Bancario Corriente (IBC) vigente</td><td>{{ibc_vigente}}% M.V. — Fuente: Superfinanciera</td></tr>
+</table>
+
+<p>Las tasas pactadas no exceden el máximo legal permitido según la certificación de la
+Superintendencia Financiera de Colombia vigente a la fecha de firma. En caso de mora, sobre el
+saldo insoluto total se aplicará la tasa de interés de mora indicada, en adición a la tasa
+remuneratoria.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     OPERACIÓN Y RESTRICCIONES
+     ═══════════════════════════════════════════════════════════════ -->
+<h2>Quinta — Condiciones de Operación del Vehículo</h2>
+
+<table class="data-grid">
+  <tr><td>Taller autorizado para mantenimiento</td><td>{{taller_autorizado}}</td></tr>
+  <tr><td>Zona de operación (geocerca)</td><td>{{geocerca_descripcion}}</td></tr>
+  <tr><td>Límite de velocidad permitido</td><td>{{limite_velocidad_kmh}} km/h</td></tr>
+</table>
+
+<p>EL COMPRADOR se obliga a llevar el vehículo única y exclusivamente al taller autorizado
+indicado para cualquier mantenimiento preventivo o correctivo. La salida del vehículo de la
+geocerca definida o la superación reiterada del límite de velocidad constituyen incumplimiento
+contractual y pueden dar lugar a la resolución del presente contrato.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     GARANTÍAS
+     ═══════════════════════════════════════════════════════════════ -->
+<h2>Sexta — Garantías</h2>
+
+<table class="data-grid">
+  <tr><td>Depósito de garantía (fondo de mantenimiento)</td><td>$ {{valor_garantia}} acumulados en cuotas diarias</td></tr>
+  <tr><td>Cláusula penal por incumplimiento</td><td>$ {{valor_clausula_penal}}</td></tr>
+</table>
+
+<p>EL COMPRADOR entrega a EL VENDEDOR una garantía acumulativa mediante el rubro diario
+de ahorro/garantía incluido en la cuota. Dicho fondo será devuelto al COMPRADOR al finalizar
+el contrato, descontando cualquier daño o deuda pendiente. La cláusula penal es exigible
+desde el primer incumplimiento material sin perjuicio de las demás acciones legales.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TABLA DE AMORTIZACIÓN
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="page-break"></div>
+<h2>Séptima — Tabla de Amortización (Sistema Francés — Interés sobre Saldo Insoluto)</h2>
+
+<p class="section-note">
+  La presente tabla refleja el cronograma financiero completo del contrato.
+  La última cuota ajusta el saldo a $0 exacto para evitar residuos por redondeo.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Fecha</th>
+      <th>Mant. ($)</th>
+      <th>Admin. ($)</th>
+      <th>Interés ($)</th>
+      <th>Capital ($)</th>
+      <th>Total Cuota ($)</th>
+      <th>Saldo ($)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{amortizacion_rows}}
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     CLÁUSULAS GENERALES
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="page-break"></div>
+<h2>Octava — Cláusulas Generales</h2>
+
+<p><strong>8.1 Resolución de pleno derecho.</strong> El incumplimiento en el pago de dos (2)
+o más cuotas consecutivas, o el uso del vehículo fuera del área geográfica pactada, faculta
+a EL VENDEDOR para declarar el contrato resuelto de pleno derecho, exigir la restitución
+inmediata del vehículo y cobrar la cláusula penal pactada.</p>
+
+<p><strong>8.2 Retención de dominio.</strong> La propiedad del vehículo permanecerá en cabeza
+de EL VENDEDOR hasta el pago íntegro de la totalidad del precio, intereses y accesorios.
+EL COMPRADOR no podrá gravar, enajenar ni dar en garantía el vehículo sin autorización
+escrita de EL VENDEDOR.</p>
+
+<p><strong>8.3 Riesgos y seguros.</strong> Desde la entrega física del vehículo, los riesgos
+de pérdida, deterioro o destrucción corren por cuenta de EL COMPRADOR, quien deberá mantener
+el vehículo asegurado contra todo riesgo durante la vigencia del contrato.</p>
+
+<p><strong>8.4 Datos personales.</strong> EL COMPRADOR autoriza expresamente el tratamiento
+de sus datos personales para los fines del presente contrato, conforme a la Ley 1581 de 2012
+y la política de tratamiento de datos de ALLATYOU S.A.S.</p>
+
+<p><strong>8.5 Ley aplicable.</strong> Este contrato se rige por las leyes colombianas.
+Para cualquier controversia, las partes se someten a la jurisdicción de los Jueces y
+Tribunales de la ciudad de Cali, Colombia, renunciando a cualquier otro fuero que pudiera
+corresponderles.</p>
+
+<p><strong>8.6 Perfección.</strong> El presente contrato se entiende perfeccionado con la
+firma de ambas partes y la entrega física del vehículo.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     FIRMAS
+     ═══════════════════════════════════════════════════════════════ -->
+<h2>Novena — Firmas</h2>
+
+<p>En señal de aceptación, las partes firman el presente contrato en la ciudad de
+{{comprador_ciudad}}, a los {{dia_firma}} días del mes de {{mes_firma}} de {{anio_firma}}.</p>
+
+<div class="firma-block">
+  <div class="firma-col">
+    <div class="linea">
+      <strong>EL VENDEDOR</strong><br/>
+      ALLATYOU S.A.S.<br/>
+      NIT: ___________________________<br/>
+      Representante Legal
+    </div>
+  </div>
+  <div class="firma-col">
+    <div class="linea">
+      <strong>EL COMPRADOR</strong><br/>
+      {{comprador_nombre}}<br/>
+      C.C. {{comprador_cedula}}<br/>
+      {{comprador_ciudad}}
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PIE DE PÁGINA
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="footer">
+  Contrato {{numero_contrato}} — Generado electrónicamente por el sistema AllAtYou Renting Hub —
+  Versión de plantilla: {{template_version_short}} — {{fecha_generacion}}
+</div>
+
+</body>
+</html>

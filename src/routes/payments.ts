@@ -1,6 +1,7 @@
 // src/routes/payments.ts
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
+import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
 
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
 const r = Router();
@@ -680,6 +681,41 @@ r.post("/", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Este comprobante acaba de ser utilizado en otro pago concurrentemente." });
     }
   }
+
+  // ========= ROUTER / STRATEGY: Leasing vs. Renting Legacy =========
+  // Si el vehículo tiene un contrato activo de leasing, se desvía la lógica
+  // de distribución al nuevo módulo. El flujo legacy queda 100% intacto.
+  if (safeStatus === "confirmed") {
+    const leasingContract = await getActiveLeasingContract(upperPlate);
+    if (leasingContract) {
+      const cascadeResult = await applyLeasingPayment(payment.id, amt, leasingContract.id);
+      if (!cascadeResult.ok) {
+        // Loguear el error pero no revertir el payment (ya está registrado)
+        await logInconsistency({
+          payment_id: payment.id,
+          plate: upperPlate,
+          payment_date,
+          issue_code: "LEASING_CASCADE_ERROR",
+          message: cascadeResult.error ?? "applyLeasingPayment failed",
+          metadata: { contract_id: leasingContract.id, amount: amt },
+        });
+      }
+      // Retornar temprano: el pago de leasing no toca operational_advance_schedule
+      return res.status(201).json({
+        ...payment,
+        leasing: {
+          contract_id:  leasingContract.id,
+          applied:      cascadeResult.applied,
+          remaining:    cascadeResult.remaining,
+          cuotas_touched: cascadeResult.cuotasTouched,
+          ok:           cascadeResult.ok,
+          warning:      cascadeResult.ok ? undefined : cascadeResult.error,
+        },
+        receiptWarning: receiptWarning || undefined,
+      });
+    }
+  }
+  // ======= Fin del bloque Leasing — el código legacy continúa sin cambios =======
 
   // ---------------- Update schedule (solo si installment_number != null) ----------------
   // Protección: si payment fue rejected, NO tocamos schedule.

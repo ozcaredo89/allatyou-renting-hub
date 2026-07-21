@@ -1,6 +1,22 @@
 // web/src/pages/Pay.tsx
 import { useEffect, useMemo, useState } from "react";
 
+type LeasingSummary = {
+  has_leasing: boolean;
+  contract_id?: number;
+  plate?: string;
+  purchase_price?: number;
+  financed_capital?: number;
+  start_date?: string;
+  total_installments?: number;
+  paid_installments?: number;
+  pending_installments?: number;
+  total_collected?: number;
+  pending_balance?: number;
+  maintenance_fund_accumulated?: number;
+  estimated_end_date?: string | null;
+};
+
 type InstallmentStatus = "paid" | "pending" | null;
 
 type Payment = {
@@ -167,6 +183,11 @@ export default function App() {
     pendingBody: any;
   };
   const [dupWarning, setDupWarning] = useState<DuplicateWarning | null>(null);
+
+  // Leasing info popup
+  const [leasingInfo, setLeasingInfo] = useState<LeasingSummary | null>(null);
+  const [showLeasingPopup, setShowLeasingPopup] = useState(false);
+  const [loadingLeasing, setLoadingLeasing] = useState(false);
 
   const [f, setF] = useState({
     payer_name: "",
@@ -346,12 +367,29 @@ export default function App() {
     if (plateValid && plateExists && f.plate) {
       loadRecentByPlate(f.plate);
       fetchLastSuggestion(f.plate);
+      fetchLeasingSummary(f.plate);
     } else {
       setItems([]);
       setLastSuggestion(null);
+      setLeasingInfo(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [f.plate, plateValid, plateExists]);
+
+  async function fetchLeasingSummary(plate: string) {
+    setLoadingLeasing(true);
+    try {
+      const q = new URLSearchParams({ plate: plate.toUpperCase() });
+      const rs = await fetch(`${API}/leasing/summary?` + q.toString());
+      if (!rs.ok) { setLeasingInfo(null); return; }
+      const data: LeasingSummary = await rs.json();
+      setLeasingInfo(data.has_leasing ? data : null);
+    } catch {
+      setLeasingInfo(null);
+    } finally {
+      setLoadingLeasing(false);
+    }
+  }
 
   // --- Sugerencias automáticas (Incluyendo Fecha) ---
   useEffect(() => {
@@ -577,10 +615,36 @@ export default function App() {
 
   const showRecent = plateValid && plateExists && !!f.plate;
 
+  const fmtCOPFull = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
+
   return (
     <div className="min-h-screen p-6">
       <div className="mx-auto max-w-5xl">
         <h1 className="mb-6 text-3xl font-bold tracking-tight">AllAtYou — Pagos</h1>
+
+        {/* BANNER LEASING */}
+        {loadingLeasing && <div className="mt-2 text-xs text-slate-400 animate-pulse">Consultando leasing...</div>}
+        {leasingInfo && !loadingLeasing && (
+          <div className="mb-5 flex items-center justify-between rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 px-5 py-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">🚗</span>
+              <div>
+                <p className="text-sm font-bold text-emerald-800">Este vehículo está en contrato Leasing</p>
+                <p className="text-xs text-emerald-600">
+                  Saldo pendiente: <strong>{fmtCOPFull.format(leasingInfo.pending_balance ?? 0)}</strong>
+                  {" · "}
+                  Cuotas: <strong>{leasingInfo.paid_installments}/{leasingInfo.total_installments}</strong>
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowLeasingPopup(true)}
+              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 transition-colors shadow-md"
+            >
+              📋 Ver Detalle
+            </button>
+          </div>
+        )}
 
         {/* Card: Form */}
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -974,6 +1038,72 @@ export default function App() {
           </>
         )}
       </div>
+
+      {/* ── LEASING DETAIL POPUP ── */}
+      {showLeasingPopup && leasingInfo && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in"
+          onClick={() => setShowLeasingPopup(false)}
+        >
+          <div
+            className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-emerald-100 text-xs font-medium uppercase tracking-wider mb-1">Contrato de Leasing</p>
+                  <h3 className="text-white font-black text-xl">{leasingInfo.plate}</h3>
+                </div>
+                <button onClick={() => setShowLeasingPopup(false)} className="text-white/70 hover:text-white bg-white/10 rounded-full p-2 transition-colors">
+                  <span className="text-lg leading-none">✕</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 grid grid-cols-2 gap-4">
+              <div className="col-span-2 bg-red-50 border border-red-100 rounded-2xl p-4 text-center">
+                <p className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-1">Saldo Pendiente</p>
+                <p className="text-3xl font-black text-red-700">{fmtCOPFull.format(leasingInfo.pending_balance ?? 0)}</p>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 text-center">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Cuotas Pagadas</p>
+                <p className="text-2xl font-black text-slate-900">
+                  {leasingInfo.paid_installments}<span className="text-slate-400 text-lg font-normal">/{leasingInfo.total_installments}</span>
+                </p>
+                <p className="text-[10px] text-slate-400 mt-1">{leasingInfo.pending_installments} pendientes</p>
+              </div>
+
+              <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 text-center">
+                <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider mb-1">Monto Pagado</p>
+                <p className="text-2xl font-black text-emerald-700">{fmtCOPFull.format(leasingInfo.total_collected ?? 0)}</p>
+              </div>
+
+              <div className="col-span-2 bg-amber-50 border border-amber-100 rounded-2xl p-4 text-center">
+                <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-1">Fondo de Mantenimiento Aprovisionado</p>
+                <p className="text-2xl font-black text-amber-700">{fmtCOPFull.format(leasingInfo.maintenance_fund_accumulated ?? 0)}</p>
+              </div>
+
+              {leasingInfo.estimated_end_date && (
+                <div className="col-span-2 bg-blue-50 border border-blue-100 rounded-2xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-1">Fecha Estimada de Finalización</p>
+                    <p className="text-lg font-black text-blue-800">{leasingInfo.estimated_end_date}</p>
+                  </div>
+                  <span className="text-3xl">🏁</span>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 pb-6">
+              <button onClick={() => setShowLeasingPopup(false)} className="w-full bg-slate-900 text-white rounded-xl py-3 font-semibold hover:bg-black transition-colors">
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -42,8 +42,12 @@ type Vehicle = {
   current_mileage?: number;
   last_oil_change_date?: string;
 
-  status?: 'active' | 'maintenance' | 'sold' | 'inactive';
+  // NOTA: 'active' en vehicles.status significa "Disponible / Operativo", NO tiene
+  // relación con leasing_contracts.status = 'active'. Nomenclatura histórica,
+  // pendiente de unificación en un refactor futuro (TODO).
+  status?: 'active' | 'maintenance' | 'sold' | 'inactive' | 'leasing' | 'reserved';
   precio_venta?: number | null;
+  leasing_contracts?: any[];
 };
 
 const EMPTY_VEHICLE: Vehicle = {
@@ -86,17 +90,31 @@ function getOilChangeStatus(dateStr?: string) {
   return { color: "text-emerald-700 bg-emerald-100 font-medium", label: dateStr };
 }
 
-const StatusBadge = ({ status }: { status?: string }) => {
+const StatusBadge = ({ status, onClick }: { status?: string; onClick?: () => void }) => {
   if (status === 'maintenance') return <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200">Mantenimiento</span>;
   if (status === 'sold') return <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700 border border-slate-300">Vendido</span>;
   if (status === 'inactive') return <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">Inactivo</span>;
+  if (status === 'leasing') return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-300 hover:bg-emerald-200 transition-colors cursor-pointer"
+      title="Ver detalle del leasing"
+    >
+      🚗 En Leasing
+    </button>
+  );
+  if (status === 'reserved') return <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">Reservado</span>;
   return <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Activo</span>;
 };
 
 export default function AdminVehicles() {
   const [items, setItems] = useState<Vehicle[]>([]);
-  const [statusFilter, setStatusFilter] = useState<'active' | 'inactive'>('active');
-  const filteredItems = items.filter(v => statusFilter === 'active' ? (v.status === 'active' || v.status === 'maintenance' || !v.status) : (v.status === 'sold' || v.status === 'inactive'));
+  const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'leasing'>('active');
+  const filteredItems = items.filter(v => {
+    if (statusFilter === 'active') return v.status === 'active' || v.status === 'maintenance' || !v.status;
+    if (statusFilter === 'leasing') return v.status === 'leasing' || v.status === 'reserved';
+    return v.status === 'sold' || v.status === 'inactive';
+  });
   const { items: sortedItems, requestSort, sortConfig } = useSortableData(filteredItems);
 
   const SortIcon = ({ columnKey }: { columnKey: string }) => {
@@ -127,6 +145,45 @@ export default function AdminVehicles() {
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [showGlobalOilReport, setShowGlobalOilReport] = useState(false);
   const [showGlobalMileageReport, setShowGlobalMileageReport] = useState(false);
+
+  // --- ESTADOS LEASING DRAWER ---
+  const [leasingDrawer, setLeasingDrawer] = useState<{ plate: string; contractId?: number } | null>(null);
+  const [leasingSchedule, setLeasingSchedule] = useState<any[]>([]);
+  const [leasingSummary, setLeasingSummary] = useState<any>(null);
+  const [loadingLeasingSchedule, setLoadingLeasingSchedule] = useState(false);
+
+  const fmtCOP2 = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
+
+  async function openLeasingDrawer(plate: string) {
+    setLeasingDrawer({ plate });
+    setLoadingLeasingSchedule(true);
+    setLeasingSchedule([]);
+    setLeasingSummary(null);
+    try {
+      const auth = ensureBasicAuth();
+      const headers = { Authorization: auth };
+
+      // Get summary
+      const rsSum = await fetch(`${API}/leasing/summary?plate=${plate}`, { headers });
+      if (rsSum.ok) {
+        const sum = await rsSum.json();
+        setLeasingSummary(sum);
+        if (sum.contract_id) {
+          setLeasingDrawer({ plate, contractId: sum.contract_id });
+          // Get schedule
+          const rsSch = await fetch(`${API}/leasing/contracts/${sum.contract_id}/schedule`, { headers });
+          if (rsSch.ok) {
+            const schData = await rsSch.json();
+            setLeasingSchedule(schData.items || []);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error cargando leasing', e);
+    } finally {
+      setLoadingLeasingSchedule(false);
+    }
+  }
 
   // Estado para Reporte Manual Odómetro
   const [newMileage, setNewMileage] = useState<{ mileage_km: string; date: string }>({ mileage_km: "", date: new Date().toISOString().slice(0, 10) });
@@ -470,6 +527,9 @@ export default function AdminVehicles() {
         {/* TABS */}
         <div className="mb-4 flex gap-2">
           <button onClick={() => setStatusFilter('active')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>Operativos</button>
+          <button onClick={() => setStatusFilter('leasing')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'leasing' ? 'bg-emerald-700 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
+            🚗 Leasing / Reservados <span className="ml-1 bg-emerald-100 text-emerald-700 rounded-full text-[10px] px-2 py-0.5">{items.filter(v => v.status === 'leasing' || v.status === 'reserved').length}</span>
+          </button>
           <button onClick={() => setStatusFilter('inactive')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'inactive' ? 'bg-slate-700 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>Vendidos / Inactivos</button>
         </div>
 
@@ -545,7 +605,38 @@ export default function AdminVehicles() {
                         ) : <span className="text-slate-400 italic text-[11px]">Sin asignar</span>}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <StatusBadge status={v.status} />
+                        <div className="flex flex-col items-center gap-1">
+                          <StatusBadge
+                            status={v.status}
+                            onClick={v.status === 'leasing' ? () => openLeasingDrawer(v.plate) : undefined}
+                          />
+                          {v.status === 'reserved' && v.leasing_contracts && (() => {
+                            const pendingContract = v.leasing_contracts.find((c: any) => c.status === 'pending');
+                            if (!pendingContract) return null;
+                            return (
+                              <button 
+                                onClick={async () => {
+                                  if (!window.confirm("¿Seguro que deseas cancelar este contrato pendiente y liberar el vehículo?")) return;
+                                  try {
+                                    const auth = ensureBasicAuth();
+                                    const rs = await fetch(`${API}/leasing/contracts/${pendingContract.id}/cancel-pending`, { 
+                                      method: 'POST', 
+                                      headers: { Authorization: auth } 
+                                    });
+                                    if (!rs.ok) throw new Error(await rs.text());
+                                    alert("Contrato cancelado y vehículo liberado.");
+                                    loadData();
+                                  } catch (e: any) {
+                                    alert("Error: " + e.message);
+                                  }
+                                }}
+                                className="mt-1 text-[9px] text-red-600 underline hover:text-red-800"
+                              >
+                                Cancelar Contrato
+                              </button>
+                            );
+                          })()}
+                        </div>
                       </td>
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.soat_expires_at)}`}>{v.soat_expires_at || "—"}</td>
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.tecno_expires_at)}`}>{v.tecno_expires_at || "—"}</td>
@@ -558,7 +649,22 @@ export default function AdminVehicles() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-slate-500 space-y-1">
-                        {v.ownership_card_front ? <span className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-600 text-[10px] border border-emerald-100">TP OK</span> : <span className="text-[10px] text-slate-300">Sin TP</span>}
+                        <div>
+                          {v.ownership_card_front ? <span className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-600 text-[10px] border border-emerald-100">TP OK</span> : <span className="text-[10px] text-slate-300">Sin TP</span>}
+                        </div>
+                        {v.status === 'leasing' && v.leasing_contracts && (() => {
+                          const activeContract = v.leasing_contracts.find((c: any) => c.status === 'active' && !c.signed_contract_url);
+                          if (!activeContract) return null;
+                          const hrs = (new Date().getTime() - new Date(activeContract.created_at).getTime()) / (1000 * 60 * 60);
+                          const isExpired = hrs > 72;
+                          return (
+                            <div className="mt-1">
+                              <span className={`inline-block px-2 py-0.5 rounded text-[10px] border font-bold ${isExpired ? 'bg-red-100 text-red-700 border-red-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`} title={isExpired ? "¡Alerta Crítica! Han pasado más de 72h sin contrato firmado. Acciones legales bloqueadas." : "Pendiente adjuntar contrato firmado"}>
+                                {isExpired ? 'FALTA FIRMA (>72h)' : 'Contrato Pnd'}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center gap-2">
@@ -1187,6 +1293,128 @@ export default function AdminVehicles() {
         onClose={() => setShowGlobalOilReport(false)}
       />
 
+      {/* ── LEASING SCHEDULE DRAWER ── */}
+      {leasingDrawer && (
+      <div className="fixed inset-0 z-[150] flex" onClick={() => setLeasingDrawer(null)}>
+        {/* Backdrop */}
+        <div className="flex-1 bg-slate-950/60 backdrop-blur-sm" />
+
+        {/* Panel */}
+        <div
+          className="w-full max-w-2xl bg-white shadow-2xl flex flex-col h-full overflow-hidden animate-in slide-in-from-right duration-300"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="bg-gradient-to-r from-emerald-700 to-teal-600 px-6 py-5 shrink-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-emerald-100 text-xs font-medium uppercase tracking-wider mb-1">Detalle Leasing</p>
+                <h2 className="text-white font-black text-2xl">{leasingDrawer.plate}</h2>
+              </div>
+              <button onClick={() => setLeasingDrawer(null)} className="text-white/70 hover:text-white bg-white/10 rounded-full p-2 transition-colors text-xl leading-none px-3 py-2">✕</button>
+            </div>
+          </div>
+
+          {/* Summary cards */}
+          {leasingSummary && (
+            <div className="px-6 py-4 grid grid-cols-2 gap-3 border-b border-slate-100 shrink-0">
+              <div className="bg-red-50 rounded-xl p-3 text-center">
+                <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Saldo Pendiente</p>
+                <p className="text-lg font-black text-red-700">{fmtCOP2.format(leasingSummary.pending_balance ?? 0)}</p>
+              </div>
+              <div className="bg-slate-50 rounded-xl p-3 text-center">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Cuotas</p>
+                <p className="text-lg font-black text-slate-900">{leasingSummary.paid_installments}/{leasingSummary.total_installments}</p>
+                <p className="text-[9px] text-slate-400">{leasingSummary.pending_installments} pendientes</p>
+              </div>
+              <div className="bg-emerald-50 rounded-xl p-3 text-center">
+                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Recaudado</p>
+                <p className="text-lg font-black text-emerald-700">{fmtCOP2.format(leasingSummary.total_collected ?? 0)}</p>
+              </div>
+              <div className="bg-amber-50 rounded-xl p-3 text-center">
+                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Fondo Mtto</p>
+                <p className="text-lg font-black text-amber-700">{fmtCOP2.format(leasingSummary.maintenance_fund_accumulated ?? 0)}</p>
+              </div>
+              {leasingSummary.estimated_end_date && (
+                <div className="col-span-2 bg-blue-50 rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider">Fecha Estimada Finalización</p>
+                    <p className="text-base font-black text-blue-800">{leasingSummary.estimated_end_date}</p>
+                  </div>
+                  <span className="text-2xl">🏁</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Cronograma */}
+          <div className="flex-1 overflow-y-auto">
+            {loadingLeasingSchedule ? (
+              <div className="flex items-center justify-center h-40 text-slate-400">
+                <div className="text-center">
+                  <div className="h-8 w-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                  Cargando cronograma...
+                </div>
+              </div>
+            ) : leasingSchedule.length === 0 ? (
+              <div className="flex items-center justify-center h-40 text-slate-400 text-sm">
+                No hay cuotas en el cronograma.
+              </div>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-bold text-slate-600">#</th>
+                    <th className="px-4 py-3 text-left font-bold text-slate-600">Fecha</th>
+                    <th className="px-4 py-3 text-right font-bold text-slate-600">Mantenimiento</th>
+                    <th className="px-4 py-3 text-right font-bold text-slate-600">Admin</th>
+                    <th className="px-4 py-3 text-right font-bold text-slate-600">Interés</th>
+                    <th className="px-4 py-3 text-right font-bold text-slate-600">Capital</th>
+                    <th className="px-4 py-3 text-center font-bold text-slate-600">Estado</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {leasingSchedule.map((row: any) => {
+                    const isPaid = row.status === 'paid';
+                    const isPartial = row.status === 'partially_paid';
+                    return (
+                      <tr key={row.id} className={`hover:bg-slate-50 transition-colors ${isPaid ? 'opacity-60' : ''}`}>
+                        <td className="px-4 py-2.5 font-mono text-slate-500">{row.installment_no}</td>
+                        <td className="px-4 py-2.5 font-medium text-slate-800">{row.due_date}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          <span className={isPaid ? 'text-emerald-600' : 'text-slate-700'}>
+                            {fmtCOP2.format(Number(isPaid || isPartial ? row.maintenance_paid : row.maintenance_expected))}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <span className={isPaid ? 'text-emerald-600' : 'text-slate-700'}>
+                            {fmtCOP2.format(Number(isPaid || isPartial ? row.admin_paid : row.admin_expected))}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-red-500">
+                          {fmtCOP2.format(Number(isPaid || isPartial ? row.interest_paid : row.interest_expected))}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-blue-600 font-medium">
+                          {fmtCOP2.format(Number(isPaid || isPartial ? row.principal_paid : row.principal_expected))}
+                        </td>
+                        <td className="px-4 py-2.5 text-center">
+                          {isPaid
+                            ? <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">Pagada ✓</span>
+                            : isPartial
+                            ? <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-full">Parcial</span>
+                            : <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-full">Pendiente</span>
+                          }
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+      )}
     </div>
   );
 }

@@ -47,6 +47,9 @@ import inventoryRoutes from "./routes/inventory";
 import oracleRoutes from "./routes/oracle";
 import fleetMapRoutes from "./routes/fleetMap";
 
+// --- MÓDULO LEASING / RENT-TO-OWN ---
+import leasingRoutes from "./routes/leasing";
+
 // --- MÓDULO DAEMON PROTRACK KILÓMETROS ---
 import { syncProtrackMileage } from "./oraculo/mileage-daemon";
 import { syncGpsImeis } from "./oraculo/sync-imei";
@@ -137,6 +140,7 @@ app.use("/reports", basicAuth, profitRoutes);
 app.use("/reports", basicAuth, reports);
 app.use("/ledger", basicAuth, ledgerRoutes);
 app.use("/advances", basicAuth, advancesRoutes);
+app.use("/leasing", basicAuth, leasingRoutes);
 app.use("/vehicles", basicAuth, vehiclesRoutes);
 app.use("/collections", basicAuth, collectionsRoutes);
 app.use("/app-users", basicAuth, appUsersRoutes);
