@@ -20,6 +20,7 @@ import {
   validateRatesVsIBC,
   type ContractData,
 } from "../lib/contractGenerator";
+import { getAmortizationDates } from "../lib/noPay";
 
 const r = Router();
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
@@ -623,6 +624,16 @@ r.post("/contracts/generate", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Este vehículo ya tiene un contrato de leasing activo" });
     }
 
+    // ── 3.1. Obtener fechas válidas de Pico y Placa ──
+    let validPaymentDatesArray: string[] = [];
+    try {
+      const datesRes = await getAmortizationDates(upperPlate, String(start_date), 1500, "Cali");
+      validPaymentDatesArray = datesRes.dates;
+    } catch (e: any) {
+      console.error("Error cargando Pico y Placa:", e?.message);
+      return res.status(422).json({ error: "No se pudo verificar restricciones de pico y placa, intente de nuevo" });
+    }
+
     // ── 4. Marcar contratos pendientes anteriores como superseded ──
     await supabase
       .from("leasing_contracts")
@@ -644,6 +655,7 @@ r.post("/contracts/generate", async (req: Request, res: Response) => {
         daily_capital_interest: Math.round(Number(req.body.daily_capital_interest || 0)),
         start_date: String(start_date),
         status: "pending",
+        valid_payment_dates: validPaymentDatesArray,
       })
       .select("*")
       .single();
@@ -699,11 +711,15 @@ r.post("/contracts/generate", async (req: Request, res: Response) => {
       generated_by: "admin",
     };
 
-    // ── 8. Generar el contrato ──
+    // ── 8. Construir Set de fechas válidas (ya calculadas y guardadas) ──
+    const validPaymentDates = new Set<string>(contract.valid_payment_dates || []);
+
+    // ── 9. Generar el contrato ──
     const result = await generateContract(
       contractData,
       Number(daily_capital_interest),
-      Number(mora_pct)
+      Number(mora_pct),
+      validPaymentDates
     );
 
     return res.status(201).json({
@@ -754,8 +770,16 @@ r.patch("/contracts/:id/activate", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Ya existe un contrato de leasing activo para esta placa" });
     }
 
-    // 3. Generar el cronograma (esto valida matemáticas y P&P)
+    // 3. Validar explícitamente que el contrato tenga fechas de pico y placa calculadas
+    const validPaymentDatesArray = contract.valid_payment_dates || [];
+    if (!Array.isArray(validPaymentDatesArray) || validPaymentDatesArray.length === 0) {
+      return res.status(422).json({ error: "El contrato no tiene fechas de pico y placa calculadas, no se puede activar" });
+    }
+
+    // 4. Generar cronograma de pagos usando las fechas persistidas
     const capitalFinanciado = Number(contract.financed_capital);
+    const validPaymentDates = new Set<string>(validPaymentDatesArray);
+
     const rows = generateLeasingSchedule(
       contract.id,
       capitalFinanciado,
@@ -764,7 +788,7 @@ r.patch("/contracts/:id/activate", async (req: Request, res: Response) => {
       Number(contract.daily_admin),
       Number(contract.daily_capital_interest),
       String(contract.start_date),
-      new Set<string>() // Sin P&P para cronograma base
+      validPaymentDates
     );
 
     if (rows.length === 0) {

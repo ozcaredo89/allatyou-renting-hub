@@ -312,6 +312,7 @@ export function generateLeasingSchedule(
         admin_expected:       Math.round(dailyAdmin * 100) / 100,
         interest_expected:    Math.round(interestToPay * 100) / 100,
         principal_expected:   Math.round(principalPayment * 100) / 100,
+        balance_expected:     Math.round((balance - principalPayment) * 100) / 100,
         status:               "pending",
       });
 

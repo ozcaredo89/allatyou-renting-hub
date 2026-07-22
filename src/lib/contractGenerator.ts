@@ -10,6 +10,7 @@
 
 import fs from "fs";
 import path from "path";
+import { generateLeasingSchedule } from "./leasingCascade";
 import crypto from "crypto";
 import puppeteer from "puppeteer";
 // @ts-ignore — html-to-docx no tiene tipos TS publicados
@@ -156,78 +157,22 @@ function toWords(n: number): string {
   return result.trim() + " PESOS M/CTE";
 }
 
-/**
- * Calcula la tabla de amortización francesa completa.
- * GARANTÍA: el último row ajusta el capital al saldo exacto,
- * de modo que el saldo final sea EXACTAMENTE $0 (sin residuos por redondeo).
- */
-function calcAmortizacion(
-  capital: number,
-  monthlyRatePct: number,
-  dailyMaint: number,
-  dailyAdmin: number,
-  startDate: string,
-  dailyCapitalInterest: number // cuota fija de capital+interés del simulador
-): Array<{
-  no: number;
-  fecha: string;
-  mant: number;
-  admin: number;
-  interes: number;
-  capital_abono: number;
-  total: number;
-  saldo: number;
-}> {
-  const dailyRate = (monthlyRatePct * 12) / 365 / 100;
-  let balance = Math.round(capital);
-  const rows = [];
-  let installmentNo = 0;
-  let current = new Date(startDate + "T00:00:00Z");
-  const MAX_DAYS = 365 * 10;
-  let dayCount = 0;
-
-  while (balance > 0 && dayCount < MAX_DAYS) {
-    const dailyInterest = Math.round(balance * dailyRate);
-    const principalPayment = Math.max(0, dailyCapitalInterest - dailyInterest);
-    installmentNo++;
-    dayCount++;
-
-    const isLastRow = (balance - principalPayment) <= 1;
-    const actualPrincipal = isLastRow ? balance : Math.min(balance, principalPayment);
-    const newBalance = isLastRow ? 0 : Math.max(0, balance - principalPayment);
-    const total = dailyMaint + dailyAdmin + dailyInterest + actualPrincipal;
-
-    rows.push({
-      no: installmentNo,
-      fecha: current.toISOString().slice(0, 10),
-      mant: dailyMaint,
-      admin: dailyAdmin,
-      interes: dailyInterest,
-      capital_abono: actualPrincipal,
-      total,
-      saldo: newBalance,
-    });
-
-    balance = newBalance;
-    current.setUTCDate(current.getUTCDate() + 1);
-    if (balance === 0) break;
-  }
-  return rows;
-}
-
 /** Genera los <tr> HTML de la tabla de amortización */
-function buildAmortizacionRows(rows: ReturnType<typeof calcAmortizacion>): string {
-  return rows.map(r => `
+function buildAmortizacionRows(rows: Array<Record<string, any>>): string {
+  return rows.map(r => {
+    const totalCuota = r.maintenance_expected + r.admin_expected + r.interest_expected + r.principal_expected;
+    return `
     <tr>
-      <td>${r.no}</td>
-      <td>${r.fecha}</td>
-      <td>${fmt(r.mant)}</td>
-      <td>${fmt(r.admin)}</td>
-      <td>${fmt(r.interes)}</td>
-      <td>${fmt(r.capital_abono)}</td>
-      <td>${fmt(r.total)}</td>
-      <td>${fmt(r.saldo)}</td>
-    </tr>`).join("");
+      <td>${r.installment_no}</td>
+      <td>${r.due_date}</td>
+      <td>${fmt(r.maintenance_expected)}</td>
+      <td>${fmt(r.admin_expected)}</td>
+      <td>${fmt(r.interest_expected)}</td>
+      <td>${fmt(r.principal_expected)}</td>
+      <td>${fmt(totalCuota)}</td>
+      <td>${fmt(r.balance_expected)}</td>
+    </tr>`;
+  }).join("");
 }
 
 // =============================================================================
@@ -315,7 +260,8 @@ async function uploadAndSign(
 export async function generateContract(
   data: ContractData,
   dailyCapitalInterest: number,  // cuota fija capital+interés del simulador
-  moraPct: number                // tasa de mora mensual
+  moraPct: number,               // tasa de mora mensual
+  validPaymentDates: Set<string>
 ): Promise<GenerationResult> {
 
   // ── 1. Validar tasas vs IBC ──────────────────────────────────────────────
@@ -333,14 +279,16 @@ export async function generateContract(
     nextPagareNumber(),
   ]);
 
-  // ── 4. Calcular amortización completa (última cuota cierra a $0) ─────────
-  const amortRows = calcAmortizacion(
+  // ── 4. Calcular amortización sincronizada con el backend ─────────────────
+  const amortRows = generateLeasingSchedule(
+    data.contract_id,
     data.financed_capital,
     data.monthly_rate_pct,
     data.daily_maintenance,
     data.daily_admin,
+    dailyCapitalInterest,
     data.start_date,
-    dailyCapitalInterest
+    validPaymentDates
   );
   const amortizacionRows = buildAmortizacionRows(amortRows);
 

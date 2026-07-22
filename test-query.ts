@@ -1,0 +1,1 @@
+import { supabase } from './src/lib/supabase'; async function run() { const { data, error } = await supabase.from('drivers').select('*').eq('id', '42').single(); console.log('STRING_ID:', !!data, error?.message); const { data: d2, error: e2 } = await supabase.from('drivers').select('*').eq('id', 42).single(); console.log('NUM_ID:', !!d2, e2?.message); } run();  
