@@ -390,6 +390,12 @@ function EditRowModal({
   // Si está pagada, usamos paid_date, si no, due_date como referencia
   const [date, setDate] = useState(row.paid_date || row.due_date);
   const [file, setFile] = useState<File | null>(null);
+  const [recalculatedCount, setRecalculatedCount] = useState<number | null>(null);
+
+  // Detectar si la fecha de vencimiento cambió en una cuota no-pagada
+  const originalDueDate = row.due_date;
+  const isPendingRow = row.status !== "paid";
+  const dateChanged = isPendingRow && status !== "paid" && date !== originalDueDate;
 
   async function uploadProofIfNeeded(): Promise<{ url: string | null; upload_id: number | null }> {
     if (!file) return { url: null, upload_id: null };
@@ -407,11 +413,12 @@ function EditRowModal({
 
     // Persuasive logic for collaborator
     if (personType === "collaborator" && status === "paid" && !file && !row.proof_url) {
-      const ok = window.confirm("Es muy recomendable adjuntar el comprobante de pago para mantener el soporte. ¿Deseas guardar de todas formas sin comprobante?");
-      if (!ok) return;
+      const confirmed = window.confirm("Es muy recomendable adjuntar el comprobante de pago para mantener el soporte. \u00bfDeseas guardar de todas formas sin comprobante?");
+      if (!confirmed) return;
     }
 
     setLoading(true);
+    setRecalculatedCount(null);
     try {
       let finalUploadId = row.upload_id;
       let finalProofUrl = row.proof_url;
@@ -443,9 +450,19 @@ function EditRowModal({
         const json = await res.json();
         throw new Error(json.error || "Error al actualizar");
       }
-      
+
+      const json = await res.json();
+      const updated: number = json.recalculated ?? 0;
+
       onSuccess(); // Recarga la tabla
-      onClose(); // Cierra el modal
+
+      if (updated > 0) {
+        // Mostrar brevemente cuántas cuotas se recalcularon antes de cerrar
+        setRecalculatedCount(updated);
+        setTimeout(() => onClose(), 2400);
+      } else {
+        onClose();
+      }
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -492,6 +509,15 @@ function EditRowModal({
               value={date}
               onChange={(e) => setDate(e.target.value)}
             />
+            {/* Aviso de recálculo en cascada */}
+            {dateChanged && (
+              <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                <span className="mt-0.5 text-base">📅</span>
+                <p className="text-xs leading-relaxed text-amber-700">
+                  Las cuotas siguientes <strong>no pagadas</strong> se recalcularán automáticamente respetando pico y placa.
+                </p>
+              </div>
+            )}
           </div>
 
           {status === "paid" && (
@@ -512,6 +538,16 @@ function EditRowModal({
                   </a>
                 </p>
               )}
+            </div>
+          )}
+
+          {/* Resultado del recálculo en cascada */}
+          {recalculatedCount !== null && recalculatedCount > 0 && (
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+              <span className="text-emerald-600 text-base">✅</span>
+              <p className="text-xs text-emerald-700">
+                <strong>{recalculatedCount} cuota{recalculatedCount !== 1 ? "s" : ""}</strong> siguientes actualizadas respetando pico y placa.
+              </p>
             </div>
           )}
 

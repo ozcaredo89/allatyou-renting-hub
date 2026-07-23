@@ -1,6 +1,7 @@
 // src/routes/advances.ts
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
+import { getAmortizationDates } from "../lib/noPay";
 
 const r = Router();
 
@@ -280,12 +281,13 @@ r.patch("/:id", async (req: Request, res: Response) => {
 
 // --------- PATCH /advances/:id/schedule/:rowId (EDITAR CUOTA COMPLETA) ---------
 // Permite cambiar estado (pending/paid), fecha y monto, recalculando el avance
+// Si se cambia la due_date de una cuota no-pagada, recalcula en cascada las siguientes no-pagadas.
 r.patch("/:id/schedule/:rowId", async (req: Request, res: Response) => {
   const advanceId = Number(req.params.id);
   const rowId = Number(req.params.rowId);
   
-  // Datos que queremos editar
-  const { status, date, amount, upload_id, proof_url } = req.body; // date puede ser due_date o paid_date según el status
+  // date puede ser due_date o paid_date según el status
+  const { status, date, amount, upload_id, proof_url } = req.body;
 
   if (!advanceId || !rowId) return res.status(400).json({ error: "Invalid IDs" });
 
@@ -295,50 +297,59 @@ r.patch("/:id/schedule/:rowId", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Estado inválido" });
     }
 
-    // 2. Preparar payload de actualización
+    // 2. Obtener la cuota actual para saber su installment_no y due_date original
+    const { data: currentRow, error: fetchErr } = await supabase
+      .from("operational_advance_schedule")
+      .select("id, installment_no, due_date, status")
+      .eq("id", rowId)
+      .eq("advance_id", advanceId)
+      .single();
+
+    if (fetchErr || !currentRow) return res.status(404).json({ error: "Cuota no encontrada" });
+
+    // 3. Preparar payload de actualización
     const updates: any = {};
     if (amount !== undefined) updates.installment_amount = Number(amount);
-    
     if (upload_id !== undefined) updates.upload_id = upload_id || null;
     if (proof_url !== undefined) updates.proof_url = proof_url || null;
 
     if (status === "paid") {
       updates.status = "paid";
-      updates.paid_date = date || new Date().toISOString().slice(0, 10); // Si es paid, necesitamos fecha de pago
+      updates.paid_date = date || new Date().toISOString().slice(0, 10);
     } else if (status === "pending") {
       updates.status = "pending";
-      updates.paid_date = null; // Si vuelve a pendiente, borramos fecha de pago
-      if (date) updates.due_date = date; // Opcional: permitir cambiar fecha de vencimiento
+      updates.paid_date = null;
+      if (date) updates.due_date = date;
     }
 
-    // 3. Actualizar la fila del cronograma
+    // 4. Actualizar la fila del cronograma
     const { error: upErr } = await supabase
       .from("operational_advance_schedule")
       .update(updates)
       .eq("id", rowId)
-      .eq("advance_id", advanceId); // Seguridad: que pertenezca al advance correcto
+      .eq("advance_id", advanceId);
 
     if (upErr) throw new Error(upErr.message);
 
-    // 4. RECALCULAR PROGRESO DEL PRÉSTAMO PADRE
-    // Contamos cuántas quedaron pagadas en total para este préstamo
+    // 5. RECALCULAR PROGRESO DEL PRÉSTAMO PADRE
     const { count: paidCount, error: countErr } = await supabase
       .from("operational_advance_schedule")
       .select("*", { count: "exact", head: true })
       .eq("advance_id", advanceId)
       .eq("status", "paid");
 
+    let recalculated = 0;
+
     if (!countErr && typeof paidCount === "number") {
-      // Traemos el total de cuotas para saber si cerramos o abrimos
       const { data: adv } = await supabase
         .from("operational_advances")
-        .select("installments, status")
+        .select("installments, status, plate")
         .eq("id", advanceId)
         .single();
 
       if (adv) {
         const isComplete = paidCount >= adv.installments;
-        const newStatus = isComplete ? "closed" : "active"; // Si estaba closed y le restamos pagos, vuelve a active
+        const newStatus = isComplete ? "closed" : "active";
 
         await supabase
           .from("operational_advances")
@@ -348,13 +359,77 @@ r.patch("/:id/schedule/:rowId", async (req: Request, res: Response) => {
             updated_at: new Date().toISOString()
           })
           .eq("id", advanceId);
+
+        // 6. RECÁLCULO EN CASCADA DE FECHAS
+        // Solo aplica cuando se editó la due_date de una cuota no-pagada
+        const editedIsPending = status === "pending" || (!status && currentRow.status !== "paid");
+        const dateChanged = date && date !== currentRow.due_date;
+
+        if (editedIsPending && dateChanged) {
+          // Obtener todas las cuotas siguientes ordenadas por installment_no
+          const { data: following, error: followErr } = await supabase
+            .from("operational_advance_schedule")
+            .select("id, installment_no, due_date, status")
+            .eq("advance_id", advanceId)
+            .gt("installment_no", currentRow.installment_no)
+            .order("installment_no", { ascending: true });
+
+          if (!followErr && following && following.length > 0) {
+            // Solo las no-pagadas reciben nuevas fechas
+            const unpaidFollowing = following.filter((r: any) => r.status !== "paid");
+
+            if (unpaidFollowing.length > 0) {
+              const plate: string | null = adv.plate ?? null;
+
+              let newDates: string[];
+
+              if (plate && /^[A-Z]{3}\d{3}$/.test(plate)) {
+                // Con placa: usar getAmortizationDates para respetar pico y placa.
+                // getAmortizationDates incluye startDate, así que avanzamos un día
+                // para que la primera siguiente no repita la fecha recién editada.
+                const dayAfter = new Date(date + "T00:00:00Z");
+                dayAfter.setUTCDate(dayAfter.getUTCDate() + 1);
+                const startFrom = dayAfter.toISOString().slice(0, 10);
+
+                const { dates } = await getAmortizationDates(
+                  plate,
+                  startFrom,
+                  unpaidFollowing.length,
+                  "Cali"
+                );
+                newDates = dates;
+              } else {
+                // Sin placa (colaborador): fechas consecutivas día por día desde date+1
+                newDates = [];
+                const base = new Date(date + "T00:00:00Z");
+                for (let i = 0; i < unpaidFollowing.length; i++) {
+                  const next = new Date(base);
+                  next.setUTCDate(base.getUTCDate() + i + 1);
+                  newDates.push(next.toISOString().slice(0, 10));
+                }
+              }
+
+              // Actualizar cada cuota no-pagada con su nueva fecha
+              await Promise.all(
+                unpaidFollowing.map((row: any, idx: number) =>
+                  supabase
+                    .from("operational_advance_schedule")
+                    .update({ due_date: newDates[idx] })
+                    .eq("id", row.id)
+                )
+              );
+
+              recalculated = unpaidFollowing.length;
+            }
+          }
+        }
       }
     }
 
-    return res.json({ ok: true });
+    return res.json({ ok: true, recalculated });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-export default r;
+export default r;
