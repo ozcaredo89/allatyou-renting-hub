@@ -574,7 +574,11 @@ export default function AdminVehicles() {
                       Últ. Aceite <SortIcon columnKey="last_oil_change_date" />
                     </div>
                   </th>
-                  <th className="px-4 py-3">Docs</th>
+                  <th className="px-4 py-3">
+                    <div onClick={() => requestSort('ownership_card_front')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
+                      Docs <SortIcon columnKey="ownership_card_front" />
+                    </div>
+                  </th>
                   <th className="px-4 py-3 text-center">Historial</th>
                   <th className="px-4 py-3 text-right">Acción</th>
                 </tr>
