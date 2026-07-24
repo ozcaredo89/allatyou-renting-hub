@@ -10,7 +10,7 @@ import GlobalMileageReport from "../components/GlobalMileageReport";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
-type DriverSimple = { id: number; full_name: string };
+type DriverSimple = { id: number; full_name: string; phone?: string };
 
 type Vehicle = {
   plate: string;
@@ -602,9 +602,22 @@ export default function AdminVehicles() {
                             <div className="h-6 w-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] font-bold">
                               {v.driver.full_name.charAt(0)}
                             </div>
-                            <span className="text-slate-700 truncate max-w-[150px]" title={v.driver.full_name}>
-                              {v.driver.full_name}
-                            </span>
+                            {v.driver.phone ? (
+                              <a 
+                                href={`https://wa.me/${v.driver.phone.replace(/\D/g, '').startsWith('57') ? v.driver.phone.replace(/\D/g, '') : '57' + v.driver.phone.replace(/\D/g, '')}`} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-emerald-600 hover:text-emerald-800 hover:underline truncate max-w-[150px] font-medium"
+                                title={`Contactar a ${v.driver.full_name} por WhatsApp`}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {v.driver.full_name}
+                              </a>
+                            ) : (
+                              <span className="text-slate-700 truncate max-w-[150px]" title={v.driver.full_name}>
+                                {v.driver.full_name}
+                              </span>
+                            )}
                           </div>
                         ) : <span className="text-slate-400 italic text-[11px]">Sin asignar</span>}
                       </td>
