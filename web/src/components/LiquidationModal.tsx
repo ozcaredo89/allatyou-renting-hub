@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { X, Plus, Trash2, Edit3, Save, AlertTriangle } from "lucide-react";
+import { ensureBasicAuth } from "../lib/auth";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -34,9 +35,9 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
   const fetchData = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem("allatyou_admin_token");
-      const res = await fetch(`${API}/api/liquidations/${driverId}/data`, {
-        headers: { Authorization: `Basic ${token}` }
+      const auth = ensureBasicAuth();
+      const res = await fetch(`${API}/liquidations/${driverId}/data`, {
+        headers: { Authorization: auth }
       });
       if (!res.ok) throw new Error("Error loading data");
       
@@ -111,8 +112,8 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
   const handleSave = async () => {
     setSubmitting(true);
     try {
-      const token = localStorage.getItem("allatyou_admin_token");
-      const url = liquidationId ? `${API}/api/liquidations/${liquidationId}` : `${API}/api/liquidations`;
+      const auth = ensureBasicAuth();
+      const url = liquidationId ? `${API}/liquidations/${liquidationId}` : `${API}/liquidations`;
       const method = liquidationId ? "PUT" : "POST";
       
       const payload = {
@@ -131,7 +132,7 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
         method,
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Basic ${token}`
+          Authorization: auth
         },
         body: JSON.stringify(payload)
       });
