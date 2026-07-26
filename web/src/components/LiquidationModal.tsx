@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { X, Plus, Trash2, Edit3, Save, AlertTriangle } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
