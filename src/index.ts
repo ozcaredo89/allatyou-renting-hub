@@ -22,6 +22,7 @@ import vehiclesRoutes from "./routes/vehicles";
 import collectionsRoutes from "./routes/collections";
 import appUsersRoutes from "./routes/app-users";
 import depositsRoutes from "./routes/deposits";
+import liquidationsRoutes from "./routes/liquidations";
 
 // --- MÓDULO MARKETING ---
 import marketingRoutes from "./routes/marketing";
@@ -145,6 +146,7 @@ app.use("/vehicles", basicAuth, vehiclesRoutes);
 app.use("/collections", basicAuth, collectionsRoutes);
 app.use("/app-users", basicAuth, appUsersRoutes);
 app.use("/deposits", basicAuth, depositsRoutes);
+app.use("/liquidations", basicAuth, liquidationsRoutes);
 app.use("/inspections", basicAuth, inspectionsRoutes);
 app.use("/audits", basicAuth, auditsRoutes);
 app.use("/inventory", basicAuth, inventoryRoutes);

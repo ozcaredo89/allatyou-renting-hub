@@ -774,20 +774,50 @@ export default function AdminVehicles() {
                     <div className="relative group">
                       <p className="text-xs font-bold text-slate-600 mb-2 uppercase">Tarjeta Propiedad (Frente)</p>
                       <div
-                        onClick={() => setActiveField('ownership_card_front')}
-                        className="rounded-xl border border-dashed border-slate-300 p-1 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-slate-100 transition-colors cursor-pointer h-32 overflow-hidden"
+                        onClick={() => {
+                          if (editing.ownership_card_front) {
+                            // Si ya hay imagen, abrimos el visor a pantalla completa
+                            setViewingImages({ urls: [{ url: editing.ownership_card_front, title: 'Tarjeta Propiedad (Frente)' }], startingIndex: 0 });
+                          } else {
+                            // Si no hay imagen, abrimos el selector de cámara/archivos
+                            setActiveField('ownership_card_front');
+                          }
+                        }}
+                        className={`rounded-xl border ${uploading && activeField === 'ownership_card_front' ? 'border-emerald-500 bg-emerald-50' : 'border-dashed border-slate-300 bg-slate-50/50 hover:bg-slate-100'} p-1 flex flex-col items-center justify-center transition-colors cursor-pointer h-32 overflow-hidden relative`}
                       >
-                        {editing.ownership_card_front ? (
-                          <img src={editing.ownership_card_front} alt="TP Frente" className="w-full h-full object-cover rounded-lg" />
+                        {uploading && activeField === 'ownership_card_front' ? (
+                          <div className="flex flex-col items-center justify-center text-emerald-600 animate-in fade-in">
+                            <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mb-2" />
+                            <span className="text-[10px] font-bold tracking-widest uppercase">Subiendo...</span>
+                          </div>
+                        ) : editing.ownership_card_front ? (
+                          <>
+                            <img src={editing.ownership_card_front} alt="TP Frente" className="w-full h-full object-cover rounded-lg" />
+                            {/* Overlay oscuro on-hover para indicar que se puede hacer clic para ver */}
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
+                              <span className="text-white text-xs font-bold flex items-center gap-1">
+                                <ImageIcon className="w-4 h-4"/> Ver completa
+                              </span>
+                            </div>
+                          </>
                         ) : (
                           <div className="text-center">
-                            <UploadCloud className="w-8 h-8 text-slate-300 mx-auto mb-1" />
+                            <UploadCloud className="w-8 h-8 text-slate-300 mx-auto mb-1 group-hover:text-emerald-500 transition-colors" />
                             <span className="text-[10px] text-slate-500 font-bold">Tocar para subir</span>
                           </div>
                         )}
                       </div>
-                      {editing.ownership_card_front && (
-                        <button type="button" onClick={(e) => { e.stopPropagation(); setEditing({ ...editing, ownership_card_front: null }); }} className="absolute top-8 right-1 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 text-xs z-10">✕</button>
+
+                      {/* Botones de acción (Editar / Eliminar) - Visibles solo si hay imagen y no está subiendo */}
+                      {editing.ownership_card_front && !(uploading && activeField === 'ownership_card_front') && (
+                        <div className="absolute top-8 right-2 flex flex-col gap-1.5 z-10 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                          <button type="button" onClick={(e) => { e.stopPropagation(); setActiveField('ownership_card_front'); }} className="bg-white text-slate-700 rounded-full p-2 shadow-lg hover:bg-slate-50 border border-slate-200" title="Cambiar Foto">
+                            <Wrench className="w-3.5 h-3.5" />
+                          </button>
+                          <button type="button" onClick={(e) => { e.stopPropagation(); setEditing({ ...editing, ownership_card_front: null }); }} className="bg-red-500 text-white rounded-full p-2 shadow-lg hover:bg-red-600" title="Eliminar Foto">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       )}
                     </div>
 
@@ -795,24 +825,50 @@ export default function AdminVehicles() {
                     <div className="relative group">
                       <p className="text-xs font-bold text-slate-600 mb-2 uppercase">Tarjeta Propiedad (Reverso)</p>
                       <div
-                        onClick={() => setActiveField('ownership_card_back')}
-                        className="rounded-xl border border-dashed border-slate-300 p-1 flex flex-col items-center justify-center bg-slate-50/50 hover:bg-slate-100 transition-colors cursor-pointer h-32 overflow-hidden"
+                        onClick={() => {
+                          if (editing.ownership_card_back) {
+                            setViewingImages({ urls: [{ url: editing.ownership_card_back, title: 'Tarjeta Propiedad (Reverso)' }], startingIndex: 0 });
+                          } else {
+                            setActiveField('ownership_card_back');
+                          }
+                        }}
+                        className={`rounded-xl border ${uploading && activeField === 'ownership_card_back' ? 'border-emerald-500 bg-emerald-50' : 'border-dashed border-slate-300 bg-slate-50/50 hover:bg-slate-100'} p-1 flex flex-col items-center justify-center transition-colors cursor-pointer h-32 overflow-hidden relative`}
                       >
-                        {editing.ownership_card_back ? (
-                          <img src={editing.ownership_card_back} alt="TP Reverso" className="w-full h-full object-cover rounded-lg" />
+                        {uploading && activeField === 'ownership_card_back' ? (
+                          <div className="flex flex-col items-center justify-center text-emerald-600 animate-in fade-in">
+                            <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mb-2" />
+                            <span className="text-[10px] font-bold tracking-widest uppercase">Subiendo...</span>
+                          </div>
+                        ) : editing.ownership_card_back ? (
+                          <>
+                            <img src={editing.ownership_card_back} alt="TP Reverso" className="w-full h-full object-cover rounded-lg" />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
+                              <span className="text-white text-xs font-bold flex items-center gap-1">
+                                <ImageIcon className="w-4 h-4"/> Ver completa
+                              </span>
+                            </div>
+                          </>
                         ) : (
                           <div className="text-center">
-                            <UploadCloud className="w-8 h-8 text-slate-300 mx-auto mb-1" />
+                            <UploadCloud className="w-8 h-8 text-slate-300 mx-auto mb-1 group-hover:text-emerald-500 transition-colors" />
                             <span className="text-[10px] text-slate-500 font-bold">Tocar para subir</span>
                           </div>
                         )}
                       </div>
-                      {editing.ownership_card_back && (
-                        <button type="button" onClick={(e) => { e.stopPropagation(); setEditing({ ...editing, ownership_card_back: null }); }} className="absolute top-8 right-1 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 text-xs z-10">✕</button>
+
+                      {/* Botones de acción (Editar / Eliminar) */}
+                      {editing.ownership_card_back && !(uploading && activeField === 'ownership_card_back') && (
+                        <div className="absolute top-8 right-2 flex flex-col gap-1.5 z-10 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                          <button type="button" onClick={(e) => { e.stopPropagation(); setActiveField('ownership_card_back'); }} className="bg-white text-slate-700 rounded-full p-2 shadow-lg hover:bg-slate-50 border border-slate-200" title="Cambiar Foto">
+                            <Wrench className="w-3.5 h-3.5" />
+                          </button>
+                          <button type="button" onClick={(e) => { e.stopPropagation(); setEditing({ ...editing, ownership_card_back: null }); }} className="bg-red-500 text-white rounded-full p-2 shadow-lg hover:bg-red-600" title="Eliminar Foto">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
-                  {/* ------------------------------------------------ */}
 
                   <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-200 bg-slate-50/50 p-3 rounded-lg">
                     <div className="col-span-2">

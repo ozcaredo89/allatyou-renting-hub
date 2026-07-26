@@ -238,6 +238,13 @@ r.put("/:plate", async (req: Request, res: Response) => {
   const body = req.body;
 
   try {
+    // 0. Get current vehicle state to detect driver changes
+    const { data: currentVehicle } = await supabase
+      .from("vehicles")
+      .select("current_driver_id")
+      .eq("plate", plate)
+      .single();
+
     // 1. Preparar objeto base de actualizaciones
     const updates: any = {
       brand: body.brand,
@@ -306,6 +313,30 @@ r.put("/:plate", async (req: Request, res: Response) => {
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    // --- NUEVA LÓGICA: Histórico de Asignaciones (vehicle_assignments) ---
+    if (currentVehicle && currentVehicle.current_driver_id !== cleanUpdates.current_driver_id) {
+      // 1. Cerrar asignación anterior si existía
+      if (currentVehicle.current_driver_id) {
+        await supabase
+          .from("vehicle_assignments")
+          .update({ end_date: new Date().toISOString() })
+          .eq("plate", plate)
+          .eq("driver_id", currentVehicle.current_driver_id)
+          .is("end_date", null);
+      }
+      
+      // 2. Crear nueva asignación si hay nuevo conductor
+      if (cleanUpdates.current_driver_id) {
+        await supabase
+          .from("vehicle_assignments")
+          .insert({
+            plate: plate,
+            driver_id: cleanUpdates.current_driver_id,
+            start_date: new Date().toISOString()
+          });
+      }
+    }
 
     // --- NUEVA LÓGICA: Inversión Inicial (UPDATE) ---
     // Si envían precio, actualizamos o insertamos el registro 'Inicial'

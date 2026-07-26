@@ -494,20 +494,15 @@ r.post("/", async (req: Request, res: Response) => {
       // (si enviaron credit explícito, lo respetamos)
       splitCredit = c == null ? Math.max(0, amt - oInsurance - oDelivery) : oCredit;
 
-      // Si hay installment y amount < 70000, forzamos reglas (tu regla manda)
-      if (instNo != null && amt < 70000) {
-        splitCredit = 0;
-        installment_status = "pending";
-        installment_shortfall = 70000 - amt;
-
-        // split proporcional: insurance primero, luego maintenance, luego delivery
-        splitInsurance = amt >= 5000 ? 5000 : 0;
-        splitMaintenance = amt > splitInsurance ? Math.min(6000, amt - splitInsurance) : 0;
-        splitDelivery = amt > (splitInsurance + splitMaintenance) ? amt - splitInsurance - splitMaintenance : 0;
-      } else if (instNo != null) {
-        // amount >= 70000: status depende de crédito (>0 => paid)
+      // Si hay installment, permitimos que el status sea pagado si el crédito asignado > 0
+      if (instNo != null) {
+        // status depende de crédito (>0 => paid)
         installment_status = splitCredit > 0 ? "paid" : "pending";
-        installment_shortfall = installment_shortfall ?? 0;
+        if (c == null && amt < 70000) {
+          installment_shortfall = 70000 - amt;
+        } else {
+          installment_shortfall = installment_shortfall ?? 0;
+        }
       }
     }
   }
@@ -683,9 +678,9 @@ r.post("/", async (req: Request, res: Response) => {
   }
 
   // ========= ROUTER / STRATEGY: Leasing vs. Renting Legacy =========
-  // Si el vehículo tiene un contrato activo de leasing, se desvía la lógica
-  // de distribución al nuevo módulo. El flujo legacy queda 100% intacto.
-  if (safeStatus === "confirmed") {
+  // Si el vehículo tiene un contrato activo de leasing Y NO ES UN PAGO DE ANTICIPO,
+  // se desvía la lógica de distribución al nuevo módulo. El flujo legacy queda 100% intacto.
+  if (safeStatus === "confirmed" && instNo == null) {
     const leasingContract = await getActiveLeasingContract(upperPlate);
     if (leasingContract) {
       const cascadeResult = await applyLeasingPayment(payment.id, amt, leasingContract.id);

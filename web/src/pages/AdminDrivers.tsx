@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { Camera, X, Image as ImageIcon, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
 import { useSortableData } from "../hooks/useSortableData";
+import { LiquidationModal } from "../components/LiquidationModal";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -62,6 +63,7 @@ export default function AdminDrivers() {
   // Modal State
   const [editing, setEditing] = useState<Partial<Driver> | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [liquidationDriverId, setLiquidationDriverId] = useState<number | null>(null);
 
   // --- LOGICA DE CÁMARA / FOTO DE PERFIL ---
   const [profileSheetOpen, setProfileSheetOpen] = useState(false);
@@ -360,7 +362,12 @@ export default function AdminDrivers() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button onClick={() => handleEdit(d)} className="text-emerald-600 hover:text-emerald-800 font-medium">Editar</button>
+                        <div className="flex gap-4 justify-end">
+                          <button onClick={() => setLiquidationDriverId(d.id)} className="text-blue-600 hover:text-blue-800 font-medium text-sm">
+                            {d.status === 'inactive' ? 'Ver Liquidación' : 'Liquidar'}
+                          </button>
+                          <button onClick={() => handleEdit(d)} className="text-emerald-600 hover:text-emerald-800 font-medium text-sm">Editar</button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -561,6 +568,14 @@ export default function AdminDrivers() {
         </div>
       )}
 
+      {liquidationDriverId && (
+        <LiquidationModal 
+          isOpen={true} 
+          driverId={liquidationDriverId} 
+          onClose={() => setLiquidationDriverId(null)}
+          onSuccess={() => { setLiquidationDriverId(null); loadData(); }}
+        />
+      )}
     </div>
   );
 }
