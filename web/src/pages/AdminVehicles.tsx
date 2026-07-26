@@ -134,6 +134,7 @@ export default function AdminVehicles() {
   // Estado del Modal y Edición
   const [editing, setEditing] = useState<Vehicle | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // --- ESTADOS PARA GASTOS E HISTORIAL (NUEVO) ---
   const [vehicleExpenses, setVehicleExpenses] = useState<any[]>([]);
@@ -410,8 +411,9 @@ export default function AdminVehicles() {
 
   async function saveChanges(e: React.FormEvent) {
     e.preventDefault();
-    if (!editing) return;
+    if (!editing || isSubmitting) return;
 
+    setIsSubmitting(true);
     try {
       const auth = ensureBasicAuth();
       const headers = { "Content-Type": "application/json", Authorization: auth };
@@ -442,6 +444,8 @@ export default function AdminVehicles() {
       setIsCreating(false);
     } catch (error: any) {
       alert(error.message);
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -995,9 +999,11 @@ export default function AdminVehicles() {
             </div>
 
             <div className="p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-2xl">
-              <button type="button" onClick={() => setEditing(null)} className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-white transition-all">Cancelar</button>
-              <button form="vehicleForm" type="submit" disabled={uploading} className="px-5 py-2.5 rounded-xl bg-slate-900 text-sm font-bold text-white shadow-lg hover:bg-black transition-all">
-                {uploading ? "Subiendo..." : (isCreating ? "Registrar Vehículo" : "Guardar Cambios")}
+              <button type="button" onClick={() => setEditing(null)} disabled={isSubmitting} className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-white transition-all disabled:opacity-50">Cancelar</button>
+              <button form="vehicleForm" type="submit" disabled={uploading || isSubmitting} className="px-5 py-2.5 rounded-xl bg-slate-900 text-sm font-bold text-white shadow-lg hover:bg-black transition-all disabled:opacity-70 flex items-center justify-center gap-2">
+                {isSubmitting ? (
+                   <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> Guardando...</>
+                ) : uploading ? "Subiendo..." : (isCreating ? "Registrar Vehículo" : "Guardar Cambios")}
               </button>
             </div>
           </div>
