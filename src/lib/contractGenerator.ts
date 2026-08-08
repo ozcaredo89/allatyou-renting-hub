@@ -321,7 +321,7 @@ export async function generateContract(
     .replace(/\{\{cuota_inicial\}\}/g, fmt(data.down_payment))
     .replace(/\{\{capital_financiado\}\}/g, fmt(data.financed_capital))
     .replace(/\{\{cuota_capital_interes\}\}/g, fmt(dailyCapitalInterest))
-    .replace(/\{\{cuota_ahorro\}\}/g, fmt(data.valor_garantia / amortRows.length || 5000))
+    .replace(/\{\{cuota_ahorro\}\}/g, fmt(data.daily_maintenance))
     .replace(/\{\{cuota_administracion\}\}/g, fmt(data.daily_admin))
     .replace(/\{\{cuota_diaria_total\}\}/g, fmt(cuota_diaria_total))
     .replace(/\{\{fecha_inicio\}\}/g, data.start_date)
