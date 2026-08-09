@@ -250,11 +250,16 @@ export default function AdminAudits() {
     };
 
     const resolveAlert = async (alertId: string) => {
-        if (!confirm("¿Marcar esta alerta como revisada/resuelta? Ya no aparecerá en el buzón.")) return;
+        const note = prompt("¿Marcar esta alerta como revisada/resuelta? Ya no aparecerá en el buzón.\n\nIngresa una nota o justificación (opcional, máx 500 caracteres):");
+        if (note === null) return; // User cancelled
 
         try {
             const res = await requestWithBasicAuth(`${API}/audits/alerts/${alertId}/resolve`, {
-                method: "PUT"
+                method: "PUT",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ resolution_note: note })
             });
             if (!res.ok) throw new Error("Error resolviendo alerta");
             // Refrescar lista visualmente sin recargar todo el servidor si es posible, o recargar full

@@ -185,11 +185,22 @@ r.get("/dashboard", async (req: Request, res: Response) => {
 // ==========================================
 r.put("/alerts/:id/resolve", async (req: Request, res: Response) => {
     try {
+        let { resolution_note } = req.body;
+        
+        // Validación de tipo y longitud
+        if (resolution_note !== undefined && resolution_note !== null) {
+            if (typeof resolution_note !== 'string') {
+                return res.status(400).json({ error: "La nota de resolución debe ser texto" });
+            }
+            resolution_note = resolution_note.trim().substring(0, 500);
+        }
+
         const { data, error } = await supabase
             .from("expense_alerts")
             .update({
                 is_resolved: true,
-                resolved_at: new Date().toISOString()
+                resolved_at: new Date().toISOString(),
+                resolution_note: resolution_note || null
             })
             .eq("id", req.params.id)
             .select()
