@@ -40,6 +40,10 @@ export async function extractPrivateToken(): Promise<string> {
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-crash-reporter',
+            '--disable-gpu',
+            '--no-zygote',
             '--disable-web-security',
             '--disable-features=IsolateOrigins,site-per-process'
         ]
