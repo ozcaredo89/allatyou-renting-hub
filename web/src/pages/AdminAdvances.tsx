@@ -777,9 +777,12 @@ function AdvancesList() {
   }
 
   useEffect(() => {
-    load(0);
+    const timer = setTimeout(() => {
+      load(0);
+    }, 300);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line
-  }, []);
+  }, [filters.status, filters.person, filters.plate]);
 
   const canPrev = offset > 0 && !loading;
   const canNext = offset + limit < total && !loading;

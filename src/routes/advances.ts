@@ -145,7 +145,7 @@ r.get("/", async (req: Request, res: Response) => {
     .order("created_at", { ascending: false });
 
   if (status) q = q.eq("status", status);
-  if (plate) q = q.eq("plate", plate.toUpperCase());
+  if (plate) q = q.ilike("plate", `%${plate.toUpperCase()}%`);
   if (person) q = q.ilike("person_name", `%${person}%`);
 
   const lim = Math.max(1, Math.min(200, parseInt(limit)));
