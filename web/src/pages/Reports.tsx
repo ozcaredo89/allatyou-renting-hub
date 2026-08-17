@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ExternalLink, ArrowUp, ArrowDown, ChevronsUpDown, Trash2 } from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { useSortableData } from "../hooks/useSortableData";
@@ -16,6 +16,10 @@ type Row = {
   installment_number: number | null;
   proof_url: string | null;
   status?: 'active' | 'maintenance' | 'sold' | 'inactive';
+  // Receipt classification (from backend classifyReceipt)
+  is_suspicious: boolean;
+  is_technical_failure: boolean;
+  inconsistency_reasons: string[];
 };
 
 
@@ -28,6 +32,11 @@ type Payment = {
   installment_number: number | null;
   proof_url: string | null;
   status: "pending" | "confirmed" | "rejected";
+  receipt_status: string | null;
+  flag_reason: string | null;
+  is_suspicious: boolean;
+  is_technical_failure: boolean;
+  inconsistency_reasons: string[];
 };
 
 const StatusBadge = ({ status }: { status?: string }) => {
@@ -37,11 +46,73 @@ const StatusBadge = ({ status }: { status?: string }) => {
   return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Activo</span>;
 };
 
+/**
+ * Badge shown when a payment's receipt has an inconsistency or technical failure.
+ * Accessible via keyboard (button), with aria-label describing the reasons.
+ *
+ * Open triggers: hover (mouseenter) or keyboard focus.
+ * Close triggers: mouseleave or blur. No click toggle — browsers fire focus
+ * before click, so a toggle on onClick would immediately close what onFocus opened.
+ */
+const ReceiptBadge = ({ is_suspicious, is_technical_failure, reasons }: {
+  is_suspicious: boolean;
+  is_technical_failure: boolean;
+  reasons: string[];
+}) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  if (!is_suspicious && !is_technical_failure) return null;
+
+  const isSuspicious = is_suspicious;
+  const label = reasons.join(" · ") || (isSuspicious ? "Sospechoso" : "Lectura incompleta");
+  const ariaLabel = `${isSuspicious ? "Inconsistencia" : "Problema técnico"}: ${label}`;
+
+  return (
+    <div
+      ref={ref}
+      className="relative inline-block"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        title={ariaLabel}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold border transition-colors focus:outline-none focus:ring-2 ${
+          isSuspicious
+            ? "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 focus:ring-amber-400"
+            : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 focus:ring-slate-400"
+        }`}
+      >
+        {isSuspicious ? "⚠️" : "ℹ️"}
+        <span>{isSuspicious ? "Sospechoso" : "Lectura incompleta"}</span>
+      </button>
+      {open && reasons.length > 0 && (
+        <div
+          role="tooltip"
+          className="absolute bottom-full left-0 mb-1 z-50 min-w-[200px] max-w-xs rounded-xl border border-amber-200 bg-white shadow-lg p-3 text-xs text-gray-700 space-y-1"
+        >
+          {reasons.map((r, i) => (
+            <div key={i} className="flex items-start gap-1.5">
+              <span className="text-amber-500 mt-px">•</span>
+              <span>{r}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function Reports() {
   const todayYm = new Date().toISOString().slice(0, 7); // YYYY-MM
   const [month, setMonth] = useState<string>(todayYm);
   const [q, setQ] = useState("");
   const [onlyOverdue, setOnlyOverdue] = useState(false);
+  const [onlySuspicious, setOnlySuspicious] = useState(false);
   const [showInactive, setShowInactive] = useState(true);
   const [items, setItems] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
@@ -97,8 +168,9 @@ export default function Reports() {
     try {
       const params = new URLSearchParams();
       if (q) params.set("q", q);
-      if (onlyOverdue) params.set("overdue_only", "true");
-      params.set("limit", String(limit));
+      if (onlyOverdue)    params.set("overdue_only",    "true");
+      if (onlySuspicious) params.set("suspicious_only", "true");
+      params.set("limit",  String(limit));
       params.set("offset", String(nextOffset));
 
       let auth = ensureBasicAuth();
@@ -174,6 +246,8 @@ export default function Reports() {
         "CuotaNumero",
         "Estado",
         "ComprobanteURL",
+        "EstadoComprobante",
+        "Inconsistencias",
       ];
 
       const lines = rows.map((p) => {
@@ -186,6 +260,8 @@ export default function Reports() {
           p.installment_number != null ? String(p.installment_number) : "",
           p.status ?? "",
           p.proof_url ?? "",
+          p.receipt_status ?? "",
+          (p.inconsistency_reasons ?? []).join(" | "),
         ];
 
         return cols
@@ -263,6 +339,18 @@ export default function Reports() {
                 }}
               />
               Mostrar solo en mora
+            </label>
+
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={onlySuspicious}
+                onChange={(e) => {
+                  setOnlySuspicious(e.target.checked);
+                  load(0);
+                }}
+              />
+              ⚠️ Solo con inconsistencias
             </label>
 
             <button
@@ -351,24 +439,31 @@ export default function Reports() {
                       </td>
                       <td className={`px-4 py-3 ${color}`}>{r.payment_date ?? "—"}</td>
                     <td className={`px-4 py-3 ${color}`}>
-                      {r.amount != null ? (
-                        r.proof_url ? (
-                          <a
-                            href={r.proof_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 underline hover:text-black transition-colors"
-                            title="Ver comprobante"
-                          >
-                            {"$" + fmtCOP.format(r.amount)}
-                            <ExternalLink size={14} />
-                          </a>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {r.amount != null ? (
+                          r.proof_url ? (
+                            <a
+                              href={r.proof_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 underline hover:text-black transition-colors"
+                              title="Ver comprobante"
+                            >
+                              {"$" + fmtCOP.format(r.amount)}
+                              <ExternalLink size={14} />
+                            </a>
+                          ) : (
+                            "$" + fmtCOP.format(r.amount)
+                          )
                         ) : (
-                          "$" + fmtCOP.format(r.amount)
-                        )
-                      ) : (
-                        "—"
-                      )}
+                          "—"
+                        )}
+                        <ReceiptBadge
+                          is_suspicious={r.is_suspicious ?? false}
+                          is_technical_failure={r.is_technical_failure ?? false}
+                          reasons={r.inconsistency_reasons ?? []}
+                        />
+                      </div>
                     </td>
                     <td className={`px-4 py-3 ${color}`}>
                       {r.installment_number != null ? `#${r.installment_number}` : "—"}

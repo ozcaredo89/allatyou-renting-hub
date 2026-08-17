@@ -2,6 +2,7 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
+import { classifyReceipt, suspiciousOnlyFilter } from "../lib/receiptClassification";
 
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
 const r = Router();
@@ -868,8 +869,9 @@ r.get("/", async (req: Request, res: Response) => {
   const rawOffset = parseInt(String(req.query.offset || "0"), 10);
   const offset = Math.max(isNaN(rawOffset) ? 0 : rawOffset, 0);
 
-  const plate = String(req.query.plate || "").toUpperCase().trim();
-  const month = String(req.query.month || "").trim(); // YYYY-MM
+  const plate          = String(req.query.plate         || "").toUpperCase().trim();
+  const month          = String(req.query.month         || "").trim(); // YYYY-MM
+  const suspiciousOnly = String(req.query.suspicious_only || "false") === "true";
 
   if (plate && !PLATE_RE.test(plate)) {
     return res.status(400).json({ error: "invalid plate (expected ABC123)" });
@@ -905,10 +907,18 @@ r.get("/", async (req: Request, res: Response) => {
     q = q.gte("payment_date", from).lt("payment_date", to);
   }
 
+  if (suspiciousOnly) q = q.or(suspiciousOnlyFilter());
+
   const { data, error, count } = await q;
   if (error) return res.status(500).json({ error: error.message });
 
-  return res.json({ items: data ?? [], total: count ?? 0, limit, offset });
+  // Enrich each payment with derived classification fields.
+  const items = (data ?? []).map((p: any) => ({
+    ...p,
+    ...classifyReceipt(p.receipt_status, p.flagged_for_review, p.flag_reason),
+  }));
+
+  return res.json({ items, total: count ?? 0, limit, offset });
 });
 
 // -------------------- GET /payments/last-amount (igual que antes) --------------------

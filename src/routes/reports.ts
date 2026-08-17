@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
+import { classifyReceipt, suspiciousOnlyFilter } from "../lib/receiptClassification";
 
 const r = Router();
 
@@ -14,8 +15,59 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 20, 1), MAX_LIMIT);
   const offset = Math.max(Number.isFinite(rawOffset) ? rawOffset : 0, 0);
 
-  const overdueOnly = String(req.query.overdue_only || "false") === "true";
+  const overdueOnly    = String(req.query.overdue_only    || "false") === "true";
+  const suspiciousOnly = String(req.query.suspicious_only || "false") === "true";
 
+  // ── Paso 1: resolver qué placas son sospechosas ANTES de paginar ────────
+  // Cuando suspicious_only=true, la condición debe aplicarse sobre el conjunto
+  // COMPLETO antes de recortar con range(). Se consulta payments directamente
+  // (que sí expone receipt_status / flagged_for_review) para obtener la lista
+  // de placas cuyo ÚLTIMO pago es sospechoso, replicando exactamente el criterio
+  // de la vista: ORDER BY payment_date DESC, created_at DESC (sin filtro de status).
+  let suspiciousPlates: Set<string> | null = null;
+
+  if (suspiciousOnly) {
+    // Traemos solo las columnas necesarias para clasificar, sin limit por placa
+    // (Supabase JS no soporta DISTINCT ON; usamos el mismo truco de "primero visto").
+    // Para evitar traer todo el historial, pedimos solo pagos de los últimos 2 años
+    // como cota práctica — un pago más antiguo no sería "el último" si hay alguno
+    // más reciente, así que el filtro no pierde ningún caso real.
+    const twoYearsAgo = new Date();
+    twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+    const twoYearsAgoStr = twoYearsAgo.toISOString().slice(0, 10);
+
+    const { data: allAudit, error: auditErr } = await supabase
+      .from("payments")
+      .select("plate, receipt_status, flagged_for_review, flag_reason")
+      .gte("payment_date", twoYearsAgoStr)
+      .order("payment_date", { ascending: false })
+      .order("created_at",   { ascending: false });
+
+    if (auditErr) return res.status(500).json({ error: auditErr.message });
+
+    // Reducir a "último pago por placa" (primero que aparece en el orden desc)
+    const latestByPlate = new Map<string, { receipt_status: string | null; flagged_for_review: boolean | null; flag_reason: string | null }>();
+    for (const row of (allAudit ?? [])) {
+      if (!latestByPlate.has(row.plate)) {
+        latestByPlate.set(row.plate, {
+          receipt_status:    row.receipt_status,
+          flagged_for_review: row.flagged_for_review,
+          flag_reason:       row.flag_reason,
+        });
+      }
+    }
+
+    // Clasificar y quedarnos solo con las placas sospechosas
+    suspiciousPlates = new Set<string>();
+    for (const [plate, audit] of latestByPlate) {
+      const cls = classifyReceipt(audit.receipt_status, audit.flagged_for_review, audit.flag_reason);
+      if (cls.is_suspicious || cls.is_technical_failure) {
+        suspiciousPlates.add(plate);
+      }
+    }
+  }
+
+  // ── Paso 2: consultar vehicle_last_payment con paginación correcta ────────
   let query = supabase
     .from("vehicle_last_payment")
     .select("*", { count: "exact" })
@@ -24,37 +76,77 @@ r.get("/last-payments", async (req: Request, res: Response) => {
     .range(offset, offset + limit - 1);
 
   if (q) {
-    const safeQ = q.replace(/[%_,]/g, "\\$&"); // opcional: evita comodines accidentales
+    const safeQ = q.replace(/[%_,]/g, "\\$&");
     query = query.or(`plate.ilike.%${safeQ}%,owner_name.ilike.%${safeQ}%`);
   }
-
   if (overdueOnly) {
     query = query.eq("is_overdue", true);
   }
-
-  const { data, error, count } = await query;
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  // Hacemos JOIN en código para no alterar la vista SQL subyacente
-  let items = data ?? [];
-  if (items.length > 0) {
-    const plates = items.map(r => r.plate);
-    const { data: vData } = await supabase.from("vehicles").select("plate, status").in("plate", plates);
-    const statusMap = new Map((vData || []).map(v => [v.plate, v.status]));
-    
-    items = items.map(r => ({
-      ...r,
-      status: statusMap.get(r.plate) || 'active'
-    }));
+  // Filtrar por placas sospechosas ANTES del range — el .in() opera a nivel SQL
+  // sobre la vista, así el count y la paginación son correctos.
+  if (suspiciousPlates !== null) {
+    if (suspiciousPlates.size === 0) {
+      // No hay ninguna placa sospechosa: responder vacío directamente
+      return res.json({ items: [], total: 0, limit, offset });
+    }
+    query = query.in("plate", [...suspiciousPlates]);
   }
 
-  return res.json({
-    items,
-    total: count ?? 0,
-    limit,
-    offset,
-  });
+  const { data, error, count } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  let items = data ?? [];
+
+  // ── Paso 3: JOIN de enriquecimiento sobre la página resultante ────────────
+  if (items.length > 0) {
+    const plates = items.map((row: any) => row.plate);
+
+    // Estado del vehículo
+    const { data: vData } = await supabase
+      .from("vehicles")
+      .select("plate, status")
+      .in("plate", plates);
+    const statusMap = new Map((vData || []).map((v: any) => [v.plate, v.status]));
+
+    // Datos de auditoría del último pago, SOLO para las placas de esta página.
+    // Replicamos el criterio de la vista: ORDER BY payment_date DESC, created_at DESC,
+    // sin filtrar por status (la vista tampoco lo hace). Pedimos máximo 5 filas por
+    // placa para acotar el tráfico; el primero por placa es el "último pago".
+    const { data: auditPage } = await supabase
+      .from("payments")
+      .select("plate, receipt_status, flagged_for_review, flag_reason, payment_date, created_at")
+      .in("plate", plates)
+      .order("payment_date", { ascending: false })
+      .order("created_at",   { ascending: false })
+      .limit(plates.length * 5); // cota práctica: máximo 5 pagos por placa
+
+    const auditMap = new Map<string, { receipt_status: string | null; flagged_for_review: boolean | null; flag_reason: string | null }>();
+    for (const row of (auditPage ?? [])) {
+      if (!auditMap.has(row.plate)) {
+        auditMap.set(row.plate, {
+          receipt_status:    row.receipt_status,
+          flagged_for_review: row.flagged_for_review,
+          flag_reason:       row.flag_reason,
+        });
+      }
+    }
+
+    items = items.map((row: any) => {
+      const audit = auditMap.get(row.plate);
+      const classification = classifyReceipt(
+        audit?.receipt_status    ?? null,
+        audit?.flagged_for_review ?? null,
+        audit?.flag_reason       ?? null,
+      );
+      return {
+        ...row,
+        status: statusMap.get(row.plate) || "active",
+        ...classification,
+      };
+    });
+  }
+
+  return res.json({ items, total: count ?? 0, limit, offset });
 });
 
 // ── GET /reports/global-oil ────────────────────────────────────────────────
