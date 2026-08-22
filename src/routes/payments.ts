@@ -2,7 +2,17 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
-import { classifyReceipt, suspiciousOnlyFilter } from "../lib/receiptClassification";
+import {
+  classifyReceipt,
+  suspiciousOnlyFilter,
+  buildAmountMismatch,
+  buildDuplicatePayments,
+  buildMatchContext,
+  refineReasonsForEvidence,
+  collectDuplicateIds,
+  FlagDetails,
+  DuplicatePaymentSummary,
+} from "../lib/receiptClassification";
 
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
 const r = Router();
@@ -535,6 +545,7 @@ r.post("/", async (req: Request, res: Response) => {
   let reference_number = null;
   let provider_name = null;
   let receipt_date = null;
+  let flagDetailsObj: FlagDetails | null = null;
 
   // Extraemos info de la tabla receipt_uploads (Zero-Trust al cliente)
   let uploadData: any = null;
@@ -564,16 +575,23 @@ r.post("/", async (req: Request, res: Response) => {
     // Recolectamos TODAS las anomalías antes de decidir si bloqueamos
     const warnings: string[] = [];
 
+    // Capturados en memoria ANTES de que reference_number se anule en el insert
+    // (ver más abajo), para que ningún pago nuevo quede huérfano de flag_details.
+    let duplicateIds: number[] = [];
+    let matchType: "reference" | "amount_date" | undefined;
+
     // 1. Buscar duplicado por referencia exacta (normalizada)
     if (reference_number) {
       const { data: dupRef } = await supabase
         .from("payments")
         .select("id")
         .eq("reference_number", reference_number)
-        .limit(1);
+        .limit(5);
 
       if (dupRef && dupRef.length > 0) {
         warnings.push("Se detectó otro pago con el mismo número de referencia.");
+        duplicateIds = dupRef.map((d: any) => d.id);
+        matchType = "reference";
       }
     }
 
@@ -585,25 +603,50 @@ r.post("/", async (req: Request, res: Response) => {
         .eq("amount", amt)
         .eq("receipt_date", receipt_date)
         .eq("plate", upperPlate)
-        .limit(1);
+        .limit(5);
 
       if (dupAmt && dupAmt.length > 0) {
         warnings.push("Monto y fecha del comprobante idénticos a otro pago existente para este vehículo.");
+        duplicateIds = dupAmt.map((d: any) => d.id);
+        matchType = "amount_date";
       }
     }
 
     // 3. Validar que el monto del comprobante coincida con el monto ingresado
     const ocrAmount = uploadData?.amount ?? null;
+    let amountMismatch: { db_amount: number; ocr_amount: number; difference: number } | null = null;
     if (ocrAmount !== null && ocrAmount !== amt) {
       warnings.push(
         `El monto ingresado ($${amt.toLocaleString("es-CO")}) no coincide con el valor del comprobante ($${ocrAmount.toLocaleString("es-CO")}).`
       );
+      amountMismatch = { db_amount: amt, ocr_amount: ocrAmount, difference: amt - ocrAmount };
+    }
+
+    if (duplicateIds.length > 0 || amountMismatch) {
+      flagDetailsObj = {};
+      if (duplicateIds.length > 0 && matchType) {
+        flagDetailsObj.duplicate_payment_ids = duplicateIds;
+        flagDetailsObj.match_type = matchType;
+        if (matchType === "reference" && reference_number) {
+          flagDetailsObj.matched_reference = reference_number;
+        }
+      }
+      if (amountMismatch) {
+        flagDetailsObj.db_amount = amountMismatch.db_amount;
+        flagDetailsObj.ocr_amount = amountMismatch.ocr_amount;
+        flagDetailsObj.difference = amountMismatch.difference;
+      }
     }
 
     if (warnings.length > 0) {
       if (skip_receipt_check === true) {
-        // El usuario confirmó: solo marcamos como sospechoso y continuamos
-        finalReceiptStatus = "suspicious_duplicate";
+        // El usuario confirmó: marcamos como sospechoso y continuamos.
+        // Distinguimos la causa real: solo es "duplicado" si de verdad hay
+        // OTRO pago específico con el que hace match (referencia o
+        // monto+fecha). Si el único problema es que el monto leído por OCR
+        // no coincide con el ingresado, NO es un duplicado — etiquetarlo así
+        // es engañoso porque no hay ningún otro comprobante que mostrar.
+        finalReceiptStatus = duplicateIds.length > 0 ? "suspicious_duplicate" : "suspicious_amount_mismatch";
         receiptWarning = warnings.join(" | ");
       } else {
         // Primera vez: bloqueamos con 409 para que el frontend muestre el modal
@@ -646,6 +689,7 @@ r.post("/", async (req: Request, res: Response) => {
     provider_name: provider_name || null,
     receipt_date: receipt_date || null,
     receipt_status: finalReceiptStatus,
+    flag_details: flagDetailsObj,
   };
 
   const { data: payment, error: insErr } = await supabase
@@ -801,7 +845,13 @@ r.post("/", async (req: Request, res: Response) => {
 
 // -------------------- GET /payments/flagged --------------------
 // Retorna pagos marcados para revisión manual con filtros opcionales.
-// Query params: plate, driver_id, date_from, date_to, flag_reason, limit, offset
+// Query params: plate, driver_id, date_from, date_to, flag_reason, issue_type, limit, offset
+//
+// issue_type separa las dos clases de problema, que tienen tamaños muy
+// distintos y no deben mezclarse en una misma página paginada: 'duplicate'
+// (operacional, receipt_status='suspicious_duplicate' o flagged_for_review) —
+// lo único que tiene un comprobante específico que mostrar — vs 'technical'
+// (falla de OCR: 'suspicious_ocr_failed'/'timeout', sin comprobante en conflicto).
 r.get("/flagged", async (req: Request, res: Response) => {
   const rawLimit = parseInt(String(req.query.limit || "50"), 10);
   const limit = Math.max(1, Math.min(isNaN(rawLimit) ? 50 : rawLimit, 500));
@@ -813,6 +863,7 @@ r.get("/flagged", async (req: Request, res: Response) => {
   const date_from  = String(req.query.date_from   || "").trim();
   const date_to    = String(req.query.date_to     || "").trim();
   const flag_reason = String(req.query.flag_reason || "").trim();
+  const issue_type  = String(req.query.issue_type  || "").trim();
 
   if (plate && !PLATE_RE.test(plate)) {
     return res.status(400).json({ error: "invalid plate (expected ABC123)" });
@@ -829,17 +880,29 @@ r.get("/flagged", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "invalid flag_reason" });
   }
 
+  const allowedIssueTypes = new Set(["duplicate", "technical", ""]);
+  if (!allowedIssueTypes.has(issue_type)) {
+    return res.status(400).json({ error: "invalid issue_type (expected duplicate or technical)" });
+  }
+
   let q = supabase
     .from("payments")
     .select(`
       id, plate, payment_date, amount, status, proof_url,
-      reference_number, flag_reason, flagged_for_review,
+      reference_number, flag_reason, flagged_for_review, flag_details,
       payer_name, receipt_status, receipt_date,
       drivers (id, full_name)
-    `, { count: "exact" })
-    .eq("flagged_for_review", true)
-    .order("payment_date", { ascending: false })
-    .range(offset, offset + limit - 1);
+    `, { count: "exact" });
+
+  if (issue_type === "duplicate") {
+    q = q.or("receipt_status.eq.suspicious_duplicate,flagged_for_review.eq.true");
+  } else if (issue_type === "technical") {
+    q = q.in("receipt_status", ["suspicious_ocr_failed", "timeout"]);
+  } else {
+    q = q.or(suspiciousOnlyFilter());
+  }
+
+  q = q.order("payment_date", { ascending: false }).range(offset, offset + limit - 1);
 
   if (plate)       q = q.eq("plate", plate);
   if (driver_id)   q = q.eq("driver_id", driver_id);
@@ -850,12 +913,38 @@ r.get("/flagged", async (req: Request, res: Response) => {
   const { data, error, count } = await q;
   if (error) return res.status(500).json({ error: error.message });
 
-  // Aplanar el join de drivers para simplificar el consumo desde el frontend
-  const items = (data ?? []).map((p: any) => ({
-    ...p,
-    driver_name: p.drivers?.full_name ?? null,
-    drivers: undefined,
-  }));
+  const rawItems = data ?? [];
+
+  // Resolver en 1 query batch los pagos duplicados referenciados en flag_details
+  // de esta página, para evitar N+1 queries.
+  const duplicateIds = collectDuplicateIds(rawItems.map((p: any) => p.flag_details as FlagDetails | null));
+  const duplicateResolver = new Map<number, DuplicatePaymentSummary>();
+  if (duplicateIds.size > 0) {
+    const { data: dupRows } = await supabase
+      .from("payments")
+      .select("id, plate, payment_date, amount, reference_number, proof_url")
+      .in("id", [...duplicateIds]);
+    for (const row of dupRows ?? []) duplicateResolver.set(row.id, row as DuplicatePaymentSummary);
+  }
+
+  // Aplanar el join de drivers y enriquecer con clasificación + flag_details resuelto.
+  const items = rawItems.map((p: any) => {
+    const classification = classifyReceipt(p.receipt_status, p.flagged_for_review, p.flag_reason);
+    const duplicate_payments = buildDuplicatePayments(p.flag_details, duplicateResolver);
+    return {
+      ...p,
+      driver_name: p.drivers?.full_name ?? null,
+      drivers: undefined,
+      ...classification,
+      inconsistency_reasons: refineReasonsForEvidence(
+        classification.inconsistency_reasons,
+        !!duplicate_payments && duplicate_payments.length > 0,
+      ),
+      duplicate_payments,
+      amount_mismatch: buildAmountMismatch(p.flag_details),
+      match_context: buildMatchContext(p.flag_details),
+    };
+  });
 
   return res.json({ items, total: count ?? 0, limit, offset });
 });
@@ -912,11 +1001,36 @@ r.get("/", async (req: Request, res: Response) => {
   const { data, error, count } = await q;
   if (error) return res.status(500).json({ error: error.message });
 
+  const rawItems = data ?? [];
+
+  // Resolver en 1 query batch los pagos duplicados referenciados en flag_details
+  // de esta página, para evitar N+1 queries.
+  const duplicateIds = collectDuplicateIds(rawItems.map((p: any) => p.flag_details as FlagDetails | null));
+  const duplicateResolver = new Map<number, DuplicatePaymentSummary>();
+  if (duplicateIds.size > 0) {
+    const { data: dupRows } = await supabase
+      .from("payments")
+      .select("id, plate, payment_date, amount, reference_number, proof_url")
+      .in("id", [...duplicateIds]);
+    for (const row of dupRows ?? []) duplicateResolver.set(row.id, row as DuplicatePaymentSummary);
+  }
+
   // Enrich each payment with derived classification fields.
-  const items = (data ?? []).map((p: any) => ({
-    ...p,
-    ...classifyReceipt(p.receipt_status, p.flagged_for_review, p.flag_reason),
-  }));
+  const items = rawItems.map((p: any) => {
+    const classification = classifyReceipt(p.receipt_status, p.flagged_for_review, p.flag_reason);
+    const duplicate_payments = buildDuplicatePayments(p.flag_details, duplicateResolver);
+    return {
+      ...p,
+      ...classification,
+      inconsistency_reasons: refineReasonsForEvidence(
+        classification.inconsistency_reasons,
+        !!duplicate_payments && duplicate_payments.length > 0,
+      ),
+      duplicate_payments,
+      amount_mismatch: buildAmountMismatch(p.flag_details),
+      match_context: buildMatchContext(p.flag_details),
+    };
+  });
 
   return res.json({ items, total: count ?? 0, limit, offset });
 });

@@ -13,11 +13,12 @@ export interface OCRResult {
 }
 
 // ── Prompt compartido ─────────────────────────────────────────────────────────
-const RECEIPT_PROMPT = `Analiza este comprobante de pago y extrae la información en formato JSON con exactamente estas claves:
+const RECEIPT_PROMPT = `Analiza este comprobante de pago colombiano (Nequi, Bancolombia, Daviplata, etc.) y extrae la información en formato JSON con exactamente estas claves:
 reference_number, provider_name, receipt_date, amount.
 
 Instrucciones estrictas:
-- reference_number: Número de referencia, aprobación o ID de transacción alfanumérico. Null si no hay.
+- reference_number: SOLO el número que identifica la TRANSACCIÓN — el campo etiquetado como "Referencia", "Número de aprobación", "Número de operación" o "Comprobante No.". Este número es DIFERENTE en cada comprobante, incluso entre pagos al mismo destinatario.
+  ⚠️ NUNCA uses el "Número de cuenta" / "Cuenta destino", el número de celular ni el número de documento del destinatario como reference_number: esos valores son FIJOS (se repiten en todos los comprobantes hacia el mismo destinatario) y confundirlos con la referencia causa falsos positivos de "pago duplicado". Si el comprobante no muestra un campo de referencia/aprobación claramente distinto de la cuenta destino, responde null.
 - provider_name: Nombre del banco o app (Nequi, Bancolombia, Daviplata, etc.). Null si no hay.
 - receipt_date: Fecha del pago en formato YYYY-MM-DD. Convierte fechas como "21 de junio de 2026 a las 02:32 p. m." → "2026-06-21". Null si no hay.
 - amount: Monto como número entero sin símbolos. "$ 70.000,00" → 70000. Null si no hay.

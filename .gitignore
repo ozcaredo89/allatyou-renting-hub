@@ -3,6 +3,8 @@ node_modules/
 dist/
 .env
 *.log
+backfill_orphans_log.json
+*.tsbuildinfo
 
 # Frontend
 web/node_modules/

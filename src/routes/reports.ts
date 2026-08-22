@@ -1,6 +1,16 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
-import { classifyReceipt, suspiciousOnlyFilter } from "../lib/receiptClassification";
+import {
+  classifyReceipt,
+  suspiciousOnlyFilter,
+  buildAmountMismatch,
+  buildDuplicatePayments,
+  buildMatchContext,
+  refineReasonsForEvidence,
+  collectDuplicateIds,
+  FlagDetails,
+  DuplicatePaymentSummary,
+} from "../lib/receiptClassification";
 
 const r = Router();
 
@@ -18,6 +28,13 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   const overdueOnly    = String(req.query.overdue_only    || "false") === "true";
   const suspiciousOnly = String(req.query.suspicious_only || "false") === "true";
 
+  // Cota práctica compartida por Paso 1 y Paso 3: un pago más antiguo no sería
+  // "el último" si hay alguno más reciente, así que ninguno de los dos pasos
+  // pierde ningún caso real usando esta misma ventana.
+  const twoYearsAgo = new Date();
+  twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+  const twoYearsAgoStr = twoYearsAgo.toISOString().slice(0, 10);
+
   // ── Paso 1: resolver qué placas son sospechosas ANTES de paginar ────────
   // Cuando suspicious_only=true, la condición debe aplicarse sobre el conjunto
   // COMPLETO antes de recortar con range(). Se consulta payments directamente
@@ -29,13 +46,6 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   if (suspiciousOnly) {
     // Traemos solo las columnas necesarias para clasificar, sin limit por placa
     // (Supabase JS no soporta DISTINCT ON; usamos el mismo truco de "primero visto").
-    // Para evitar traer todo el historial, pedimos solo pagos de los últimos 2 años
-    // como cota práctica — un pago más antiguo no sería "el último" si hay alguno
-    // más reciente, así que el filtro no pierde ningún caso real.
-    const twoYearsAgo = new Date();
-    twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
-    const twoYearsAgoStr = twoYearsAgo.toISOString().slice(0, 10);
-
     const { data: allAudit, error: auditErr } = await supabase
       .from("payments")
       .select("plate, receipt_status, flagged_for_review, flag_reason")
@@ -110,25 +120,69 @@ r.get("/last-payments", async (req: Request, res: Response) => {
 
     // Datos de auditoría del último pago, SOLO para las placas de esta página.
     // Replicamos el criterio de la vista: ORDER BY payment_date DESC, created_at DESC,
-    // sin filtrar por status (la vista tampoco lo hace). Pedimos máximo 5 filas por
-    // placa para acotar el tráfico; el primero por placa es el "último pago".
-    const { data: auditPage } = await supabase
+    // sin filtrar por status (la vista tampoco lo hace). Usamos la misma ventana de
+    // 2 años que el Paso 1 (en vez de un límite fijo de filas): un límite como
+    // "N filas por placa" aplicado sobre el resultado GLOBAL puede dejar fuera el
+    // pago más reciente de una placa si las demás placas de la página acumulan más
+    // filas recientes — eso desalinea esta reclasificación con la del Paso 1 y hace
+    // que el badge nunca aparezca aunque suspicious_only sí haya incluido la placa.
+    const auditBaseColumns = "plate, receipt_status, flagged_for_review, flag_reason, payment_date, created_at";
+    let auditPage: any[] | null;
+    let auditPageErr: { message: string } | null;
+    ({ data: auditPage, error: auditPageErr } = await supabase
       .from("payments")
-      .select("plate, receipt_status, flagged_for_review, flag_reason, payment_date, created_at")
+      .select(`${auditBaseColumns}, flag_details, proof_url, amount, reference_number`)
       .in("plate", plates)
+      .gte("payment_date", twoYearsAgoStr)
       .order("payment_date", { ascending: false })
-      .order("created_at",   { ascending: false })
-      .limit(plates.length * 5); // cota práctica: máximo 5 pagos por placa
+      .order("created_at",   { ascending: false }));
 
-    const auditMap = new Map<string, { receipt_status: string | null; flagged_for_review: boolean | null; flag_reason: string | null }>();
+    // flag_details puede no existir todavía (migración pendiente de aplicar en
+    // Supabase). No dejamos que eso tumbe la clasificación base: reintentamos
+    // sin esas columnas para no perder receipt_status/flagged_for_review, que
+    // sí existen desde antes.
+    if (auditPageErr) {
+      console.error("[reports/last-payments] Paso 3 audit query (con flag_details) falló, reintentando sin ella:", auditPageErr.message);
+      const retry = await supabase
+        .from("payments")
+        .select(auditBaseColumns)
+        .in("plate", plates)
+        .gte("payment_date", twoYearsAgoStr)
+        .order("payment_date", { ascending: false })
+        .order("created_at",   { ascending: false });
+      auditPage = retry.data;
+      if (retry.error) console.error("[reports/last-payments] Paso 3 audit query (fallback) también falló:", retry.error.message);
+    }
+
+    const auditMap = new Map<string, {
+      receipt_status: string | null;
+      flagged_for_review: boolean | null;
+      flag_reason: string | null;
+      flag_details: FlagDetails | null;
+      created_at: string | null;
+    }>();
     for (const row of (auditPage ?? [])) {
       if (!auditMap.has(row.plate)) {
         auditMap.set(row.plate, {
           receipt_status:    row.receipt_status,
           flagged_for_review: row.flagged_for_review,
           flag_reason:       row.flag_reason,
+          flag_details:      row.flag_details ?? null,
+          created_at:        row.created_at ?? null,
         });
       }
+    }
+
+    // Resolver en 1 query batch los pagos duplicados referenciados en flag_details
+    // de esta página, para evitar N+1 queries.
+    const duplicateIds = collectDuplicateIds([...auditMap.values()].map((a) => a.flag_details));
+    const duplicateResolver = new Map<number, DuplicatePaymentSummary>();
+    if (duplicateIds.size > 0) {
+      const { data: dupRows } = await supabase
+        .from("payments")
+        .select("id, plate, payment_date, amount, reference_number, proof_url")
+        .in("id", [...duplicateIds]);
+      for (const row of dupRows ?? []) duplicateResolver.set(row.id, row as DuplicatePaymentSummary);
     }
 
     items = items.map((row: any) => {
@@ -138,10 +192,19 @@ r.get("/last-payments", async (req: Request, res: Response) => {
         audit?.flagged_for_review ?? null,
         audit?.flag_reason       ?? null,
       );
+      const duplicate_payments = buildDuplicatePayments(audit?.flag_details, duplicateResolver);
       return {
         ...row,
+        payment_created_at: audit?.created_at ?? null,
         status: statusMap.get(row.plate) || "active",
         ...classification,
+        inconsistency_reasons: refineReasonsForEvidence(
+          classification.inconsistency_reasons,
+          !!duplicate_payments && duplicate_payments.length > 0,
+        ),
+        duplicate_payments,
+        amount_mismatch: buildAmountMismatch(audit?.flag_details),
+        match_context: buildMatchContext(audit?.flag_details),
       };
     });
   }

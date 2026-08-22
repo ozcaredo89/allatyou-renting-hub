@@ -1,7 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ExternalLink, ArrowUp, ArrowDown, ChevronsUpDown, Trash2 } from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { useSortableData } from "../hooks/useSortableData";
+import {
+  ReceiptBadge,
+  type DuplicatePaymentSummary,
+  type MatchContext,
+  type AmountMismatchDetails,
+} from "../components/ReceiptBadge";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -10,6 +16,7 @@ type Row = {
   plate: string;
   owner_name: string | null;
   payment_date: string | null;
+  payment_created_at?: string | null;
   amount: number | null;
   days_since: number;
   is_overdue: boolean;
@@ -20,7 +27,25 @@ type Row = {
   is_suspicious: boolean;
   is_technical_failure: boolean;
   inconsistency_reasons: string[];
+  duplicate_payments?: DuplicatePaymentSummary[];
+  match_context?: MatchContext | null;
+  amount_mismatch?: AmountMismatchDetails | null;
 };
+
+function formatRegistrationTime(isoStr?: string | null): string | null {
+  if (!isoStr) return null;
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleTimeString("es-CO", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return null;
+  }
+}
 
 
 type Payment = {
@@ -37,6 +62,7 @@ type Payment = {
   is_suspicious: boolean;
   is_technical_failure: boolean;
   inconsistency_reasons: string[];
+  duplicate_payments?: DuplicatePaymentSummary[];
 };
 
 const StatusBadge = ({ status }: { status?: string }) => {
@@ -44,67 +70,6 @@ const StatusBadge = ({ status }: { status?: string }) => {
   if (status === 'sold') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700 border border-slate-300">Vendido</span>;
   if (status === 'inactive') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">Inactivo</span>;
   return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Activo</span>;
-};
-
-/**
- * Badge shown when a payment's receipt has an inconsistency or technical failure.
- * Accessible via keyboard (button), with aria-label describing the reasons.
- *
- * Open triggers: hover (mouseenter) or keyboard focus.
- * Close triggers: mouseleave or blur. No click toggle — browsers fire focus
- * before click, so a toggle on onClick would immediately close what onFocus opened.
- */
-const ReceiptBadge = ({ is_suspicious, is_technical_failure, reasons }: {
-  is_suspicious: boolean;
-  is_technical_failure: boolean;
-  reasons: string[];
-}) => {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  if (!is_suspicious && !is_technical_failure) return null;
-
-  const isSuspicious = is_suspicious;
-  const label = reasons.join(" · ") || (isSuspicious ? "Sospechoso" : "Lectura incompleta");
-  const ariaLabel = `${isSuspicious ? "Inconsistencia" : "Problema técnico"}: ${label}`;
-
-  return (
-    <div
-      ref={ref}
-      className="relative inline-block"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-    >
-      <button
-        type="button"
-        aria-label={ariaLabel}
-        title={ariaLabel}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold border transition-colors focus:outline-none focus:ring-2 ${
-          isSuspicious
-            ? "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 focus:ring-amber-400"
-            : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 focus:ring-slate-400"
-        }`}
-      >
-        {isSuspicious ? "⚠️" : "ℹ️"}
-        <span>{isSuspicious ? "Sospechoso" : "Lectura incompleta"}</span>
-      </button>
-      {open && reasons.length > 0 && (
-        <div
-          role="tooltip"
-          className="absolute bottom-full left-0 mb-1 z-50 min-w-[200px] max-w-xs rounded-xl border border-amber-200 bg-white shadow-lg p-3 text-xs text-gray-700 space-y-1"
-        >
-          {reasons.map((r, i) => (
-            <div key={i} className="flex items-start gap-1.5">
-              <span className="text-amber-500 mt-px">•</span>
-              <span>{r}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 };
 
 export default function Reports() {
@@ -206,6 +171,32 @@ export default function Reports() {
   const canPrev = offset > 0;
   const canNext = offset + limit < total;
 
+  // Formatea flag_details (duplicados) como texto legible
+  // para un auditor externo, sin que necesite consultar la base de datos.
+  function formatDetalleInconsistencias(p: Payment): string {
+    const parts: string[] = [];
+
+    if (p.duplicate_payments && p.duplicate_payments.length > 0) {
+      const dupText = p.duplicate_payments
+        .map((d) => {
+          const amountText = d.amount != null ? `$${fmtCOP.format(d.amount)}` : "—";
+          let entry = `Placa ${d.plate} (${d.payment_date ?? "—"}, ${amountText}`;
+          if (d.reference_number) entry += `, Ref: ${d.reference_number}`;
+          entry += ")";
+          return entry;
+        })
+        .join("; ");
+      parts.push(`Duplicado con pago(s): ${dupText}`);
+    }
+
+    if (parts.length === 0) {
+      // Huérfano sin datos estructurados: degradamos al texto plano existente.
+      return (p.inconsistency_reasons ?? []).join(" | ");
+    }
+
+    return parts.join(" | ");
+  }
+
   // ===== Descargar CSV de TODOS los pagos de un mes =====
   async function downloadCsv() {
     setErrorMsg(null);
@@ -248,6 +239,7 @@ export default function Reports() {
         "ComprobanteURL",
         "EstadoComprobante",
         "Inconsistencias",
+        "DetalleInconsistencias",
       ];
 
       const lines = rows.map((p) => {
@@ -262,6 +254,7 @@ export default function Reports() {
           p.proof_url ?? "",
           p.receipt_status ?? "",
           (p.inconsistency_reasons ?? []).join(" | "),
+          formatDetalleInconsistencias(p),
         ];
 
         return cols
@@ -437,7 +430,17 @@ export default function Reports() {
                           <StatusBadge status={r.status} />
                         </div>
                       </td>
-                      <td className={`px-4 py-3 ${color}`}>{r.payment_date ?? "—"}</td>
+                      <td className={`px-4 py-3 ${color}`}>
+                        <div className="font-medium">{r.payment_date ?? "—"}</div>
+                        {r.payment_created_at && (
+                          <div
+                            className="text-[11px] text-gray-500 font-normal cursor-help inline-flex items-center gap-1 mt-0.5 hover:text-gray-700 transition-colors"
+                            title={`Hora en que se registró en el sistema: ${new Date(r.payment_created_at).toLocaleString("es-CO")}\n(Nota: Corresponde al registro en la plataforma, no a la hora del comprobante bancario)`}
+                          >
+                            <span>Reg: {formatRegistrationTime(r.payment_created_at)}</span>
+                          </div>
+                        )}
+                      </td>
                     <td className={`px-4 py-3 ${color}`}>
                       <div className="flex items-center gap-2 flex-wrap">
                         {r.amount != null ? (
@@ -462,6 +465,15 @@ export default function Reports() {
                           is_suspicious={r.is_suspicious ?? false}
                           is_technical_failure={r.is_technical_failure ?? false}
                           reasons={r.inconsistency_reasons ?? []}
+                          duplicatePayments={r.duplicate_payments}
+                          matchContext={r.match_context}
+                          amountMismatch={r.amount_mismatch}
+                          current={{
+                            plate: r.plate,
+                            payment_date: r.payment_date,
+                            amount: r.amount,
+                            proof_url: r.proof_url,
+                          }}
                         />
                       </div>
                     </td>

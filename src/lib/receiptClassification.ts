@@ -16,6 +16,7 @@
 /** receipt_status values that indicate a problem (operational or technical). */
 export const SUSPICIOUS_STATUSES = new Set([
   "suspicious_duplicate",
+  "suspicious_amount_mismatch",
   "suspicious_ocr_failed",
   "timeout",
 ] as const);
@@ -23,8 +24,17 @@ export const SUSPICIOUS_STATUSES = new Set([
 /** Technical-failure statuses: system errors, NOT financial anomalies. */
 const TECHNICAL_STATUSES = new Set<string>(["suspicious_ocr_failed", "timeout"]);
 
-/** Operational-anomaly statuses: duplicates, mismatches — auditor-relevant. */
-const OPERATIONAL_STATUSES = new Set<string>(["suspicious_duplicate"]);
+/**
+ * Operational-anomaly statuses: auditor-relevant financial issues.
+ * 'suspicious_duplicate' means a SPECIFIC other payment was matched (by
+ * reference, or by plate+date+amount) — there IS another comprobante to
+ * compare against. 'suspicious_amount_mismatch' means no other payment was
+ * involved at all — the OCR-read amount on this one receipt just doesn't
+ * match what was recorded. These must stay distinct: labeling a pure amount
+ * mismatch as "duplicado" is actively misleading (there's nothing to
+ * compare it against).
+ */
+const OPERATIONAL_STATUSES = new Set<string>(["suspicious_duplicate", "suspicious_amount_mismatch"]);
 
 /**
  * Pairs where (receipt_status, flag_reason) describe the exact same problem.
@@ -40,10 +50,11 @@ const DEDUP_MAP: Record<string, Set<string>> = {
 
 function reasonFromStatus(status: string): string | null {
   switch (status) {
-    case "suspicious_duplicate":   return "Comprobante duplicado";
-    case "suspicious_ocr_failed":  return "OCR no pudo leer el comprobante";
-    case "timeout":                return "Lectura OCR no completada";
-    default:                       return null;
+    case "suspicious_duplicate":         return "Comprobante duplicado";
+    case "suspicious_amount_mismatch":   return "Monto no coincide con el comprobante";
+    case "suspicious_ocr_failed":        return "OCR no pudo leer el comprobante";
+    case "timeout":                      return "Lectura OCR no completada";
+    default:                             return null;
   }
 }
 
@@ -67,6 +78,38 @@ export interface ReceiptClassification {
   is_suspicious:         boolean;
   is_technical_failure:  boolean;
   inconsistency_reasons: string[];
+  duplicate_payments?:   DuplicatePaymentSummary[];
+  amount_mismatch?:      AmountMismatchDetails | null;
+}
+
+/** Minimal view of a payment involved in a duplicate cluster, for UI display. */
+export interface DuplicatePaymentSummary {
+  id: number;
+  plate: string;
+  payment_date: string | null;
+  amount: number | null;
+  reference_number: string | null;
+  proof_url: string | null;
+}
+
+export interface AmountMismatchDetails {
+  db_amount: number;
+  ocr_amount: number;
+  difference: number;
+}
+
+/**
+ * Raw shape persisted in payments.flag_details (JSONB). Flat by design so it
+ * can carry duplicate info, mismatch info, or both on the same row.
+ */
+export interface FlagDetails {
+  duplicate_payment_ids?: number[];
+  match_type?: "reference" | "amount_date";
+  matched_reference?: string | null;
+  db_amount?: number;
+  ocr_amount?: number;
+  difference?: number;
+  [key: string]: any;
 }
 
 /**
@@ -162,4 +205,90 @@ export function classifyReceipt(
 export function suspiciousOnlyFilter(): string {
   const statusList = [...SUSPICIOUS_STATUSES].join(",");
   return `receipt_status.in.(${statusList}),flagged_for_review.eq.true`;
+}
+
+// ---------------------------------------------------------------------------
+// flag_details enrichment helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the db-vs-ocr amount mismatch summary from a raw flag_details blob,
+ * if present. Returns null when there's nothing to show.
+ */
+export function buildAmountMismatch(
+  flagDetails: FlagDetails | null | undefined,
+): AmountMismatchDetails | null {
+  if (!flagDetails) return null;
+  const { db_amount, ocr_amount, difference } = flagDetails;
+  if (db_amount == null || ocr_amount == null) return null;
+  return { db_amount, ocr_amount, difference: difference ?? db_amount - ocr_amount };
+}
+
+/**
+ * Resolves duplicate_payment_ids from a raw flag_details blob into full
+ * DuplicatePaymentSummary rows, using a caller-provided lookup map. Callers
+ * batch-fetch that map with a single `.in("id", [...])` query to avoid N+1s.
+ * Returns undefined (not []) when there's nothing to show, so callers can
+ * spread it into a response object without adding a spurious empty array.
+ */
+export function buildDuplicatePayments(
+  flagDetails: FlagDetails | null | undefined,
+  resolver: Map<number, DuplicatePaymentSummary>,
+): DuplicatePaymentSummary[] | undefined {
+  const ids = flagDetails?.duplicate_payment_ids;
+  if (!ids || ids.length === 0) return undefined;
+  const resolved = ids
+    .map((id) => resolver.get(id))
+    .filter((x): x is DuplicatePaymentSummary => !!x);
+  return resolved.length > 0 ? resolved : undefined;
+}
+
+/** Collects every duplicate_payment_ids entry across a page of flag_details blobs. */
+export function collectDuplicateIds(
+  flagDetailsList: (FlagDetails | null | undefined)[],
+): Set<number> {
+  const ids = new Set<number>();
+  for (const fd of flagDetailsList) {
+    for (const id of fd?.duplicate_payment_ids ?? []) ids.add(id);
+  }
+  return ids;
+}
+
+/** Explains WHICH field matched, so the UI can say "referencia X se repite en..." instead of a bare table. */
+export interface MatchContext {
+  match_type: "reference" | "amount_date";
+  matched_reference?: string | null;
+}
+
+/**
+ * Resolves the match context (which field caused the match) from a raw
+ * flag_details blob, only when there's an actual resolved duplicate to
+ * explain — mirrors the same "no duplicate_payment_ids -> nothing to show"
+ * rule as buildDuplicatePayments.
+ */
+export function buildMatchContext(flagDetails: FlagDetails | null | undefined): MatchContext | null {
+  if (!flagDetails?.match_type) return null;
+  if (!flagDetails.duplicate_payment_ids || flagDetails.duplicate_payment_ids.length === 0) return null;
+  return {
+    match_type: flagDetails.match_type,
+    matched_reference: flagDetails.matched_reference ?? null,
+  };
+}
+
+const NO_EVIDENCE_DUPLICATE_REASON =
+  "Marcado como posible duplicado, pero no se identificó el comprobante específico con el que coincide.";
+
+/**
+ * classifyReceipt() derives its reason text purely from receipt_status/flag_reason,
+ * without knowing whether flag_details actually resolved to a specific duplicate
+ * payment (that's a separate, later enrichment step). Call this once
+ * duplicate_payments has been resolved, so the UI never claims "Comprobante
+ * duplicado" without a comprobante to actually show for it.
+ */
+export function refineReasonsForEvidence(
+  reasons: string[],
+  hasDuplicateEvidence: boolean,
+): string[] {
+  if (hasDuplicateEvidence) return reasons;
+  return reasons.map((r) => (r === "Comprobante duplicado" ? NO_EVIDENCE_DUPLICATE_REASON : r));
 }
