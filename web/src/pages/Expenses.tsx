@@ -1,8 +1,10 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { BillGeneratorModal } from "../components/BillGeneratorModal";
 import { Pencil, X, ChevronDown, AlertCircle, CheckCircle2, Download } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { requestWithBasicAuth } from "../lib/auth";
+import { resolveSubmission, normalizePlate, parseServerError, type FleetVehicle } from "../lib/resolveSubmission";
+
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -98,9 +100,51 @@ export default function Expenses() {
   const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewingImages, setViewingImages] = useState<{ urls: { url: string; title?: string }[]; startingIndex: number } | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  // Refs para mover el foco al campo con error
+  const descriptionRef = useRef<HTMLInputElement>(null);
+  const dateRef = useRef<HTMLInputElement>(null);
+
+
+  // --- TOAST ---
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((msg: string) => {
+    setToastMsg(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 2500);
+  }, []);
+
+  // --- FLOTA PARA AUTOCOMPLETAR PLACAS ---
+  const [fleet, setFleet] = useState<FleetVehicle[]>([]);
+  useEffect(() => {
+    requestWithBasicAuth(`${API}/vehicles?status=all`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setFleet(Array.isArray(data) ? data : []))
+      .catch(() => {/* silencioso: el autocomplete es progressive enhancement */});
+  }, []);
+
+  // --- AUTOCOMPLETADO DE PLACAS ---
+  const [showPlateSuggestions, setShowPlateSuggestions] = useState(false);
+  const [plateActiveIdx, setPlateActiveIdx] = useState(-1);
+  const plateInputRef = useRef<HTMLInputElement>(null);
+  const evidenceInputRef = useRef<HTMLInputElement>(null);
+  const invoiceInputRef = useRef<HTMLInputElement>(null);
+
+
+  const filteredFleet = useMemo(() => {
+    const normalized = normalizePlate(plateInput);
+    if (!normalized) return [];
+    return fleet
+      .filter(v => v.plate.includes(normalized) && !plates.includes(v.plate))
+      .slice(0, 8);
+  }, [plateInput, fleet, plates]);
 
   // --- CARRITO DE COMPRAS (FASE 3) ---
   type CartItem = { item: string; category: string; amount: number; isNew?: boolean };
+
   const [cart, setCart] = useState<CartItem[]>([]);
 
   // Inputs temporales para añadir al carrito
@@ -178,11 +222,15 @@ export default function Expenses() {
     return () => { cancel = true; };
   }, [normalizedPlate, plateFormatValid]);
 
-  function addPlate() {
-    if (!plateFormatValid || checking !== "ok" || plates.includes(normalizedPlate)) return;
-    setPlates([...plates, normalizedPlate]);
+  function addPlate(plateToAdd?: string) {
+    const p = normalizePlate(plateToAdd ?? plateInput);
+    if (!p || plates.includes(p)) return;
+    setPlates(prev => [...prev, p]);
     setPlateInput("");
     setChecking("idle");
+    setShowPlateSuggestions(false);
+    setPlateActiveIdx(-1);
+    showToast(`✓ ${p} agregado a la factura`);
   }
 
   async function uploadMany(files: File[]): Promise<string[]> {
@@ -205,7 +253,34 @@ export default function Expenses() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (cart.length === 0 || !plates.length) return alert("Agrega al menos un repuesto y una placa a la factura");
+    setSubmitError(null);
+
+    // Auto-captura inteligente: resuelve placas/carrito desde el estado actual y los inputs
+    const resolved = resolveSubmission({
+      cart,
+      plates,
+      plateInput,
+      item,
+      category,
+      amountStr,
+      fleet,
+    });
+
+    if (!resolved.ok) {
+      setSubmitError(resolved.error);
+      return;
+    }
+
+    const { finalPlates, finalCart } = resolved;
+
+    // Notificar al usuario si se auto-incorporaron elementos desde los inputs
+    if (plates.length === 0 && finalPlates.length > 0) {
+      showToast(`✓ ${finalPlates[0]} incorporado automáticamente`);
+    }
+    if (cart.length === 0 && finalCart.length > 0) {
+      showToast(`✓ ${finalCart[0].item} — $${fmtCOP.format(finalCart[0].amount)} incluido`);
+    }
+
     setLoading(true);
     try {
       const evUrls = await uploadMany(evidenceFiles);
@@ -215,20 +290,47 @@ export default function Expenses() {
         ...invUrls.map(u => ({ kind: "invoice" as const, url: u })),
       ];
 
-      const body = { date, description: description || null, items: cart, plates, attachments };
+      const finalTotal = finalCart.reduce((sum, c) => sum + c.amount, 0);
+      // description: cadena vacía en lugar de null para respetar el NOT NULL constraint de la DB
+      const body = { date, description: description || "", items: finalCart, plates: finalPlates, attachments };
       const rs = await requestWithBasicAuth(`${API}/expenses`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
-      if (!rs.ok) throw new Error(await rs.text());
+      if (!rs.ok) {
+        const detail = await rs.text();
+        throw new Error(detail);
+      }
 
-      const firstItemName = cart.length === 1 ? cart[0].item : `Factura Varia (${cart.length} items)`;
-      setSaved({ date, item: firstItemName, category: "Varios", description, total, plates: [...plates], perVehicle: Math.floor(total / plates.length) });
+      const firstItemName = finalCart.length === 1 ? finalCart[0].item : `Factura Varia (${finalCart.length} items)`;
+      setSaved({ date, item: firstItemName, category: "Varios", description, total: finalTotal, plates: [...finalPlates], perVehicle: Math.floor(finalTotal / finalPlates.length) });
       setShowModal(true);
       await loadRecent(limit);
 
       // Reset form
-      setCart([]); setItem(""); setCategory("Mantenimiento"); setDescription(""); setAmountStr(""); setPlates([]); setEvidenceFiles([]); setInvoiceFiles([]);
-    } catch { alert("Error guardando factura"); }
+      setCart([]); setItem(""); setCategory("Mantenimiento"); setDescription(""); setAmountStr(""); setPlates([]); setPlateInput(""); setEvidenceFiles([]); setInvoiceFiles([]);
+      setSubmitError(null); setFieldErrors({});
+
+    } catch (err) {
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      // Detalles técnicos: solo para el dev en consola, nunca en la UI
+      console.error("[Expenses] Error al guardar:", rawMsg);
+
+      const { message, field } = parseServerError(rawMsg);
+      setSubmitError(message);
+
+      // Marcar el campo problemático con error visual + mover el foco
+      if (field) {
+        setFieldErrors(prev => ({ ...prev, [field]: message }));
+        // Pequeño delay para que el estado se aplique antes del focus
+        setTimeout(() => {
+          if (field === "description") descriptionRef.current?.focus();
+          else if (field === "date") dateRef.current?.focus();
+          else if (field === "plate-input") plateInputRef.current?.focus();
+          else document.getElementById(field)?.focus();
+        }, 50);
+      }
+    }
+
     finally { setLoading(false); }
   }
 
@@ -247,6 +349,8 @@ export default function Expenses() {
   function handleRemoveFromCart(index: number) {
     setCart(cart.filter((_, i) => i !== index));
   }
+
+
 
   // SUBMIT EDICIÓN
   async function onSubmitEdit(e: React.FormEvent) {
@@ -333,25 +437,111 @@ export default function Expenses() {
       <div className="mx-auto max-w-5xl">
         <h1 className="mb-6 text-3xl font-bold tracking-tight">Registrar gasto</h1>
 
+        {/* TOAST DE FEEDBACK */}
+        {toastMsg && (
+          <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-2xl text-sm font-medium animate-in slide-in-from-bottom duration-300">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            {toastMsg}
+          </div>
+        )}
+
+
         {/* FORMULARIO PRINCIPAL */}
         <form onSubmit={onSubmit} className="rounded-2xl border bg-white p-5 shadow-sm grid gap-4 md:grid-cols-4">
 
           {/* Fila 1: Metadatos Compartidos */}
           <div className="md:col-span-2">
-            <label className="mb-1 block text-sm font-medium">Fecha de la Factura</label>
-            <input className="w-full rounded-xl border px-3 py-2 bg-slate-50" type="date" value={date} onChange={e => setDate(e.target.value)} required />
+            <label className={`mb-1 block text-sm font-medium ${fieldErrors.date ? "text-red-600" : ""}`}>Fecha de la Factura</label>
+            <input
+              ref={dateRef}
+              id="date"
+              className={`w-full rounded-xl border px-3 py-2 bg-slate-50 ${fieldErrors.date ? "border-red-500 ring-1 ring-red-400" : ""}`}
+              type="date"
+              value={date}
+              onChange={e => { setDate(e.target.value); setFieldErrors(p => ({ ...p, date: "" })); setSubmitError(null); }}
+              required
+            />
+            {fieldErrors.date && <p className="mt-1 text-xs text-red-600 font-medium">{fieldErrors.date}</p>}
           </div>
           <div className="md:col-span-2">
-            <label className="mb-1 block text-sm font-medium">Descripción General</label>
-            <input className="w-full rounded-xl border px-3 py-2 bg-slate-50" placeholder="Detalle opcional para la factura completa" value={description} onChange={e => setDescription(e.target.value)} />
+            <label className={`mb-1 block text-sm font-medium ${fieldErrors.description ? "text-red-600" : ""}`}>Descripción General</label>
+            <input
+              ref={descriptionRef}
+              id="description"
+              className={`w-full rounded-xl border px-3 py-2 bg-slate-50 ${fieldErrors.description ? "border-red-500 ring-1 ring-red-400" : ""}`}
+              placeholder="Detalle opcional para la factura completa"
+              value={description}
+              onChange={e => { setDescription(e.target.value); setFieldErrors(p => ({ ...p, description: "" })); setSubmitError(null); }}
+            />
+            {fieldErrors.description && <p className="mt-1 text-xs text-red-600 font-medium">{fieldErrors.description}</p>}
           </div>
+
 
           <div className="md:col-span-4 mt-2">
             <label className="mb-1 block text-sm font-medium text-slate-700">Placas Asociadas al Gasto</label>
-            <div className="flex gap-2 max-w-sm">
-              <input className={`flex-1 rounded-xl border px-3 py-2 ${normalizedPlate && !plateFormatValid ? "border-red-500" : "bg-slate-50 border-gray-300"}`}
-                placeholder="ABC123" value={plateInput} onChange={e => setPlateInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} maxLength={6} />
-              <button type="button" onClick={addPlate} disabled={!plateFormatValid || checking !== "ok"} className="rounded-xl border px-3 disabled:opacity-50 font-medium">Agregar</button>
+            <div className="relative max-w-sm">
+              <div className="flex gap-2">
+                <input
+                  ref={plateInputRef}
+                  className={`flex-1 rounded-xl border px-3 py-2 ${normalizedPlate && !plateFormatValid && !filteredFleet.length ? "border-red-500" : "bg-slate-50 border-gray-300"}`}
+                  placeholder="ABC123"
+                  value={plateInput}
+                  autoComplete="off"
+                  maxLength={8}
+                  onChange={e => {
+                    const val = normalizePlate(e.target.value).slice(0, 6);
+                    setPlateInput(val);
+                    setShowPlateSuggestions(true);
+                    setPlateActiveIdx(-1);
+                  }}
+                  onFocus={() => setShowPlateSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowPlateSuggestions(false), 150)}
+                  onKeyDown={e => {
+                    if (!showPlateSuggestions || filteredFleet.length === 0) {
+                      if (e.key === "Enter") { e.preventDefault(); addPlate(); }
+                      return;
+                    }
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setPlateActiveIdx(i => Math.min(i + 1, filteredFleet.length - 1));
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setPlateActiveIdx(i => Math.max(i - 1, 0));
+                    } else if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (plateActiveIdx >= 0) {
+                        addPlate(filteredFleet[plateActiveIdx].plate);
+                      } else {
+                        addPlate();
+                      }
+                    } else if (e.key === "Escape") {
+                      setShowPlateSuggestions(false);
+                      setPlateActiveIdx(-1);
+                    }
+                  }}
+                />
+                <button type="button" onClick={() => addPlate()} disabled={!plateFormatValid || checking !== "ok"} className="rounded-xl border px-3 disabled:opacity-50 font-medium">Agregar</button>
+              </div>
+
+              {/* Desplegable de sugerencias de flota */}
+              {showPlateSuggestions && filteredFleet.length > 0 && (
+                <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+                  {filteredFleet.map((v, idx) => (
+                    <div
+                      key={v.plate}
+                      className={`px-4 py-2.5 cursor-pointer flex justify-between items-center border-b border-slate-100 last:border-0 ${idx === plateActiveIdx ? "bg-emerald-50" : "hover:bg-slate-50"}`}
+                      onMouseDown={e => { e.preventDefault(); addPlate(v.plate); }}
+                    >
+                      <span className="font-bold text-slate-800 text-sm">{v.plate}</span>
+                      {(v.brand || v.line) && (
+                        <span className="text-xs text-slate-400 truncate ml-2">
+                          {[v.brand, v.line, v.model_year].filter(Boolean).join(" ")}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
@@ -367,14 +557,106 @@ export default function Expenses() {
             </div>
           </div>
 
-          <div className="md:col-span-4 grid md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl mt-2 border border-slate-100">
+
+          <div className="md:col-span-4 grid md:grid-cols-2 gap-4 mt-2">
+            {/* --- ZONA EVIDENCIAS --- */}
             <div>
-              <label className="text-sm font-bold text-slate-700">Evidencias 📷</label>
-              <input type="file" multiple className="w-full text-xs mt-1" onChange={e => setEvidenceFiles(Array.from(e.target.files || []))} />
+              <input
+                ref={evidenceInputRef}
+                type="file"
+                multiple
+                accept="image/*,application/pdf"
+                className="hidden"
+                onChange={e => setEvidenceFiles(Array.from(e.target.files || []))}
+              />
+              <button
+                type="button"
+                onClick={() => evidenceInputRef.current?.click()}
+                className={`w-full rounded-2xl border-2 border-dashed px-4 py-5 text-left transition-all focus:outline-none
+                  ${evidenceFiles.length > 0
+                    ? "border-blue-400 bg-blue-50"
+                    : "border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50/50"
+                  }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">📷</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-slate-700 text-sm">Foto / Evidencia</p>
+                    <p className="text-xs text-slate-400 mt-0.5">JPG, PNG, PDF · Toca para elegir</p>
+                  </div>
+                  {evidenceFiles.length > 0
+                    ? <span className="shrink-0 text-xs font-bold bg-blue-600 text-white px-2 py-1 rounded-full">{evidenceFiles.length} archivo{evidenceFiles.length > 1 ? "s" : ""}</span>
+                    : <span className="shrink-0 text-xs text-slate-400 border border-slate-200 bg-white px-3 py-1 rounded-full font-medium">Subir</span>
+                  }
+                </div>
+                {/* Lista de archivos seleccionados */}
+                {evidenceFiles.length > 0 && (
+                  <ul className="mt-3 space-y-1">
+                    {evidenceFiles.map((f, i) => (
+                      <li key={i} className="flex items-center gap-2 text-xs text-blue-700 font-medium">
+                        <span className="text-blue-500">✓</span>
+                        <span className="truncate">{f.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </button>
+              {evidenceFiles.length > 0 && (
+                <button type="button" onClick={() => { setEvidenceFiles([]); if (evidenceInputRef.current) evidenceInputRef.current.value = ""; }}
+                  className="mt-1 text-xs text-slate-400 hover:text-red-500 transition-colors font-medium">
+                  × Quitar archivos
+                </button>
+              )}
             </div>
+
+            {/* --- ZONA FACTURAS --- */}
             <div>
-              <label className="text-sm font-bold text-slate-700">Facturas 📄</label>
-              <input type="file" multiple className="w-full text-xs mt-1" onChange={e => setInvoiceFiles(Array.from(e.target.files || []))} />
+              <input
+                ref={invoiceInputRef}
+                type="file"
+                multiple
+                accept="image/*,application/pdf"
+                className="hidden"
+                onChange={e => setInvoiceFiles(Array.from(e.target.files || []))}
+              />
+              <button
+                type="button"
+                onClick={() => invoiceInputRef.current?.click()}
+                className={`w-full rounded-2xl border-2 border-dashed px-4 py-5 text-left transition-all focus:outline-none
+                  ${invoiceFiles.length > 0
+                    ? "border-purple-400 bg-purple-50"
+                    : "border-slate-200 bg-slate-50 hover:border-purple-300 hover:bg-purple-50/50"
+                  }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">📄</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-slate-700 text-sm">Factura</p>
+                    <p className="text-xs text-slate-400 mt-0.5">JPG, PNG, PDF · Toca para elegir</p>
+                  </div>
+                  {invoiceFiles.length > 0
+                    ? <span className="shrink-0 text-xs font-bold bg-purple-600 text-white px-2 py-1 rounded-full">{invoiceFiles.length} archivo{invoiceFiles.length > 1 ? "s" : ""}</span>
+                    : <span className="shrink-0 text-xs text-slate-400 border border-slate-200 bg-white px-3 py-1 rounded-full font-medium">Subir</span>
+                  }
+                </div>
+                {/* Lista de archivos seleccionados */}
+                {invoiceFiles.length > 0 && (
+                  <ul className="mt-3 space-y-1">
+                    {invoiceFiles.map((f, i) => (
+                      <li key={i} className="flex items-center gap-2 text-xs text-purple-700 font-medium">
+                        <span className="text-purple-500">✓</span>
+                        <span className="truncate">{f.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </button>
+              {invoiceFiles.length > 0 && (
+                <button type="button" onClick={() => { setInvoiceFiles([]); if (invoiceInputRef.current) invoiceInputRef.current.value = ""; }}
+                  className="mt-1 text-xs text-slate-400 hover:text-red-500 transition-colors font-medium">
+                  × Quitar archivos
+                </button>
+              )}
             </div>
           </div>
 
@@ -504,12 +786,25 @@ export default function Expenses() {
             )}
           </div>
 
-          <div className="md:col-span-4 flex justify-end gap-2 pt-4 border-t border-slate-100 mt-2">
-            <button disabled={loading || cart.length === 0 || !plates.length} className="rounded-xl bg-black px-8 py-3 text-white disabled:opacity-50 font-bold shadow-lg hover:bg-slate-800 transition-all text-sm uppercase tracking-wider">
-              {loading ? "Guardando..." : "Guardar"}
-            </button>
+          <div className="md:col-span-4 pt-4 border-t border-slate-100 mt-2">
+            {/* Error inline (en lugar de alert()) */}
+            {submitError && (
+              <div className="mb-3 flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 font-medium">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                {submitError}
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button
+                disabled={loading || (cart.length === 0 && (!item.trim() || !amountStr)) || (plates.length === 0 && !plateFormatValid && !filteredFleet.length)}
+                className="rounded-xl bg-black px-8 py-3 text-white disabled:opacity-50 font-bold shadow-lg hover:bg-slate-800 transition-all text-sm uppercase tracking-wider"
+              >
+                {loading ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
           </div>
         </form>
+
 
         {/* LISTADO DE GASTOS */}
         <h2 className="mt-10 mb-4 text-xl font-bold flex justify-between items-center text-slate-800">
