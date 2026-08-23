@@ -506,7 +506,7 @@ export default function Expenses() {
 
           <div className="md:col-span-4 flex justify-end gap-2 pt-4 border-t border-slate-100 mt-2">
             <button disabled={loading || cart.length === 0 || !plates.length} className="rounded-xl bg-black px-8 py-3 text-white disabled:opacity-50 font-bold shadow-lg hover:bg-slate-800 transition-all text-sm uppercase tracking-wider">
-              {loading ? "Guardando..." : "Guardar Factura Completa"}
+              {loading ? "Guardando..." : "Guardar"}
             </button>
           </div>
         </form>
