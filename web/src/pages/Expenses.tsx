@@ -230,7 +230,7 @@ export default function Expenses() {
     setChecking("idle");
     setShowPlateSuggestions(false);
     setPlateActiveIdx(-1);
-    showToast(`✓ ${p} agregado a la factura`);
+    showToast(`✓ ${p} agregado al gasto`);
   }
 
   async function uploadMany(files: File[]): Promise<string[]> {
@@ -451,7 +451,7 @@ export default function Expenses() {
 
           {/* Fila 1: Metadatos Compartidos */}
           <div className="md:col-span-2">
-            <label className={`mb-1 block text-sm font-medium ${fieldErrors.date ? "text-red-600" : ""}`}>Fecha de la Factura</label>
+            <label className={`mb-1 block text-sm font-medium ${fieldErrors.date ? "text-red-600" : ""}`}>Fecha del Gasto</label>
             <input
               ref={dateRef}
               id="date"
@@ -469,7 +469,7 @@ export default function Expenses() {
               ref={descriptionRef}
               id="description"
               className={`w-full rounded-xl border px-3 py-2 bg-slate-50 ${fieldErrors.description ? "border-red-500 ring-1 ring-red-400" : ""}`}
-              placeholder="Detalle opcional para la factura completa"
+              placeholder="Detalle o nota adicional sobre el gasto"
               value={description}
               onChange={e => { setDescription(e.target.value); setFieldErrors(p => ({ ...p, description: "" })); setSubmitError(null); }}
             />
@@ -755,7 +755,7 @@ export default function Expenses() {
             <div className="mt-4 space-y-2">
               {cart.length === 0 ? (
                 <div className="text-center py-6 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl text-sm italic">
-                  La factura está vacía. Busca y agrega repuestos o servicios arriba.
+                  No hay repuestos o servicios agregados. Busca y agrega arriba.
                 </div>
               ) : (
                 cart.map((c, i) => (
@@ -780,7 +780,7 @@ export default function Expenses() {
 
             {cart.length > 0 && (
               <div className="flex justify-between items-center mt-4 bg-emerald-50 border border-emerald-200 p-4 rounded-xl">
-                <span className="font-bold text-emerald-800">Total de la Factura:</span>
+                <span className="font-bold text-emerald-800">Total del Gasto:</span>
                 <span className="text-2xl font-black text-emerald-700">${fmtCOP.format(total)}</span>
               </div>
             )}
