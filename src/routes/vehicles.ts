@@ -24,6 +24,7 @@ r.get("/", async (req: Request, res: Response) => {
           concept
         ),
         leasing_contracts (
+          id,
           status,
           signed_contract_url,
           created_at,
