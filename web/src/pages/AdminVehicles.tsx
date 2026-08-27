@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity } from "lucide-react";
+import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useSortableData } from "../hooks/useSortableData";
 import { TopDwellLocations } from "../components/TopDwellLocations";
@@ -107,13 +107,55 @@ const StatusBadge = ({ status, onClick }: { status?: string; onClick?: () => voi
   return <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Activo</span>;
 };
 
+function getVehicleCategory(status?: string): 'active' | 'leasing' | 'inactive' {
+  if (status === 'leasing' || status === 'reserved') return 'leasing';
+  if (status === 'sold' || status === 'inactive') return 'inactive';
+  return 'active';
+}
+
+function matchesVehicleQuery(v: Vehicle, query: string): boolean {
+  if (!query) return true;
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return Boolean(
+    v.plate?.toLowerCase().includes(q) ||
+    v.driver?.full_name?.toLowerCase().includes(q) ||
+    v.brand?.toLowerCase().includes(q) ||
+    v.line?.toLowerCase().includes(q)
+  );
+}
+
 export default function AdminVehicles() {
   const [items, setItems] = useState<Vehicle[]>([]);
   const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'leasing'>('active');
+  const [plateFilter, setPlateFilter] = useState('');
+
+  // Auto-switch tab if the current tab has 0 matches for the search query, but another tab does
+  useEffect(() => {
+    if (!plateFilter.trim() || items.length === 0) return;
+
+    const currentTabHasMatch = items.some(
+      v => getVehicleCategory(v.status) === statusFilter && matchesVehicleQuery(v, plateFilter)
+    );
+
+    if (!currentTabHasMatch) {
+      if (items.some(v => getVehicleCategory(v.status) === 'active' && matchesVehicleQuery(v, plateFilter))) {
+        setStatusFilter('active');
+      } else if (items.some(v => getVehicleCategory(v.status) === 'leasing' && matchesVehicleQuery(v, plateFilter))) {
+        setStatusFilter('leasing');
+      } else if (items.some(v => getVehicleCategory(v.status) === 'inactive' && matchesVehicleQuery(v, plateFilter))) {
+        setStatusFilter('inactive');
+      }
+    }
+  }, [plateFilter, items]);
+
+  const activeCount = items.filter(v => getVehicleCategory(v.status) === 'active' && matchesVehicleQuery(v, plateFilter)).length;
+  const leasingCount = items.filter(v => getVehicleCategory(v.status) === 'leasing' && matchesVehicleQuery(v, plateFilter)).length;
+  const inactiveCount = items.filter(v => getVehicleCategory(v.status) === 'inactive' && matchesVehicleQuery(v, plateFilter)).length;
+
   const filteredItems = items.filter(v => {
-    if (statusFilter === 'active') return v.status === 'active' || v.status === 'maintenance' || !v.status;
-    if (statusFilter === 'leasing') return v.status === 'leasing' || v.status === 'reserved';
-    return v.status === 'sold' || v.status === 'inactive';
+    if (getVehicleCategory(v.status) !== statusFilter) return false;
+    return matchesVehicleQuery(v, plateFilter);
   });
   const { items: sortedItems, requestSort, sortConfig } = useSortableData(filteredItems);
 
@@ -528,13 +570,53 @@ export default function AdminVehicles() {
           </div>
         </div>
 
-        {/* TABS */}
-        <div className="mb-4 flex gap-2">
-          <button onClick={() => setStatusFilter('active')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>Operativos</button>
-          <button onClick={() => setStatusFilter('leasing')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'leasing' ? 'bg-emerald-700 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
-            🚗 Leasing / Reservados <span className="ml-1 bg-emerald-100 text-emerald-700 rounded-full text-[10px] px-2 py-0.5">{items.filter(v => v.status === 'leasing' || v.status === 'reserved').length}</span>
-          </button>
-          <button onClick={() => setStatusFilter('inactive')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'inactive' ? 'bg-slate-700 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>Vendidos / Inactivos</button>
+        {/* TABS Y BUSCADOR */}
+        <div className="mb-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => setStatusFilter('active')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
+              Operativos
+              {plateFilter.trim() ? (
+                <span className={`ml-1.5 rounded-full text-[10px] px-2 py-0.5 ${statusFilter === 'active' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800 font-bold'}`}>
+                  {activeCount}
+                </span>
+              ) : null}
+            </button>
+            <button onClick={() => setStatusFilter('leasing')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'leasing' ? 'bg-emerald-700 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
+              🚗 Leasing / Reservados{" "}
+              <span className={`ml-1 rounded-full text-[10px] px-2 py-0.5 ${statusFilter === 'leasing' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
+                {plateFilter.trim() ? leasingCount : items.filter(v => v.status === 'leasing' || v.status === 'reserved').length}
+              </span>
+            </button>
+            <button onClick={() => setStatusFilter('inactive')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'inactive' ? 'bg-slate-700 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
+              Vendidos / Inactivos
+              {plateFilter.trim() ? (
+                <span className={`ml-1.5 rounded-full text-[10px] px-2 py-0.5 ${statusFilter === 'inactive' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700 font-bold'}`}>
+                  {inactiveCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
+
+          <div className="relative flex items-center">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Filtrar por placa o conductor..."
+              value={plateFilter}
+              onChange={(e) => setPlateFilter(e.target.value)}
+              className="h-10 pl-9 pr-8 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm w-full md:w-64"
+            />
+            {plateFilter && (
+              <button
+                type="button"
+                onClick={() => setPlateFilter('')}
+                className="absolute right-2.5 text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100"
+                title="Limpiar filtro"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* TABLA O MAPA */}
@@ -589,9 +671,22 @@ export default function AdminVehicles() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  <tr><td colSpan={7} className="p-10 text-center text-slate-400">Cargando flota...</td></tr>
+                  <tr><td colSpan={11} className="p-10 text-center text-slate-400">Cargando flota...</td></tr>
                 ) : sortedItems.length === 0 ? (
-                  <tr><td colSpan={7} className="p-10 text-center text-slate-400">No hay vehículos registrados.</td></tr>
+                  <tr>
+                    <td colSpan={11} className="p-10 text-center text-slate-400">
+                      {plateFilter ? (
+                        <span>
+                          No se encontraron vehículos para "<strong>{plateFilter}</strong>".{" "}
+                          <button onClick={() => setPlateFilter("")} className="text-emerald-600 font-semibold hover:underline ml-1">
+                            Limpiar filtro
+                          </button>
+                        </span>
+                      ) : (
+                        "No hay vehículos registrados."
+                      )}
+                    </td>
+                  </tr>
                 ) : (
                   sortedItems.map((v) => (
                     <tr key={v.plate} className="hover:bg-slate-50 transition-colors">
