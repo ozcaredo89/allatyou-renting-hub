@@ -138,6 +138,7 @@ r.post("/", async (req: Request, res: Response) => {
       // Legal & Seguridad
       alarm_code: body.alarm_code,
       soat_expires_at: body.soat_expires_at,
+      soat_url: body.soat_url,
       tecno_expires_at: body.tecno_expires_at,
       extinguisher_expiry: body.extinguisher_expiry,
       gps_renewal_date: body.gps_renewal_date,
@@ -257,6 +258,7 @@ r.put("/:plate", async (req: Request, res: Response) => {
       // Legal & Seguridad
       alarm_code: body.alarm_code,
       soat_expires_at: body.soat_expires_at,
+      soat_url: body.soat_url,
       tecno_expires_at: body.tecno_expires_at,
       extinguisher_expiry: body.extinguisher_expiry,
       gps_renewal_date: body.gps_renewal_date,

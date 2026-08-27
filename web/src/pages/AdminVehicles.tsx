@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search } from "lucide-react";
+import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search, FileText, ExternalLink } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useSortableData } from "../hooks/useSortableData";
 import { TopDwellLocations } from "../components/TopDwellLocations";
@@ -20,6 +20,7 @@ type Vehicle = {
   current_driver_id: number | null;
   driver?: DriverSimple;
   soat_expires_at: string | null;
+  soat_url?: string | null;
   tecno_expires_at: string | null;
   alarm_code: string | null;
   gps_renewal_date: string | null;
@@ -57,6 +58,7 @@ const EMPTY_VEHICLE: Vehicle = {
   model_year: new Date().getFullYear(),
   current_driver_id: null,
   soat_expires_at: null,
+  soat_url: null,
   tecno_expires_at: null,
   gps_renewal_date: null,
   alarm_code: "",
@@ -235,7 +237,7 @@ export default function AdminVehicles() {
   const [autoFilterTab, setAutoFilterTab] = useState<'7d' | '30d' | 'custom' | 'all'>('7d');
   const [customRange, setCustomRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
 
-  // --- ESTADOS PARA CÁMARA (NUEVO) ---
+  // --- ESTADOS PARA CÁMARA / SUBIDA DE ARCHIVOS ---
   const [activeField, setActiveField] = useState<'ownership_card_front' | 'ownership_card_back' | null>(null);
   const [showCamera, setShowCamera] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -243,6 +245,7 @@ export default function AdminVehicles() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const soatInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadData();
@@ -375,30 +378,40 @@ export default function AdminVehicles() {
     }
   }
 
+  function openDocument(url: string, title?: string) {
+    if (!url) return;
+    const cleanUrl = url.toLowerCase().split('?')[0];
+    if (cleanUrl.endsWith('.pdf')) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } else {
+      setViewingImages({ urls: [{ url, title: title || 'Documento' }], startingIndex: 0 });
+    }
+  }
+
   // --- LÓGICA DE SUBIDA UNIFICADA ---
-  async function performUpload(file: File, field: 'ownership_card_front' | 'ownership_card_back') {
+  async function performUpload(file: File, field: 'ownership_card_front' | 'ownership_card_back' | 'soat_url') {
     if (!editing) return;
     setUploading(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
+      fd.append("folder", "vehicles");
       const res = await fetch(`${API}/uploads`, { method: "POST", body: fd });
-      if (!res.ok) throw new Error("Error subiendo imagen");
+      if (!res.ok) throw new Error("Error subiendo archivo");
       const data = await res.json();
 
       setEditing(prev => prev ? ({ ...prev, [field]: data.url }) : null);
     } catch (error) {
       console.error(error);
-      alert("No se pudo subir la imagen.");
+      alert("No se pudo subir el archivo.");
     } finally {
       setUploading(false);
-      setActiveField(null); // Cerrar menú
+      setActiveField(null); // Cerrar menú si estaba abierto
     }
   }
 
   // --- LÓGICA DE CÁMARA ---
   const startCamera = async () => {
-    // No cerramos activeField aún porque lo necesitamos para saber dónde guardar
     setShowCamera(true);
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -444,10 +457,19 @@ export default function AdminVehicles() {
     }
   };
 
-  // Manejador del input de archivo oculto
+  // Manejador del input de archivo para Tarjetas de Propiedad
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.[0] && activeField) {
       performUpload(e.target.files[0], activeField);
+    }
+  };
+
+  // Manejador directo de 1-clic para PDF de SOAT
+  const handleSoatFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      performUpload(file, 'soat_url');
+      e.target.value = '';
     }
   };
 
@@ -754,7 +776,21 @@ export default function AdminVehicles() {
                           })()}
                         </div>
                       </td>
-                      <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.soat_expires_at)}`}>{v.soat_expires_at || "—"}</td>
+                      <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.soat_expires_at)}`}>
+                        {v.soat_url ? (
+                          <button
+                            type="button"
+                            onClick={() => openDocument(v.soat_url!, `SOAT - ${v.plate}`)}
+                            className="inline-flex items-center gap-1 hover:underline text-inherit cursor-pointer font-bold transition-all group mx-auto"
+                            title="Ver documento SOAT adjunto"
+                          >
+                            <span>{v.soat_expires_at || "Ver SOAT"}</span>
+                            <FileText className="w-3.5 h-3.5 text-blue-600 group-hover:scale-110 transition-transform shrink-0" />
+                          </button>
+                        ) : (
+                          v.soat_expires_at || "—"
+                        )}
+                      </td>
                       <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.tecno_expires_at)}`}>{v.tecno_expires_at || "—"}</td>
                       <td className="px-4 py-3 text-center font-mono text-[11px] font-bold text-slate-700">
                         {v.current_mileage != null ? `${new Intl.NumberFormat("es-CO").format(v.current_mileage)} km` : "—"}
@@ -765,8 +801,22 @@ export default function AdminVehicles() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-slate-500 space-y-1">
-                        <div>
-                          {v.ownership_card_front ? <span className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-600 text-[10px] border border-emerald-100">TP OK</span> : <span className="text-[10px] text-slate-300">Sin TP</span>}
+                        <div className="flex flex-wrap gap-1">
+                          {v.ownership_card_front ? (
+                            <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 text-[10px] border border-emerald-100 font-medium">TP OK</span>
+                          ) : (
+                            <span className="text-[10px] text-slate-300">Sin TP</span>
+                          )}
+                          {v.soat_url ? (
+                            <button
+                              type="button"
+                              onClick={() => openDocument(v.soat_url!, `SOAT - ${v.plate}`)}
+                              className="inline-block px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 text-[10px] border border-blue-200 font-medium transition-colors cursor-pointer"
+                              title="Ver SOAT adjunto"
+                            >
+                              SOAT OK
+                            </button>
+                          ) : null}
                         </div>
                         {v.status === 'leasing' && v.leasing_contracts && (() => {
                           const activeContract = v.leasing_contracts.find((c: any) => c.status === 'active' && !c.signed_contract_url);
@@ -1060,6 +1110,87 @@ export default function AdminVehicles() {
                     <label className="block text-xs font-medium text-slate-700 mb-1">Vencimiento SOAT</label>
                     <input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.soat_expires_at || ""} onChange={e => setEditing({ ...editing, soat_expires_at: e.target.value })} />
                   </div>
+
+                  {/* ADJUNTAR SOAT PDF (DIRECTO 1-CLIC) */}
+                  <div className="relative">
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs font-bold text-slate-700">Póliza SOAT (PDF)</label>
+                      {editing.soat_url && (
+                        <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          Adjunto ✓
+                        </span>
+                      )}
+                    </div>
+
+                    {uploading && !activeField ? (
+                      <div className="rounded-xl border border-emerald-500 bg-emerald-50 p-4 flex flex-col items-center justify-center text-emerald-600 min-h-[75px]">
+                        <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mb-1" />
+                        <span className="text-[10px] font-bold tracking-wider uppercase">Subiendo PDF...</span>
+                      </div>
+                    ) : editing.soat_url ? (
+                      <div className="w-full flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200 shadow-sm hover:border-slate-300 transition-colors">
+                        <a
+                          href={editing.soat_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2.5 min-w-0 flex-1 hover:text-emerald-700 transition-colors group"
+                        >
+                          <div className="p-2 bg-red-50 text-red-600 rounded-lg border border-red-100 group-hover:scale-105 transition-transform shrink-0">
+                            <FileText className="w-5 h-5" />
+                          </div>
+                          <div className="truncate">
+                            <p className="text-xs font-bold text-slate-800 group-hover:text-emerald-700 truncate flex items-center gap-1">
+                              SOAT Póliza.pdf <ExternalLink className="w-3 h-3 text-slate-400" />
+                            </p>
+                            <p className="text-[10px] text-emerald-600 font-medium">Click para abrir PDF</p>
+                          </div>
+                        </a>
+
+                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                          <button
+                            type="button"
+                            onClick={() => soatInputRef.current?.click()}
+                            className="p-1.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors text-xs font-medium flex items-center gap-1"
+                            title="Reemplazar PDF"
+                          >
+                            <UploadCloud className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline text-[11px]">Cambiar</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditing({ ...editing, soat_url: null })}
+                            className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
+                            title="Eliminar PDF"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => soatInputRef.current?.click()}
+                        className="w-full rounded-xl border border-dashed border-slate-300 bg-slate-50/70 hover:bg-emerald-50/40 hover:border-emerald-400 p-3.5 flex items-center justify-center gap-2.5 transition-all text-slate-600 hover:text-emerald-700 group cursor-pointer"
+                      >
+                        <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs group-hover:border-emerald-200 group-hover:text-emerald-600">
+                          <FileText className="w-5 h-5 text-red-500" />
+                        </div>
+                        <div className="text-left">
+                          <span className="text-xs font-bold block text-slate-800 group-hover:text-emerald-800">Seleccionar PDF de SOAT</span>
+                          <span className="text-[10px] text-slate-400 block">Clic para buscar archivo .pdf</span>
+                        </div>
+                      </button>
+                    )}
+
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      ref={soatInputRef}
+                      className="hidden"
+                      onChange={handleSoatFileSelect}
+                    />
+                  </div>
+
                   <div>
                     <label className="block text-xs font-medium text-slate-700 mb-1">Vencimiento Tecno</label>
                     <input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={editing.tecno_expires_at || ""} onChange={e => setEditing({ ...editing, tecno_expires_at: e.target.value })} />
@@ -1424,7 +1555,7 @@ export default function AdminVehicles() {
         </div>
       )}
 
-      {/* INPUT OCULTO */}
+      {/* INPUT OCULTO PARA FOTOS DE TARJETA DE PROPIEDAD */}
       <input type="file" accept="image/*" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
 
       {/* --- MODAL DE CÁMARA FULLSCREEN (Z-70 para tapar todo) --- */}
