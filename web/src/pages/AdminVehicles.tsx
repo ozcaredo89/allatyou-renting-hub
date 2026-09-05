@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search, FileText, ExternalLink } from "lucide-react";
+import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search, FileText, ExternalLink, Settings2, Satellite } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useSortableData } from "../hooks/useSortableData";
 import { TopDwellLocations } from "../components/TopDwellLocations";
@@ -127,6 +127,65 @@ function matchesVehicleQuery(v: Vehicle, query: string): boolean {
   );
 }
 
+// Semáforo de GPS — diferenciado por impacto operativo (no igual a SOAT/Tecno)
+function getGpsStatus(dateStr?: string | null): { color: string; label: string; tooltip: string } {
+  if (!dateStr) return {
+    color: "text-slate-400 bg-slate-100",
+    label: "—",
+    tooltip: "Sin fecha de renovación GPS registrada",
+  };
+  // Parsear como fecha local (YYYY-MM-DD) para evitar desfase de zona horaria
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const expiryDate = new Date(year, month - 1, day);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays <= 0) return {
+    color: "text-red-700 bg-red-100 font-bold",
+    label: dateStr,
+    tooltip: "⚠️ Vencido: Riesgo de corte de transmisión satelital y pérdida de telemetría en Oráculo",
+  };
+  if (diffDays <= 30) return {
+    color: "text-amber-700 bg-amber-100 font-bold",
+    label: dateStr,
+    tooltip: `⚡ Vence en ${diffDays} día${diffDays === 1 ? '' : 's'}: Renovar plataforma GPS para mantener monitoreo activo en Oráculo`,
+  };
+  return {
+    color: "text-emerald-700 bg-emerald-100 font-medium",
+    label: dateStr,
+    tooltip: "✅ GPS activo — Telemetría y Oráculo funcionando correctamente",
+  };
+}
+
+
+// Columnas opcionales de la tabla — persistidas en localStorage
+const COLUMNS_STORAGE_KEY = "admin_vehicles_columns";
+type ColumnKey = 'soat' | 'tecno' | 'gps' | 'odometro' | 'aceite' | 'docs' | 'historial';
+const ALL_COLUMNS: { key: ColumnKey; label: string }[] = [
+  { key: 'soat', label: 'SOAT' },
+  { key: 'tecno', label: 'Tecno' },
+  { key: 'gps', label: 'Renov. GPS' },
+  { key: 'odometro', label: 'Odómetro' },
+  { key: 'aceite', label: 'Últ. Aceite' },
+  { key: 'docs', label: 'Docs' },
+  { key: 'historial', label: 'Historial' },
+];
+const DEFAULT_COLUMNS: Record<ColumnKey, boolean> = {
+  soat: true, tecno: true, gps: true, odometro: true, aceite: true, docs: true, historial: true,
+};
+
+function getInitialColumns(): Record<ColumnKey, boolean> {
+  try {
+    const stored = localStorage.getItem(COLUMNS_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      // Merge with defaults to handle new columns added in future
+      return { ...DEFAULT_COLUMNS, ...parsed };
+    }
+  } catch { /* ignorar */ }
+  return { ...DEFAULT_COLUMNS };
+}
+
 export default function AdminVehicles() {
   const [items, setItems] = useState<Vehicle[]>([]);
   const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'leasing'>('active');
@@ -197,7 +256,24 @@ export default function AdminVehicles() {
   const [leasingSummary, setLeasingSummary] = useState<any>(null);
   const [loadingLeasingSchedule, setLoadingLeasingSchedule] = useState(false);
 
+  // --- SELECTOR DE COLUMNAS ---
+  const [visibleColumns, setVisibleColumns] = useState<Record<ColumnKey, boolean>>(getInitialColumns);
+  const [showColumnSelector, setShowColumnSelector] = useState(false);
+
+  // Persistir preferencia de columnas visibles
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(visibleColumns));
+    } catch { /* ignorar */ }
+  }, [visibleColumns]);
+
+  // Número de columnas visibles para el colSpan dinámico:
+  // 1 (Activo/Placa fusionada) + 1 (Conductor) + 1 (Estado) + columnas opcionales + 1 (Acción)
+  const visibleOptionalCount = Object.values(visibleColumns).filter(Boolean).length;
+  const totalColSpan = 3 + visibleOptionalCount + 1;
+
   const fmtCOP2 = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
+
 
   async function openLeasingDrawer(plate: string) {
     setLeasingDrawer({ plate });
@@ -515,13 +591,18 @@ export default function AdminVehicles() {
 
   const dateCellClass = (dateStr: string | null) => {
     if (!dateStr) return "text-gray-300";
-    const d = new Date(dateStr);
-    const now = new Date();
-    const diffDays = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    if (diffDays < 0) return "bg-red-100 text-red-700 font-bold";
-    if (diffDays < 30) return "bg-amber-100 text-amber-700 font-medium";
+    // Comparar solo fechas de calendario (sin componente de hora) para evitar
+    // el desfase de zona horaria cuando las fechas vienen como YYYY-MM-DD desde la BD.
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const expiryDate = new Date(year, month - 1, day); // medianoche local
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // normalizar a medianoche local
+    const diffDays = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays <= 0) return "bg-red-100 text-red-700 font-bold"; // vencido o vence hoy
+    if (diffDays <= 30) return "bg-amber-100 text-amber-700 font-medium"; // próximo a vencer
     return "text-gray-700";
   };
+
 
   const getFilteredAutoMileage = () => {
     let list = vehicleMileage.filter((log: any) => log.source === 'protrack_api');
@@ -619,84 +700,147 @@ export default function AdminVehicles() {
             </button>
           </div>
 
-          <div className="relative flex items-center">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Filtrar por placa o conductor..."
-              value={plateFilter}
-              onChange={(e) => setPlateFilter(e.target.value)}
-              className="h-10 pl-9 pr-8 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm w-full md:w-64"
-            />
-            {plateFilter && (
+          <div className="relative flex items-center gap-2">
+            {/* Buscador */}
+            <div className="relative flex items-center">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Filtrar por placa o conductor..."
+                value={plateFilter}
+                onChange={(e) => setPlateFilter(e.target.value)}
+                className="h-10 pl-9 pr-8 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm w-full md:w-56"
+              />
+              {plateFilter && (
+                <button
+                  type="button"
+                  onClick={() => setPlateFilter('')}
+                  className="absolute right-2.5 text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100"
+                  title="Limpiar filtro"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Selector de Columnas */}
+            <div className="relative">
               <button
                 type="button"
-                onClick={() => setPlateFilter('')}
-                className="absolute right-2.5 text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100"
-                title="Limpiar filtro"
+                onClick={() => setShowColumnSelector((v) => !v)}
+                className={`h-10 flex items-center gap-1.5 px-3 rounded-xl border text-sm font-medium shadow-sm transition-all
+                  ${showColumnSelector
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                title="Mostrar/ocultar columnas"
+                aria-label="Selector de columnas"
               >
-                <X className="w-3.5 h-3.5" />
+                <Settings2 className="w-4 h-4" />
+                <span className="hidden sm:inline">Columnas</span>
               </button>
-            )}
+
+              {showColumnSelector && (
+                <>
+                  {/* Backdrop para cerrar */}
+                  <div className="fixed inset-0 z-10" onClick={() => setShowColumnSelector(false)} />
+                  <div className="absolute right-0 top-12 z-20 bg-white border border-slate-200 rounded-xl shadow-xl p-3 min-w-[180px]">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-1">Mostrar columnas</p>
+                    {ALL_COLUMNS.map(({ key, label }) => (
+                      <label key={key} className="flex items-center gap-2.5 px-1 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={visibleColumns[key]}
+                          onChange={(e) => setVisibleColumns((prev) => ({ ...prev, [key]: e.target.checked }))}
+                          className="w-3.5 h-3.5 rounded accent-emerald-600"
+                        />
+                        <span className="text-xs font-medium text-slate-700">{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
+
 
         {/* TABLA O MAPA */}
         <div className={`overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm ${viewMode === 'map' ? 'h-[700px]' : ''}`}>
           {viewMode === 'map' ? (
             <FleetMap />
           ) : (
-            <div className="overflow-x-auto">
+            /* Scrollbar siempre accesible en el viewport */
+            <div className="overflow-x-auto thin-scrollbar">
             <table className="min-w-full text-xs">
-              <thead className="bg-slate-50 text-left uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200">
+              <thead className="bg-slate-50 text-left uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200 sticky top-0 z-20">
                 <tr>
-                  <th className="px-4 py-3">Vehículo</th>
-                  <th className="px-4 py-3">
+                  {/* Columna sticky fusionada: Activo (Placa + marca/modelo) */}
+                  <th className="sticky left-0 z-20 bg-slate-50 px-4 py-3 border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.06)] min-w-[170px]">
                     <div onClick={() => requestSort('plate')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
-                      Placa <SortIcon columnKey="plate" />
+                      Activo <SortIcon columnKey="plate" />
                     </div>
                   </th>
-                  <th className="px-4 py-3">
+                  <th className="px-4 py-3 min-w-[160px]">
                     <div onClick={() => requestSort('driver.full_name')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
-                      Conductor Actual <SortIcon columnKey="driver.full_name" />
+                      Conductor <SortIcon columnKey="driver.full_name" />
                     </div>
                   </th>
-                  <th className="px-4 py-3 text-center">Estado</th>
-                  <th className="px-4 py-3 text-center">
-                    <div onClick={() => requestSort('soat_expires_at')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
-                      SOAT <SortIcon columnKey="soat_expires_at" />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 text-center">
-                    <div onClick={() => requestSort('tecno_expires_at')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
-                      Tecno <SortIcon columnKey="tecno_expires_at" />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 text-center">
-                    <div onClick={() => requestSort('current_mileage')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
-                      Odómetro <SortIcon columnKey="current_mileage" />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 text-center">
-                    <div onClick={() => requestSort('last_oil_change_date')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
-                      Últ. Aceite <SortIcon columnKey="last_oil_change_date" />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3">
-                    <div onClick={() => requestSort('ownership_card_front')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
-                      Docs <SortIcon columnKey="ownership_card_front" />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 text-center">Historial</th>
-                  <th className="px-4 py-3 text-right">Acción</th>
+                  <th className="px-4 py-3 text-center min-w-[110px]">Estado</th>
+                  {visibleColumns.soat && (
+                    <th className="px-4 py-3 text-center min-w-[100px]">
+                      <div onClick={() => requestSort('soat_expires_at')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
+                        SOAT <SortIcon columnKey="soat_expires_at" />
+                      </div>
+                    </th>
+                  )}
+                  {visibleColumns.tecno && (
+                    <th className="px-4 py-3 text-center min-w-[100px]">
+                      <div onClick={() => requestSort('tecno_expires_at')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
+                        Tecno <SortIcon columnKey="tecno_expires_at" />
+                      </div>
+                    </th>
+                  )}
+                  {visibleColumns.gps && (
+                    <th className="px-4 py-3 text-center min-w-[110px]">
+                      <div onClick={() => requestSort('gps_renewal_date')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max" title="Fecha renovación GPS (Oráculo)">
+                        <Satellite className="w-3 h-3 shrink-0" /> GPS <SortIcon columnKey="gps_renewal_date" />
+                      </div>
+                    </th>
+                  )}
+                  {visibleColumns.odometro && (
+                    <th className="px-4 py-3 text-center min-w-[100px]">
+                      <div onClick={() => requestSort('current_mileage')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
+                        Odómetro <SortIcon columnKey="current_mileage" />
+                      </div>
+                    </th>
+                  )}
+                  {visibleColumns.aceite && (
+                    <th className="px-4 py-3 text-center min-w-[100px]">
+                      <div onClick={() => requestSort('last_oil_change_date')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
+                        Últ. Aceite <SortIcon columnKey="last_oil_change_date" />
+                      </div>
+                    </th>
+                  )}
+                  {visibleColumns.docs && (
+                    <th className="px-4 py-3 min-w-[90px]">
+                      <div onClick={() => requestSort('ownership_card_front')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
+                        Docs <SortIcon columnKey="ownership_card_front" />
+                      </div>
+                    </th>
+                  )}
+                  {visibleColumns.historial && (
+                    <th className="px-4 py-3 text-center min-w-[110px]">Historial</th>
+                  )}
+                  <th className="px-4 py-3 text-right min-w-[90px]">Acción</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  <tr><td colSpan={11} className="p-10 text-center text-slate-400">Cargando flota...</td></tr>
+                  <tr><td colSpan={totalColSpan} className="p-10 text-center text-slate-400">Cargando flota...</td></tr>
                 ) : sortedItems.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="p-10 text-center text-slate-400">
+                    <td colSpan={totalColSpan} className="p-10 text-center text-slate-400">
                       {plateFilter ? (
                         <span>
                           No se encontraron vehículos para "<strong>{plateFilter}</strong>".{" "}
@@ -711,37 +855,44 @@ export default function AdminVehicles() {
                   </tr>
                 ) : (
                   sortedItems.map((v) => (
-                    <tr key={v.plate} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 font-medium text-slate-700">
-                        {v.brand || "Generico"} {v.line || ""}
-                        {v.model_year && <span className="text-slate-400 text-[10px] ml-1">({v.model_year})</span>}
+                    <tr key={v.plate} className="group transition-colors hover:bg-slate-50">
+                      {/* STICKY: Activo (Placa + marca/modelo/año) */}
+                      <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50 transition-colors border-r border-slate-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.04)] px-4 py-3">
+                        <div>
+                          <span className="font-mono font-bold text-slate-800 text-[12px] tracking-wide">{v.plate}</span>
+                          <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">
+                            {v.brand || "Genérico"} {v.line || ""}
+                            {v.model_year && <span className="text-slate-400 ml-1">({v.model_year})</span>}
+                          </div>
+                        </div>
                       </td>
-                      <td className="px-4 py-3 font-mono font-bold text-slate-800">{v.plate}</td>
+                      {/* CONDUCTOR */}
                       <td className="px-4 py-3">
                         {v.driver ? (
                           <div className="flex items-center gap-2">
-                            <div className="h-6 w-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] font-bold">
+                            <div className="h-6 w-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] font-bold shrink-0">
                               {v.driver.full_name.charAt(0)}
                             </div>
                             {v.driver.phone ? (
-                              <a 
-                                href={`https://wa.me/${v.driver.phone.replace(/\D/g, '').startsWith('57') ? v.driver.phone.replace(/\D/g, '') : '57' + v.driver.phone.replace(/\D/g, '')}`} 
-                                target="_blank" 
+                              <a
+                                href={`https://wa.me/${v.driver.phone.replace(/\D/g, '').startsWith('57') ? v.driver.phone.replace(/\D/g, '') : '57' + v.driver.phone.replace(/\D/g, '')}`}
+                                target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-emerald-600 hover:text-emerald-800 hover:underline truncate max-w-[150px] font-medium"
+                                className="text-emerald-600 hover:text-emerald-800 hover:underline truncate max-w-[140px] font-medium"
                                 title={`Contactar a ${v.driver.full_name} por WhatsApp`}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {v.driver.full_name}
                               </a>
                             ) : (
-                              <span className="text-slate-700 truncate max-w-[150px]" title={v.driver.full_name}>
+                              <span className="text-slate-700 truncate max-w-[140px]" title={v.driver.full_name}>
                                 {v.driver.full_name}
                               </span>
                             )}
                           </div>
                         ) : <span className="text-slate-400 italic text-[11px]">Sin asignar</span>}
                       </td>
+                      {/* ESTADO */}
                       <td className="px-4 py-3 text-center">
                         <div className="flex flex-col items-center gap-1">
                           <StatusBadge
@@ -752,14 +903,14 @@ export default function AdminVehicles() {
                             const pendingContract = v.leasing_contracts.find((c: any) => c.status === 'pending');
                             if (!pendingContract) return null;
                             return (
-                              <button 
+                              <button
                                 onClick={async () => {
                                   if (!window.confirm("¿Seguro que deseas cancelar este contrato pendiente y liberar el vehículo?")) return;
                                   try {
                                     const auth = ensureBasicAuth();
-                                    const rs = await fetch(`${API}/leasing/contracts/${pendingContract.id}/cancel-pending`, { 
-                                      method: 'POST', 
-                                      headers: { Authorization: auth } 
+                                    const rs = await fetch(`${API}/leasing/contracts/${pendingContract.id}/cancel-pending`, {
+                                      method: 'POST',
+                                      headers: { Authorization: auth }
                                     });
                                     if (!rs.ok) throw new Error(await rs.text());
                                     alert("Contrato cancelado y vehículo liberado.");
@@ -776,98 +927,142 @@ export default function AdminVehicles() {
                           })()}
                         </div>
                       </td>
-                      <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.soat_expires_at)}`}>
-                        {v.soat_url ? (
-                          <button
-                            type="button"
-                            onClick={() => openDocument(v.soat_url!, `SOAT - ${v.plate}`)}
-                            className="inline-flex items-center gap-1 hover:underline text-inherit cursor-pointer font-bold transition-all group mx-auto"
-                            title="Ver documento SOAT adjunto"
-                          >
-                            <span>{v.soat_expires_at || "Ver SOAT"}</span>
-                            <FileText className="w-3.5 h-3.5 text-blue-600 group-hover:scale-110 transition-transform shrink-0" />
-                          </button>
-                        ) : (
-                          v.soat_expires_at || "—"
-                        )}
-                      </td>
-                      <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.tecno_expires_at)}`}>{v.tecno_expires_at || "—"}</td>
-                      <td className="px-4 py-3 text-center font-mono text-[11px] font-bold text-slate-700">
-                        {v.current_mileage != null ? `${new Intl.NumberFormat("es-CO").format(v.current_mileage)} km` : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`inline-block px-2 py-0.5 rounded text-[11px] ${getOilChangeStatus(v.last_oil_change_date).color}`}>
-                          {getOilChangeStatus(v.last_oil_change_date).label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-500 space-y-1">
-                        <div className="flex flex-wrap gap-1">
-                          {v.ownership_card_front ? (
-                            <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 text-[10px] border border-emerald-100 font-medium">TP OK</span>
-                          ) : (
-                            <span className="text-[10px] text-slate-300">Sin TP</span>
-                          )}
+                      {/* SOAT */}
+                      {visibleColumns.soat && (
+                        <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.soat_expires_at)}`}>
                           {v.soat_url ? (
                             <button
                               type="button"
                               onClick={() => openDocument(v.soat_url!, `SOAT - ${v.plate}`)}
-                              className="inline-block px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 text-[10px] border border-blue-200 font-medium transition-colors cursor-pointer"
-                              title="Ver SOAT adjunto"
+                              className="inline-flex items-center gap-1 hover:underline text-inherit cursor-pointer font-bold transition-all group mx-auto"
+                              title="Ver documento SOAT adjunto"
                             >
-                              SOAT OK
+                              <span>{v.soat_expires_at || "Ver SOAT"}</span>
+                              <FileText className="w-3.5 h-3.5 text-blue-600 group-hover:scale-110 transition-transform shrink-0" />
                             </button>
-                          ) : null}
-                        </div>
-                        {v.status === 'leasing' && v.leasing_contracts && (() => {
-                          const activeContract = v.leasing_contracts.find((c: any) => c.status === 'active' && !c.signed_contract_url);
-                          if (!activeContract) return null;
-                          const hrs = (new Date().getTime() - new Date(activeContract.created_at).getTime()) / (1000 * 60 * 60);
-                          const isExpired = hrs > 72;
-                          return (
-                            <div className="mt-1">
-                              <span className={`inline-block px-2 py-0.5 rounded text-[10px] border font-bold ${isExpired ? 'bg-red-100 text-red-700 border-red-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`} title={isExpired ? "¡Alerta Crítica! Han pasado más de 72h sin contrato firmado. Acciones legales bloqueadas." : "Pendiente adjuntar contrato firmado"}>
-                                {isExpired ? 'FALTA FIRMA (>72h)' : 'Contrato Pnd'}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-center gap-2">
-                          <div className="flex items-center justify-center gap-1.5 bg-slate-100 rounded-lg p-1">
-                            <button
-                              onClick={() => openHistory(v.plate, 'Kilometraje')}
-                              title="Odómetro / Kilometraje"
-                              className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-white rounded shadow-sm hover:shadow transition-all"
+                          ) : (
+                            v.soat_expires_at || "—"
+                          )}
+                        </td>
+                      )}
+                      {/* TECNO */}
+                      {visibleColumns.tecno && (
+                        <td className={`px-4 py-3 text-center font-mono ${dateCellClass(v.tecno_expires_at)}`}>{v.tecno_expires_at || "—"}</td>
+                      )}
+                      {/* GPS — semáforo con impacto operativo diferenciado */}
+                      {visibleColumns.gps && (() => {
+                        const gps = getGpsStatus(v.gps_renewal_date);
+                        return (
+                          <td className="px-4 py-3 text-center">
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded text-[11px] font-mono ${gps.color}`}
+                              title={gps.tooltip}
                             >
-                              <span className="text-sm font-black">KM</span>
-                            </button>
-                            <button
-                              onClick={() => openHistory(v.plate, 'Mantenimiento')}
-                              title="Historial de Mantenimientos"
-                              className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-white rounded shadow-sm hover:shadow transition-all"
-                            >
-                              <Wrench size={14} />
-                            </button>
-                            <button
-                              onClick={() => openHistory(v.plate, 'Cambio de aceite')}
-                              title="Historial Cambios de Aceite"
-                              className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-white rounded shadow-sm hover:shadow transition-all"
-                            >
-                              <Droplets size={14} />
-                            </button>
-                            <button
-                              onClick={() => openHistory(v.plate, 'Hotspots')}
-                              title="Top 3 Parqueaderos GPS"
-                              className="p-1.5 text-slate-400 hover:text-violet-500 hover:bg-white rounded shadow-sm hover:shadow transition-all"
-                            >
-                              <MapPin size={14} />
-                            </button>
+                              {gps.label}
+                            </span>
+                            {v.gps_imei && (
+                              <div className="text-[9px] text-slate-400 mt-0.5" title={`IMEI: ${v.gps_imei}`}>
+                                <Satellite className="w-2.5 h-2.5 inline mr-0.5 text-emerald-500" />
+                                ···{v.gps_imei.slice(-4)}
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })()}
+                      {/* ODÓMETRO */}
+                      {visibleColumns.odometro && (
+                        <td className="px-4 py-3 text-center font-mono text-[11px] font-bold text-slate-700">
+                          {v.current_mileage != null ? `${new Intl.NumberFormat("es-CO").format(v.current_mileage)} km` : "—"}
+                        </td>
+                      )}
+                      {/* ACEITE */}
+                      {visibleColumns.aceite && (
+                        <td className="px-4 py-3 text-center">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[11px] ${getOilChangeStatus(v.last_oil_change_date).color}`}>
+                            {getOilChangeStatus(v.last_oil_change_date).label}
+                          </span>
+                        </td>
+                      )}
+                      {/* DOCS */}
+                      {visibleColumns.docs && (
+                        <td className="px-4 py-3 text-slate-500 space-y-1">
+                          <div className="flex flex-wrap gap-1">
+                            {v.ownership_card_front ? (
+                              <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 text-[10px] border border-emerald-100 font-medium">TP OK</span>
+                            ) : (
+                              <span className="text-[10px] text-slate-300">Sin TP</span>
+                            )}
+                            {v.soat_url ? (
+                              <button
+                                type="button"
+                                onClick={() => openDocument(v.soat_url!, `SOAT - ${v.plate}`)}
+                                className="inline-block px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 text-[10px] border border-blue-200 font-medium transition-colors cursor-pointer"
+                                title="Ver SOAT adjunto"
+                              >
+                                SOAT OK
+                              </button>
+                            ) : null}
                           </div>
-                        </div>
-                      </td>
+                          {v.status === 'leasing' && v.leasing_contracts && (() => {
+                            const activeContract = v.leasing_contracts.find((c: any) => c.status === 'active' && !c.signed_contract_url);
+                            if (!activeContract) return null;
+                            const hrs = (new Date().getTime() - new Date(activeContract.created_at).getTime()) / (1000 * 60 * 60);
+                            const isExpired = hrs > 72;
+                            return (
+                              <div className="mt-1">
+                                <span className={`inline-block px-2 py-0.5 rounded text-[10px] border font-bold ${isExpired ? 'bg-red-100 text-red-700 border-red-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`} title={isExpired ? "¡Alerta Crítica! Han pasado más de 72h sin contrato firmado. Acciones legales bloqueadas." : "Pendiente adjuntar contrato firmado"}>
+                                  {isExpired ? 'FALTA FIRMA (>72h)' : 'Contrato Pnd'}
+                                </span>
+                              </div>
+                            );
+                          })()}
+                        </td>
+                      )}
+                      {/* HISTORIAL */}
+                      {visibleColumns.historial && (
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-center gap-2">
+                            <div className="flex items-center justify-center gap-1.5 bg-slate-100 rounded-lg p-1">
+                              <button
+                                onClick={() => openHistory(v.plate, 'Kilometraje')}
+                                title="Odómetro / Kilometraje"
+                                className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-white rounded shadow-sm hover:shadow transition-all"
+                              >
+                                <span className="text-sm font-black">KM</span>
+                              </button>
+                              <button
+                                onClick={() => openHistory(v.plate, 'Mantenimiento')}
+                                title="Historial de Mantenimientos"
+                                className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-white rounded shadow-sm hover:shadow transition-all"
+                              >
+                                <Wrench size={14} />
+                              </button>
+                              <button
+                                onClick={() => openHistory(v.plate, 'Cambio de aceite')}
+                                title="Historial Cambios de Aceite"
+                                className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-white rounded shadow-sm hover:shadow transition-all"
+                              >
+                                <Droplets size={14} />
+                              </button>
+                              <button
+                                onClick={() => openHistory(v.plate, 'Hotspots')}
+                                title="Top 3 Parqueaderos GPS"
+                                className="p-1.5 text-slate-400 hover:text-violet-500 hover:bg-white rounded shadow-sm hover:shadow transition-all"
+                              >
+                                <MapPin size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      )}
+                      {/* ACCIÓN */}
                       <td className="px-4 py-3 text-right">
-                        <button onClick={() => handleEdit(v)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-slate-600 hover:bg-slate-100 font-medium">Editar</button>
+                        <button
+                          onClick={() => handleEdit(v)}
+                          className="rounded-lg border border-slate-200 px-3 py-1.5 text-slate-600 hover:bg-slate-100 font-medium text-[11px] whitespace-nowrap"
+                        >
+                          Ver ficha
+                        </button>
                       </td>
                     </tr>
                   ))
@@ -878,6 +1073,7 @@ export default function AdminVehicles() {
           )}
         </div>
       </div>
+
 
       {/* --- MODAL EDICIÓN --- */}
       {editing && (
