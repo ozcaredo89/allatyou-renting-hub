@@ -360,11 +360,11 @@ export default function AdminDrivers() {
           </span>
         </div>
 
-        {/* Tabla */}
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
+        {/* Tabla — scroll interno para que el scrollbar horizontal siempre esté visible */}
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
             <table className="min-w-full text-xs">
-              <thead className="bg-slate-50 text-left uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200">
+              <thead className="bg-slate-50 text-left uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200 sticky top-0 z-10">
                 <tr>
                   <th className="px-4 py-3">
                     <div onClick={() => requestSort('full_name')} className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max">
