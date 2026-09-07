@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Camera, X, Image as ImageIcon, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
+import { Camera, X, Image as ImageIcon, ArrowUp, ArrowDown, ChevronsUpDown, Search } from "lucide-react";
 import { useSortableData } from "../hooks/useSortableData";
 import { LiquidationModal } from "../components/LiquidationModal";
 
@@ -59,6 +59,10 @@ export default function AdminDrivers() {
   };
 
   const [loading, setLoading] = useState(false);
+
+  // Filtros
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive" | "suspended">("all");
 
   // Modal State
   const [editing, setEditing] = useState<Partial<Driver> | null>(null);
@@ -260,6 +264,19 @@ export default function AdminDrivers() {
     );
   };
 
+  // ── Filtrado derivado ──────────────────────────────────────────
+  const filteredItems = sortedItems.filter((d) => {
+    const q = searchQuery.toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      d.full_name.toLowerCase().includes(q) ||
+      d.document_number.toLowerCase().includes(q) ||
+      d.phone.toLowerCase().includes(q) ||
+      (d.email ?? "").toLowerCase().includes(q);
+    const matchesStatus = statusFilter === "all" || d.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
   const statusBadge = (status: string) => {
     switch (status) {
       case "active": return <span className="px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold uppercase">Activo</span>;
@@ -285,6 +302,62 @@ export default function AdminDrivers() {
               <span>+</span> Nuevo Conductor
             </button>
           </div>
+        </div>
+
+        {/* ── Barra de Filtros ── */}
+        <div className="mb-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+          {/* Búsqueda de texto */}
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Buscar por nombre, documento, celular o email…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 text-sm rounded-xl border border-slate-200 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent placeholder-slate-400"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Chips de Estado */}
+          <div className="flex gap-2 shrink-0">
+            {([
+              { value: "all", label: "Todos" },
+              { value: "active", label: "Activos" },
+              { value: "inactive", label: "Inactivos" },
+              { value: "suspended", label: "Suspendidos" },
+            ] as const).map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => setStatusFilter(value)}
+                className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
+                  statusFilter === value
+                    ? value === "all"
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : value === "active"
+                      ? "bg-emerald-600 text-white border-emerald-600"
+                      : value === "suspended"
+                      ? "bg-red-500 text-white border-red-500"
+                      : "bg-slate-500 text-white border-slate-500"
+                    : "bg-white text-slate-600 border-slate-200 hover:border-slate-400"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Contador */}
+          <span className="text-xs text-slate-400 shrink-0">
+            {filteredItems.length} de {drivers.length} conductor{drivers.length !== 1 ? "es" : ""}
+          </span>
         </div>
 
         {/* Tabla */}
@@ -325,10 +398,16 @@ export default function AdminDrivers() {
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr><td colSpan={7} className="p-10 text-center text-slate-400">Cargando...</td></tr>
-                ) : sortedItems.length === 0 ? (
-                  <tr><td colSpan={7} className="p-10 text-center text-slate-400">No hay conductores registrados.</td></tr>
+                ) : filteredItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-10 text-center text-slate-400">
+                      {searchQuery || statusFilter !== "all"
+                        ? "No se encontraron conductores con ese filtro."
+                        : "No hay conductores registrados."}
+                    </td>
+                  </tr>
                 ) : (
-                  sortedItems.map((d) => (
+                  filteredItems.map((d) => (
                     <tr key={d.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
