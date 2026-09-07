@@ -630,10 +630,10 @@ export default function AdminVehicles() {
   const autoMileageData = getFilteredAutoMileage();
 
   return (
-    <div className="min-h-screen p-6 bg-slate-50">
-      <div className="mx-auto max-w-[1400px]">
+    <div className="h-full flex flex-col p-6 bg-slate-50">
+      <div className="mx-auto max-w-[1400px] w-full flex-1 flex flex-col min-h-0">
         {/* HEADER */}
-        <div className="mb-6 flex items-end justify-between">
+        <div className="mb-4 flex items-end justify-between shrink-0">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Gestión de Flota</h1>
             <p className="text-sm text-slate-500">Hoja de vida, mantenimientos y asignación.</p>
@@ -674,7 +674,7 @@ export default function AdminVehicles() {
         </div>
 
         {/* TABS Y BUSCADOR */}
-        <div className="mb-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="mb-3 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setStatusFilter('active')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
               Operativos
@@ -765,13 +765,15 @@ export default function AdminVehicles() {
         </div>
 
 
-        {/* TABLA O MAPA */}
-        <div className={`overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm ${viewMode === 'map' ? 'h-[700px]' : ''}`}>
+        {/* TABLA O MAPA — flex-1 + min-h-0 para ocupar todo el espacio restante */}
+        <div className={`flex-1 min-h-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col`}>
           {viewMode === 'map' ? (
-            <FleetMap />
+            <div className="flex-1 min-h-0">
+              <FleetMap />
+            </div>
           ) : (
             /* Scrollbar siempre accesible en el viewport */
-            <div className="overflow-x-auto thin-scrollbar">
+            <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto">
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-left uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200 sticky top-0 z-20">
                 <tr>

@@ -218,7 +218,7 @@ export default function AdminLayout() {
         </header>
 
         {/* CONTENIDO DE LA PÁGINA */}
-        <main className="flex-1 overflow-y-auto bg-slate-50 scroll-smooth p-0 w-full relative">
+        <main className="flex-1 h-full overflow-y-auto bg-slate-50 scroll-smooth p-0 w-full relative">
           <Outlet />
         </main>
       </div>

@@ -287,11 +287,11 @@ export default function AdminDrivers() {
   };
 
   return (
-    <div className="min-h-screen p-6 bg-slate-50">
-      <div className="mx-auto max-w-[1400px]">
+    <div className="h-full flex flex-col p-6 bg-slate-50">
+      <div className="mx-auto max-w-[1400px] w-full flex-1 flex flex-col min-h-0">
 
         {/* Header */}
-        <div className="mb-6 flex items-end justify-between">
+        <div className="mb-4 flex items-end justify-between shrink-0">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Directorio de Conductores</h1>
             <p className="text-sm text-slate-500">Gestión de personal, contactos y expediente digital.</p>
@@ -305,7 +305,7 @@ export default function AdminDrivers() {
         </div>
 
         {/* ── Barra de Filtros ── */}
-        <div className="mb-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+        <div className="mb-3 flex flex-col sm:flex-row gap-3 items-start sm:items-center shrink-0">
           {/* Búsqueda de texto */}
           <div className="relative flex-1 min-w-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -360,9 +360,9 @@ export default function AdminDrivers() {
           </span>
         </div>
 
-        {/* Tabla — scroll interno para que el scrollbar horizontal siempre esté visible */}
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
+        {/* Tabla — flex-1 + min-h-0 para que ocupe exactamente el espacio restante del viewport */}
+        <div className="flex-1 min-h-0 rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
+          <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto">
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-left uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200 sticky top-0 z-10">
                 <tr>
