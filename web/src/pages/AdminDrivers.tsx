@@ -445,7 +445,7 @@ export default function AdminDrivers() {
                           <button onClick={() => setLiquidationDriverId(d.id)} className="text-blue-600 hover:text-blue-800 font-medium text-sm">
                             {d.status === 'inactive' ? 'Ver Liquidación' : 'Liquidar'}
                           </button>
-                          <button onClick={() => handleEdit(d)} className="text-emerald-600 hover:text-emerald-800 font-medium text-sm">Editar</button>
+                          <button onClick={() => handleEdit(d)} className="text-emerald-600 hover:text-emerald-800 font-medium text-sm">Ver Ficha</button>
                         </div>
                       </td>
                     </tr>
@@ -457,13 +457,13 @@ export default function AdminDrivers() {
         </div>
       </div>
 
-      {/* --- MODAL DE EDICIÓN (Z-INDEX 50) --- */}
+      {/* --- MODAL DE EDICIÓN / FICHA (Z-INDEX 50) --- */}
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="w-full max-w-4xl rounded-2xl bg-white p-0 shadow-2xl max-h-[90vh] flex flex-col">
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <div>
-                <h2 className="text-xl font-bold text-slate-800">{isCreating ? "Crear Conductor" : "Editar Conductor"}</h2>
+                <h2 className="text-xl font-bold text-slate-800">{isCreating ? "Nuevo Conductor" : "Ficha del Conductor"}</h2>
                 <p className="text-xs text-slate-500">Expediente digital y datos personales.</p>
               </div>
               <button onClick={() => setEditing(null)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
