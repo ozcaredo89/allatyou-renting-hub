@@ -156,6 +156,7 @@ export default function AdminDrivers() {
   const uploadFile = async (file: File): Promise<string> => {
     const fd = new FormData();
     fd.append("file", file);
+    fd.append("folder", "drivers");
     const auth = ensureBasicAuth();
     const res = await fetch(`${API}/uploads`, { 
       method: "POST", 

@@ -41,32 +41,42 @@ r.post("/", upload.single("file"), async (req: Request, res: Response) => {
     let upload_id: number | null = null;
 
     if (folder === "proofs" && isImage) {
-      // Ejecutamos OCR y Upload concurrentemente para ahorrar tiempo (< 5s en total)
-      const [urlResult, ocrResult] = await Promise.all([
-        uploadToR2(file, folder),
-        parseReceipt(file.buffer, file.mimetype)
-      ]);
-      publicUrl = urlResult;
-      ocrData = ocrResult;
-      
-      // Guardar en la DB de forma segura (Zero-Trust)
-      const { data: dbRecord, error: dbError } = await supabase
-        .from("receipt_uploads")
-        .insert([{
-          url: publicUrl,
-          reference_number: ocrData.reference_number,
-          provider_name: ocrData.provider_name,
-          receipt_date: ocrData.receipt_date,
-          amount: ocrData.amount,
-          ocr_status: ocrData.status
-        }])
-        .select("id")
-        .single();
+      // Intentamos subir a R2 y parsear OCR
+      try {
+        const [urlResult, ocrResult] = await Promise.all([
+          uploadToR2(file, folder),
+          parseReceipt(file.buffer, file.mimetype).catch(err => {
+            console.warn("⚠️ OCR error (no crítico):", err);
+            return null;
+          })
+        ]);
+        publicUrl = urlResult;
+        ocrData = ocrResult;
         
-      if (!dbError && dbRecord) {
-        upload_id = dbRecord.id;
-      } else {
-        console.error("❌ Error guardando receipt_uploads:", dbError);
+        if (ocrData) {
+          // Guardar en la DB de forma segura (Zero-Trust)
+          const { data: dbRecord, error: dbError } = await supabase
+            .from("receipt_uploads")
+            .insert([{
+              url: publicUrl,
+              reference_number: ocrData.reference_number,
+              provider_name: ocrData.provider_name,
+              receipt_date: ocrData.receipt_date,
+              amount: ocrData.amount,
+              ocr_status: ocrData.status
+            }])
+            .select("id")
+            .single();
+            
+          if (!dbError && dbRecord) {
+            upload_id = dbRecord.id;
+          } else {
+            console.error("❌ Error guardando receipt_uploads:", dbError);
+          }
+        }
+      } catch (uploadErr: any) {
+        console.error("❌ Error en uploadToR2 con OCR:", uploadErr);
+        throw uploadErr;
       }
     } else {
       // Solo subimos a R2
