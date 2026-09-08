@@ -152,34 +152,59 @@ export default function AdminDrivers() {
     }
   }
 
-  // --- Helper genérico para subir archivos ---
-  const uploadFile = async (file: File): Promise<string> => {
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("folder", "drivers");
-    const auth = ensureBasicAuth();
-    const res = await fetch(`${API}/uploads`, { 
-      method: "POST", 
-      headers: { Authorization: auth },
-      body: fd 
-    });
-    if (!res.ok) {
-      let errorMessage = `Error del servidor (${res.status})`;
-      try {
-        const text = await res.text();
-        try {
-          const json = JSON.parse(text);
-          if (json.error) errorMessage = json.error;
-        } catch {
-          if (text.includes("File too large") || res.status === 413) {
-            errorMessage = "El archivo supera el tamaño máximo permitido (máx 30MB).";
+  // --- Helper genérico para subir archivos con barra de progreso real ---
+  const uploadFile = (
+    file: File, 
+    onProgress?: (percent: number) => void
+  ): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("folder", "drivers");
+
+      const auth = ensureBasicAuth();
+
+      // Monitoreo de progreso en tiempo real
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            onProgress(percent);
           }
+        };
+      }
+
+      xhr.open("POST", `${API}/uploads`);
+      xhr.setRequestHeader("Authorization", auth);
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            resolve(data.url);
+          } catch {
+            reject(new Error("Respuesta inválida del servidor"));
+          }
+        } else {
+          let errorMessage = `Error del servidor (${xhr.status})`;
+          try {
+            const json = JSON.parse(xhr.responseText);
+            if (json.error) errorMessage = json.error;
+          } catch {
+            if (xhr.responseText.includes("File too large") || xhr.status === 413) {
+              errorMessage = "El archivo supera el tamaño máximo permitido (máx 30MB).";
+            }
+          }
+          reject(new Error(errorMessage));
         }
-      } catch {}
-      throw new Error(errorMessage);
-    }
-    const data = await res.json();
-    return data.url;
+      };
+
+      xhr.onerror = () => reject(new Error("Error de conexión al subir el archivo"));
+      xhr.onabort = () => reject(new Error("Subida cancelada"));
+
+      xhr.send(fd);
+    });
   };
 
   // --- LÓGICA CÁMARA (Igual que en Inspecciones) ---
@@ -251,6 +276,7 @@ export default function AdminDrivers() {
   // --- Componente interno para inputs de archivo (Documentos) ---
   const FileField = ({ label, value, onChange }: { label: string; value: string | null | undefined; onChange: (url: string) => void; }) => {
     const [uploading, setUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(0);
     const [justUploaded, setJustUploaded] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -267,40 +293,45 @@ export default function AdminDrivers() {
         }
 
         setUploading(true);
+        setUploadProgress(0);
         setJustUploaded(false);
         setErrorMessage(null);
         try {
-          const url = await uploadFile(file);
+          const url = await uploadFile(file, (percent) => {
+            setUploadProgress(percent);
+          });
           onChange(url);
           setJustUploaded(true);
         } catch (error: any) {
           setErrorMessage(error.message || "Error subiendo el archivo.");
         } finally {
           setUploading(false);
+          setUploadProgress(0);
           e.target.value = ""; // Resetear para permitir volver a seleccionar el mismo archivo
         }
       }
     };
 
     return (
-      <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+      <div className="border border-slate-200 rounded-lg p-3 bg-slate-50 transition-all">
         <div className="flex items-center justify-between mb-2">
           <label className="block text-xs font-bold text-slate-700">{label}</label>
-          {justUploaded && (
+          {justUploaded && !uploading && (
             <span className="text-[10px] text-emerald-600 font-semibold animate-fade-in">
               ✓ Cargado (guardar para aplicar)
             </span>
           )}
         </div>
+
         {value ? (
           <div className="flex items-center justify-between gap-2">
             <a href={value} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline truncate max-w-[150px]">Ver Archivo</a>
-            <label className={`text-[10px] px-2 py-1 rounded font-medium transition-colors ${
+            <label className={`text-[10px] px-2.5 py-1 rounded font-medium transition-colors ${
               uploading 
                 ? "bg-slate-200 text-slate-400 cursor-not-allowed" 
                 : "cursor-pointer bg-slate-200 hover:bg-slate-300 text-slate-700"
             }`}>
-              {uploading ? "Subiendo..." : "Reemplazar"}
+              {uploading ? `Subiendo ${uploadProgress}%...` : "Reemplazar"}
               <input 
                 type="file" 
                 className="hidden" 
@@ -319,9 +350,25 @@ export default function AdminDrivers() {
               accept="image/*,.pdf" 
               disabled={uploading} 
             />
-            {uploading && <span className="absolute right-0 top-0 text-xs text-emerald-600 font-bold animate-pulse">Subiendo...</span>}
           </div>
         )}
+
+        {/* Barra de progreso visual durante la subida */}
+        {uploading && (
+          <div className="mt-2.5 space-y-1">
+            <div className="flex justify-between items-center text-[10px] text-slate-500 font-medium">
+              <span>{uploadProgress === 100 ? "Procesando en almacenamiento..." : "Subiendo archivo..."}</span>
+              <span className="font-bold text-emerald-700">{uploadProgress}%</span>
+            </div>
+            <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+              <div 
+                className="bg-emerald-500 h-1.5 rounded-full transition-all duration-200 ease-out"
+                style={{ width: `${Math.max(uploadProgress, 5)}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         {errorMessage && (
           <p className="mt-2 text-[11px] text-red-600 font-medium bg-red-50 border border-red-200 rounded p-1.5 leading-tight">
             ⚠️ {errorMessage}
