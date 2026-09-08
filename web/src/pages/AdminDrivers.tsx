@@ -156,8 +156,16 @@ export default function AdminDrivers() {
   const uploadFile = async (file: File): Promise<string> => {
     const fd = new FormData();
     fd.append("file", file);
-    const res = await fetch(`${API}/uploads`, { method: "POST", body: fd });
-    if (!res.ok) throw new Error("Error subiendo archivo");
+    const auth = ensureBasicAuth();
+    const res = await fetch(`${API}/uploads`, { 
+      method: "POST", 
+      headers: { Authorization: auth },
+      body: fd 
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Error subiendo archivo (${res.status})`);
+    }
     const data = await res.json();
     return data.url;
   };
@@ -220,8 +228,8 @@ export default function AdminDrivers() {
     try {
       const url = await uploadFile(file);
       setEditing(prev => prev ? ({ ...prev, photo_url: url }) : null);
-    } catch (e) {
-      alert("Error subiendo foto");
+    } catch (e: any) {
+      alert(e.message || "Error subiendo foto");
     } finally {
       setUploadingPhoto(false);
       setProfileSheetOpen(false);
@@ -231,32 +239,63 @@ export default function AdminDrivers() {
   // --- Componente interno para inputs de archivo (Documentos) ---
   const FileField = ({ label, value, onChange }: { label: string; value: string | null | undefined; onChange: (url: string) => void; }) => {
     const [uploading, setUploading] = useState(false);
+    const [justUploaded, setJustUploaded] = useState(false);
+
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files && e.target.files[0]) {
+      const file = e.target.files?.[0];
+      if (file) {
         setUploading(true);
+        setJustUploaded(false);
         try {
-          const url = await uploadFile(e.target.files[0]);
+          const url = await uploadFile(file);
           onChange(url);
-        } catch (error) {
-          alert("Error subiendo el archivo.");
+          setJustUploaded(true);
+        } catch (error: any) {
+          alert(error.message || "Error subiendo el archivo.");
         } finally {
           setUploading(false);
+          e.target.value = ""; // Resetear para permitir volver a seleccionar el mismo archivo
         }
       }
     };
+
     return (
       <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
-        <label className="block text-xs font-bold text-slate-700 mb-2">{label}</label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-xs font-bold text-slate-700">{label}</label>
+          {justUploaded && (
+            <span className="text-[10px] text-emerald-600 font-semibold animate-fade-in">
+              ✓ Cargado (guardar para aplicar)
+            </span>
+          )}
+        </div>
         {value ? (
           <div className="flex items-center justify-between gap-2">
             <a href={value} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline truncate max-w-[150px]">Ver Archivo</a>
-            <label className="cursor-pointer text-[10px] bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded text-slate-700 font-medium">
-              Reemplazar <input type="file" className="hidden" onChange={handleFileChange} accept="image/*,.pdf" />
+            <label className={`text-[10px] px-2 py-1 rounded font-medium transition-colors ${
+              uploading 
+                ? "bg-slate-200 text-slate-400 cursor-not-allowed" 
+                : "cursor-pointer bg-slate-200 hover:bg-slate-300 text-slate-700"
+            }`}>
+              {uploading ? "Subiendo..." : "Reemplazar"}
+              <input 
+                type="file" 
+                className="hidden" 
+                onChange={handleFileChange} 
+                accept="image/*,.pdf" 
+                disabled={uploading} 
+              />
             </label>
           </div>
         ) : (
           <div className="relative">
-            <input type="file" className="block w-full text-xs text-slate-500" onChange={handleFileChange} accept="image/*,.pdf" disabled={uploading} />
+            <input 
+              type="file" 
+              className="block w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-slate-200 file:text-slate-700 hover:file:bg-slate-300" 
+              onChange={handleFileChange} 
+              accept="image/*,.pdf" 
+              disabled={uploading} 
+            />
             {uploading && <span className="absolute right-0 top-0 text-xs text-emerald-600 font-bold animate-pulse">Subiendo...</span>}
           </div>
         )}
