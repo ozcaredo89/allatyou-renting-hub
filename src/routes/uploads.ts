@@ -7,13 +7,28 @@ import { supabase } from "../lib/supabase";
 const r = Router();
 
 // Configuración de Multer (Subida en memoria)
-// Aumenté un poco el límite a 10MB por si las fotos de los carros son pesadas
+// Soporta PDFs de contratos escaneados y fotos de alta resolución hasta 30MB
 const upload = multer({ 
   storage: multer.memoryStorage(), 
-  limits: { fileSize: 10 * 1024 * 1024 } 
+  limits: { fileSize: 30 * 1024 * 1024 } 
 });
 
-r.post("/", upload.single("file"), async (req: Request, res: Response) => {
+r.post("/", (req: Request, res: Response, next) => {
+  upload.single("file")(req, res, (err: any) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return res.status(400).json({ 
+            error: "El archivo es demasiado pesado (máximo 30MB). Por favor comprímelo antes de subirlo." 
+          });
+        }
+        return res.status(400).json({ error: `Error en la subida: ${err.message}` });
+      }
+      return res.status(500).json({ error: err.message || "Error procesando el archivo" });
+    }
+    next();
+  });
+}, async (req: Request, res: Response) => {
   try {
     const file = req.file;
     if (!file) return res.status(400).json({ error: "file is required" });

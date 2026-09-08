@@ -164,8 +164,19 @@ export default function AdminDrivers() {
       body: fd 
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Error subiendo archivo (${res.status})`);
+      let errorMessage = `Error del servidor (${res.status})`;
+      try {
+        const text = await res.text();
+        try {
+          const json = JSON.parse(text);
+          if (json.error) errorMessage = json.error;
+        } catch {
+          if (text.includes("File too large") || res.status === 413) {
+            errorMessage = "El archivo supera el tamaño máximo permitido (máx 30MB).";
+          }
+        }
+      } catch {}
+      throw new Error(errorMessage);
     }
     const data = await res.json();
     return data.url;
@@ -241,18 +252,29 @@ export default function AdminDrivers() {
   const FileField = ({ label, value, onChange }: { label: string; value: string | null | undefined; onChange: (url: string) => void; }) => {
     const [uploading, setUploading] = useState(false);
     const [justUploaded, setJustUploaded] = useState(false);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) {
+        // Validación en cliente: 30MB
+        const MAX_BYTES = 30 * 1024 * 1024;
+        if (file.size > MAX_BYTES) {
+          const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+          setErrorMessage(`El archivo pesa ${sizeMB}MB (el límite máximo es 30MB). Por favor comprímelo.`);
+          e.target.value = "";
+          return;
+        }
+
         setUploading(true);
         setJustUploaded(false);
+        setErrorMessage(null);
         try {
           const url = await uploadFile(file);
           onChange(url);
           setJustUploaded(true);
         } catch (error: any) {
-          alert(error.message || "Error subiendo el archivo.");
+          setErrorMessage(error.message || "Error subiendo el archivo.");
         } finally {
           setUploading(false);
           e.target.value = ""; // Resetear para permitir volver a seleccionar el mismo archivo
@@ -299,6 +321,11 @@ export default function AdminDrivers() {
             />
             {uploading && <span className="absolute right-0 top-0 text-xs text-emerald-600 font-bold animate-pulse">Subiendo...</span>}
           </div>
+        )}
+        {errorMessage && (
+          <p className="mt-2 text-[11px] text-red-600 font-medium bg-red-50 border border-red-200 rounded p-1.5 leading-tight">
+            ⚠️ {errorMessage}
+          </p>
         )}
       </div>
     );
