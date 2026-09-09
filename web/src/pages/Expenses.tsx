@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { BillGeneratorModal } from "../components/BillGeneratorModal";
-import { Pencil, X, ChevronDown, AlertCircle, CheckCircle2, Download } from "lucide-react";
+import { Pencil, X, ChevronDown, AlertCircle, CheckCircle2, Download, Search, RotateCcw } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { requestWithBasicAuth } from "../lib/auth";
 import { resolveSubmission, normalizePlate, parseServerError, type FleetVehicle } from "../lib/resolveSubmission";
@@ -40,41 +40,100 @@ export default function Expenses() {
   // --- ESTADO DE CARGA Y PAGINACIÓN ---
   const [limit, setLimit] = useState(50);
   const [recent, setRecent] = useState<ExpenseRow[]>([]);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
   const [loadingList, setLoadingList] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Contador de secuencia para evitar race conditions (respuestas fuera de orden)
+  const activeRequestId = useRef(0);
 
   // --- FILTROS ---
-  const [filterFrom, setFilterFrom] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
+  const defaultFrom = useMemo(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10), []);
+  const [filterFrom, setFilterFrom] = useState(defaultFrom);
   const [filterTo, setFilterTo] = useState("");
   const [filterPlate, setFilterPlate] = useState("");
+  const [filterSearch, setFilterSearch] = useState("");
 
-  async function loadRecent(currentLimit: number, fFrom = filterFrom, fTo = filterTo, fPlate = filterPlate) {
+  // Valores debouncueados para inputs de texto (evita fetch por cada tecla)
+  const [debouncedPlate, setDebouncedPlate] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Timer de debounce unificado (350ms) para texto
+  useEffect(() => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      setDebouncedPlate(filterPlate);
+      setDebouncedSearch(filterSearch);
+    }, 350);
+
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, [filterPlate, filterSearch]);
+
+  const hasActiveFilters = Boolean(
+    (filterFrom && filterFrom !== defaultFrom) ||
+    filterTo ||
+    filterPlate ||
+    filterSearch
+  );
+
+  async function loadRecent(currentLimit: number, fFrom = filterFrom, fTo = filterTo, fPlate = debouncedPlate, fSearch = debouncedSearch) {
+    const reqId = ++activeRequestId.current;
     setLoadingList(true);
     try {
-      const rs = await requestWithBasicAuth(`${API}/expenses?limit=${currentLimit}&from=${fFrom}&to=${fTo}&plate=${fPlate.toUpperCase()}`);
+      const params = new URLSearchParams();
+      params.set("limit", String(currentLimit));
+      if (fFrom) params.set("from", fFrom);
+      if (fTo) params.set("to", fTo);
+      if (fPlate) params.set("plate", fPlate.toUpperCase().trim());
+      if (fSearch) params.set("search", fSearch.trim());
+
+      const rs = await requestWithBasicAuth(`${API}/expenses?` + params.toString());
       if (!rs.ok) return;
       const json = await rs.json();
-      setRecent(json.items);
+
+      // Descartar respuestas obsoletas si un request más nuevo fue disparado
+      if (reqId !== activeRequestId.current) return;
+
+      setRecent(json.items || []);
+      setTotalCount(typeof json.total === "number" ? json.total : (json.items?.length ?? 0));
     } finally {
-      setLoadingList(false);
+      if (reqId === activeRequestId.current) {
+        setLoadingList(false);
+      }
     }
   }
 
-  useEffect(() => { loadRecent(limit, filterFrom, filterTo, filterPlate); }, [limit, filterFrom, filterTo, filterPlate]);
-
-  const applyFilters = () => {
+  // Único efecto que dispara la carga al cambiar cualquier filtro (resetea límite atómicamente a 50)
+  useEffect(() => {
     setLimit(50);
+    loadRecent(50, filterFrom, filterTo, debouncedPlate, debouncedSearch);
+  }, [filterFrom, filterTo, debouncedPlate, debouncedSearch]);
+
+  // Solo actualizan el estado del que depende el useEffect de filtros — ese
+  // efecto es el único que dispara loadRecent, para evitar peticiones duplicadas.
+  const applyFilters = () => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    setDebouncedPlate(filterPlate);
+    setDebouncedSearch(filterSearch);
   };
 
   const clearFilters = () => {
-    const defaultFrom = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
     setFilterFrom(defaultFrom);
     setFilterTo("");
     setFilterPlate("");
-    setLimit(50);
+    setFilterSearch("");
+    setDebouncedPlate("");
+    setDebouncedSearch("");
   };
 
   const handleLoadMore = () => {
-    setLimit(prev => prev + 50);
+    const nextLimit = limit + 50;
+    setLimit(nextLimit);
+    loadRecent(nextLimit, filterFrom, filterTo, debouncedPlate, debouncedSearch);
   };
 
   // --- SELECCIÓN MÚLTIPLE ---
@@ -403,33 +462,88 @@ export default function Expenses() {
     navigator.clipboard.writeText(`Gasto [${saved.category}]: ${saved.item} - $${fmtCOP.format(saved.total)}`).then(() => alert("Copiado!"));
   }
 
-  const exportToCSV = () => {
-    if (recent.length === 0) {
-      alert("No hay datos para exportar");
-      return;
-    }
-
+  const downloadCSV = (rows: ExpenseRow[], filename: string) => {
     const headers = "ID,Fecha,Categoría,Item,Placas,Total,Descripción\n";
-    const rows = recent.map(e => {
+    const rowsText = rows.map(e => {
       const plates = e.expense_vehicles?.map(v => v.plate).join("-") || "Sin Placa";
-      // Limpiamos comillas y saltos de línea envolviendo en comillas dobles
       const desc = e.description ? `"${e.description.replace(/"/g, '""').replace(/\n/g, " ")}"` : '""';
       const item = e.item ? `"${e.item.replace(/"/g, '""')}"` : '""';
       const category = e.category ? `"${e.category.replace(/"/g, '""')}"` : '""';
-      
       return `${e.id},${e.date},${category},${item},${plates},${e.total_amount},${desc}`;
     }).join("\n");
 
-    const csvContent = headers + rows;
+    const csvContent = "\uFEFF" + headers + rowsText; // BOM UTF-8 para Excel en Windows
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", "gastos-allatyou.csv");
+    link.setAttribute("download", filename);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const exportToCSV = async () => {
+    const dateStr = new Date().toISOString().slice(0, 10);
+
+    // 1. Si hay filas seleccionadas con checkbox, exportar exclusivamente la selección
+    if (selectedIds.length > 0) {
+      const selectedRows = recent.filter(r => selectedIds.includes(r.id));
+      if (selectedRows.length === 0) {
+        alert("No hay elementos seleccionados para exportar");
+        return;
+      }
+      downloadCSV(selectedRows, `gastos-seleccionados-${dateStr}.csv`);
+      showToast(`✓ Se exportaron ${selectedRows.length} gastos seleccionados`);
+      return;
+    }
+
+    if (!recent.length) {
+      alert("No hay datos para exportar");
+      return;
+    }
+
+    // 2. Si todo el dataset filtrado ya está cargado en pantalla, exportar directamente de memoria
+    if (totalCount !== null && totalCount <= recent.length) {
+      downloadCSV(recent, `gastos-allatyou-${dateStr}.csv`);
+      showToast(`✓ Se exportaron ${recent.length} gastos exitosamente`);
+      return;
+    }
+
+    // 3. Si hay más registros que los visibles, fetch independiente aislado en memoria (sin alterar recent ni el DOM)
+    setIsExporting(true);
+    try {
+      const exportParams = new URLSearchParams();
+      exportParams.set("limit", "2000"); // Tope prudente para exportación
+      if (filterFrom) exportParams.set("from", filterFrom);
+      if (filterTo) exportParams.set("to", filterTo);
+      if (debouncedPlate) exportParams.set("plate", debouncedPlate.toUpperCase().trim());
+      if (debouncedSearch) exportParams.set("search", debouncedSearch.trim());
+
+      const rs = await requestWithBasicAuth(`${API}/expenses?` + exportParams.toString());
+      if (!rs.ok) throw new Error("Error en el servidor al consultar gastos");
+      const json = await rs.json();
+      const exportData: ExpenseRow[] = json.items || [];
+
+      if (!exportData.length) {
+        alert("No hay datos para exportar");
+        return;
+      }
+
+      downloadCSV(exportData, `gastos-allatyou-${dateStr}.csv`);
+
+      if (json.total > 2000) {
+        showToast(`Se exportaron los primeros 2,000 de ${json.total} gastos. Acota el rango de fechas si requieres más.`);
+      } else {
+        showToast(`✓ Se exportaron ${exportData.length} gastos exitosamente`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert("Error al exportar gastos: " + (err?.message || "Error desconocido"));
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   return (
@@ -807,35 +921,224 @@ export default function Expenses() {
 
 
         {/* LISTADO DE GASTOS */}
-        <h2 className="mt-10 mb-4 text-xl font-bold flex justify-between items-center text-slate-800">
-          <span>Historial de Gastos</span>
-          {selectedIds.length > 0 && <span className="text-sm bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full">{selectedIds.length} seleccionados</span>}
-        </h2>
+        <div className="mt-12 mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h2 className="text-xl font-bold text-slate-900 tracking-tight">Historial de Gastos</h2>
+            {totalCount !== null && (
+              <span className="text-xs font-semibold bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full border border-slate-200">
+                {totalCount} {totalCount === 1 ? "registro" : "registros"}
+              </span>
+            )}
+            {selectedIds.length > 0 && (
+              <span className="text-xs font-bold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full border border-emerald-200">
+                {selectedIds.length} seleccionados
+              </span>
+            )}
+          </div>
 
-        {/* --- BARRA DE FILTROS --- */}
-        <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl mb-4 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-          <div>
-            <label className="text-xs font-bold text-slate-500 uppercase">Desde</label>
-            <input type="date" className="w-full mt-1 p-2 border rounded-xl bg-white" value={filterFrom} onChange={e => setFilterFrom(e.target.value)} />
+          {/* ACCIÓN PRINCIPAL DE TABLA: EXPORTAR */}
+          <button
+            type="button"
+            onClick={exportToCSV}
+            disabled={isExporting || recent.length === 0}
+            title={selectedIds.length > 0 ? "Exportar filas seleccionadas a CSV" : "Exportar todos los gastos filtrados a CSV"}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition-all shadow-sm hover:shadow disabled:opacity-50 disabled:pointer-events-none cursor-pointer self-start sm:self-auto"
+          >
+            <Download className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              {isExporting
+                ? "Exportando..."
+                : selectedIds.length > 0
+                ? `Exportar selección (${selectedIds.length})`
+                : "Exportar CSV"}
+            </span>
+          </button>
+        </div>
+
+        {/* --- BARRA DE FILTROS REDISEÑADA --- */}
+        <div className="bg-slate-50/80 border border-slate-200/90 rounded-2xl p-4 shadow-sm mb-5 space-y-3">
+          {/* Fila 1: Búsqueda libre y Placa */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            {/* Input de Búsqueda de Ítem / Descripción */}
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={filterSearch}
+                onChange={e => setFilterSearch(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    applyFilters();
+                  }
+                }}
+                placeholder="Buscar por ítem o descripción (ej: pastillas, cambio de aceite...)"
+                className="w-full pl-10 pr-9 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 text-slate-800 placeholder:text-slate-400 transition-all outline-none"
+              />
+              {filterSearch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterSearch("");
+                    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+                    setDebouncedSearch("");
+                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full"
+                  title="Borrar búsqueda"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Input de Placa */}
+            <div className="sm:w-44 relative">
+              <input
+                type="text"
+                value={filterPlate}
+                onChange={e => setFilterPlate(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase())}
+                onKeyDown={e => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    applyFilters();
+                  }
+                }}
+                placeholder="Placa (ej: ABC123)"
+                maxLength={6}
+                className="w-full px-3.5 py-2 text-sm uppercase bg-white border border-slate-200 rounded-xl focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 text-slate-800 font-semibold tracking-wider placeholder:normal-case placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400 transition-all outline-none"
+              />
+              {filterPlate && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterPlate("");
+                    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+                    setDebouncedPlate("");
+                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full"
+                  title="Borrar placa"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
-          <div>
-            <label className="text-xs font-bold text-slate-500 uppercase">Hasta</label>
-            <input type="date" className="w-full mt-1 p-2 border rounded-xl bg-white" value={filterTo} onChange={e => setFilterTo(e.target.value)} />
-          </div>
-          <div>
-            <label className="text-xs font-bold text-slate-500 uppercase">Placa (Opcional)</label>
-            <input type="text" className="w-full mt-1 p-2 border rounded-xl bg-white uppercase" placeholder="ABC123" maxLength={6} value={filterPlate} onChange={e => setFilterPlate(e.target.value.replace(/[^a-zA-Z0-9]/g, ""))} />
-          </div>
-          <div className="flex gap-2">
-            <button onClick={applyFilters} className="flex-1 bg-black text-white px-4 py-2 rounded-xl font-bold hover:bg-slate-800 transition-colors">🔍 Filtrar</button>
-            <button onClick={clearFilters} className="px-4 py-2 border border-slate-300 bg-white text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition-colors">Limpiar</button>
-            <button onClick={exportToCSV} className="flex items-center justify-center gap-2 px-4 py-2 border border-emerald-300 text-emerald-700 bg-white rounded-xl font-bold hover:bg-emerald-50 transition-colors">
-              <Download className="w-4 h-4" /> Exportar
-            </button>
+
+          {/* Fila 2: Fechas, Presets y Botones de Acción */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-1 border-t border-slate-200/60">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Desde</span>
+                <input
+                  type="date"
+                  value={filterFrom}
+                  onChange={e => setFilterFrom(e.target.value)}
+                  className="text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white text-slate-700 focus:border-slate-900 outline-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Hasta</span>
+                <input
+                  type="date"
+                  value={filterTo}
+                  onChange={e => setFilterTo(e.target.value)}
+                  className="text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white text-slate-700 focus:border-slate-900 outline-none"
+                />
+              </div>
+
+              {/* Presets rápidos de fecha */}
+              <div className="flex items-center gap-1 sm:ml-2 sm:pl-2 sm:border-l sm:border-slate-200 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterFrom(defaultFrom);
+                    setFilterTo("");
+                  }}
+                  className={`px-2 py-1 rounded-md transition-colors font-medium ${filterFrom === defaultFrom && !filterTo ? "bg-slate-200 text-slate-900 font-bold" : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"}`}
+                >
+                  Este mes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const now = new Date();
+                    const last30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+                    setFilterFrom(last30);
+                    setFilterTo("");
+                  }}
+                  className="px-2 py-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-md transition-colors font-medium"
+                >
+                  Últimos 30 días
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterFrom("");
+                    setFilterTo("");
+                  }}
+                  className={`px-2 py-1 rounded-md transition-colors font-medium ${!filterFrom && !filterTo ? "bg-slate-200 text-slate-900 font-bold" : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"}`}
+                >
+                  Todo el historial
+                </button>
+              </div>
+            </div>
+
+            {/* Acciones de filtro */}
+            <div className="flex items-center gap-2 self-end md:self-auto">
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Limpiar filtros</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={applyFilters}
+                disabled={loadingList}
+                className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-black text-white text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-sm hover:shadow disabled:opacity-50 cursor-pointer"
+              >
+                {loadingList ? (
+                  <span>Buscando...</span>
+                ) : (
+                  <>
+                    <Search className="w-3.5 h-3.5" />
+                    <span>Filtrar</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="space-y-4">
+        {/* LISTA O EMPTY STATE */}
+        {recent.length === 0 && !loadingList ? (
+          <div className="bg-white rounded-2xl border border-dashed border-slate-200 p-12 text-center my-6">
+            <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-400">
+              <Search className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-slate-800 mb-1">No se encontraron gastos</h3>
+            <p className="text-sm text-slate-500 max-w-md mx-auto mb-4">
+              No hay registros que coincidan con los filtros aplicados. Prueba ajustando la búsqueda o las fechas.
+            </p>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Restablecer filtros</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
           {recent.map((e) => {
             const isSelected = selectedIds.includes(e.id);
             const plates = e.expense_vehicles?.map((v) => v.plate) ?? [];
@@ -924,18 +1227,21 @@ export default function Expenses() {
               </div>
             );
           })}
-        </div>
+          </div>
+        )}
 
         {/* BOTÓN CARGAR MÁS */}
-        <div className="mt-8 text-center">
-          <button
-            onClick={handleLoadMore}
-            disabled={loadingList}
-            className="inline-flex items-center gap-2 px-6 py-2 bg-white border border-slate-200 rounded-full text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all font-medium text-sm shadow-sm"
-          >
-            {loadingList ? "Cargando..." : <>Cargar más antiguos <ChevronDown className="w-4 h-4" /></>}
-          </button>
-        </div>
+        {recent.length > 0 && (totalCount === null || recent.length < totalCount) && (
+          <div className="mt-8 text-center">
+            <button
+              onClick={handleLoadMore}
+              disabled={loadingList}
+              className="inline-flex items-center gap-2 px-6 py-2 bg-white border border-slate-200 rounded-full text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all font-medium text-sm shadow-sm cursor-pointer"
+            >
+              {loadingList ? "Cargando..." : <>Cargar más antiguos <ChevronDown className="w-4 h-4" /></>}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* --- BARRA FLOTANTE (GENERAR COBRO) --- */}

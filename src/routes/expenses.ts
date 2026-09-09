@@ -240,13 +240,30 @@ r.post("/", async (req: Request, res: Response) => {
   }
 });
 
-// Listar gastos (incluye categoría)
+const MAX_EXPENSES_LIMIT = 2000;
+
+/**
+ * Sanitiza texto para su uso seguro dentro de PostgREST .or() con ilike."%...%"
+ * 1) Escapar backslashes: \ -> \\
+ * 2) Escapar comodines SQL: % y _ -> \% y \_
+ * 3) Escapar comillas dobles PostgREST: " -> \" (PostgREST requiere backslash para comillas dentro de strings delimitados por comillas dobles)
+ * Probado empíricamente contra Supabase/PostgREST con casos borde (\, \", ,, (), etc.).
+ */
+function sanitizePostgrestIlike(text: string): string {
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/[%_]/g, "\\$&")
+    .replace(/"/g, '\\"');
+}
+
+// Listar gastos (incluye categoría y búsqueda libre)
 r.get("/", async (req: Request, res: Response) => {
-  const limit = Math.min(Math.max(parseInt(String(req.query.limit || 50), 10) || 50, 1), 1000);
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit || 50), 10) || 50, 1), MAX_EXPENSES_LIMIT);
   const offset = Math.max(parseInt(String(req.query.offset || 0), 10) || 0, 0);
   const from = String(req.query.from || "");
   const to = String(req.query.to || "");
   const plate = String(req.query.plate || "").toUpperCase().trim();
+  const search = String(req.query.search || req.query.q || "").trim();
 
   // NUEVO: Agregamos "category" al select
   const selectStr = `
@@ -270,6 +287,11 @@ r.get("/", async (req: Request, res: Response) => {
 
   if (plate) {
     q = q.eq("expense_vehicles.plate", plate);
+  }
+
+  if (search) {
+    const safeQ = sanitizePostgrestIlike(search);
+    q = q.or(`item.ilike."%${safeQ}%",description.ilike."%${safeQ}%"`);
   }
 
   const { data, error, count } = await q;
