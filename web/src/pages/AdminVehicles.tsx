@@ -743,8 +743,8 @@ export default function AdminVehicles() {
               {showColumnSelector && (
                 <>
                   {/* Backdrop para cerrar */}
-                  <div className="fixed inset-0 z-10" onClick={() => setShowColumnSelector(false)} />
-                  <div className="absolute right-0 top-12 z-20 bg-white border border-slate-200 rounded-xl shadow-xl p-3 min-w-[180px]">
+                  <div className="fixed inset-0 z-30" onClick={() => setShowColumnSelector(false)} />
+                  <div className="absolute right-0 top-12 z-40 bg-white border border-slate-200 rounded-xl shadow-xl p-3 min-w-[180px]">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-1">Mostrar columnas</p>
                     {ALL_COLUMNS.map(({ key, label }) => (
                       <label key={key} className="flex items-center gap-2.5 px-1 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer">
