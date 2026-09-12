@@ -1,5 +1,5 @@
 // web/src/pages/Pay.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type LeasingSummary = {
   has_leasing: boolean;
@@ -207,6 +207,7 @@ export default function App() {
   });
 
   const [file, setFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [plateExists, setPlateExists] = useState(true);
   const plateValid = useMemo(() => PLATE_RE.test(f.plate), [f.plate]);
 
@@ -215,6 +216,35 @@ export default function App() {
     const x = Number(f.installment_number);
     return Number.isFinite(x) && x > 0 ? x : null;
   }, [f.installment_number]);
+
+  // Hashes SHA-256 de imágenes de plantillas conocidas (ej. "VEHÍCULO SIN CONDUCTOR").
+  // Se cargan desde el backend (fuente única) al montar el componente.
+  const [noDriverHashes, setNoDriverHashes] = useState<string[]>([]);
+  useEffect(() => {
+    fetch(`${API}/uploads/templates`)
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d.no_driver_image_hashes)) setNoDriverHashes(d.no_driver_image_hashes); })
+      .catch(() => {/* no critico: si falla, la capa IA del backend sigue activa */});
+  }, []);
+
+  // Calcula el hash SHA-256 de un archivo en el navegador (sin red, sin costo de IA).
+  async function fileSHA256(f: File): Promise<string> {
+    const buf = await f.arrayBuffer();
+    const hashBuf = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  // Construye el mensaje apropiado cuando se detecta la imagen de vehículo sin conductor.
+  // Caso 1: hay conductor asignado → pedir que lo desasignen.
+  // Caso 2: sin conductor pero monto > 0 → solo pedir que corrijan el monto a $0.
+  function buildNoDriverMsg(): string {
+    const hasDriver = f.payer_name && f.payer_name !== "SIN CONDUCTOR ASIGNADO";
+    const plate = f.plate.toUpperCase();
+    if (hasDriver) {
+      return `Si el vehículo no tiene conductor el valor debe ser cero. Por favor desasigne al conductor ${f.payer_name} del vehículo ${plate}.`;
+    }
+    return `Si el vehículo no tiene conductor el valor debe ser cero. Ajusta el monto a $0 para el vehículo ${plate}.`;
+  }
 
   async function checkNoPay(plate: string, date: string) {
     try {
@@ -241,14 +271,14 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [f.plate, f.payment_date, plateValid, plateExists]);
 
-  async function uploadProofIfNeeded(): Promise<{ url: string | null; upload_id: number | null }> {
-    if (!file) return { url: null, upload_id: null };
+  async function uploadProofIfNeeded(): Promise<{ url: string | null; upload_id: number | null; ocrData: any | null }> {
+    if (!file) return { url: null, upload_id: null, ocrData: null };
     const fd = new FormData();
     fd.append("file", file);
     const rs = await fetch(`${API}/uploads`, { method: "POST", body: fd });
     if (!rs.ok) throw new Error("upload failed");
-    const { url, upload_id } = await rs.json();
-    return { url, upload_id };
+    const { url, upload_id, ocrData } = await rs.json();
+    return { url, upload_id, ocrData: ocrData ?? null };
   }
 
   // ---------- Auto-split: recalcular por defecto cuando cambia amount o installment_number, si NO está editando ----------
@@ -572,8 +602,23 @@ export default function App() {
         if (!proceed) { setLoading(false); setProgressStep("idle"); return; }
       }
 
-      const { url: proof_url, upload_id } = await uploadProofIfNeeded();
+      const { url: proof_url, upload_id, ocrData } = await uploadProofIfNeeded();
       setProgressStep("verifying");
+
+      // Detección post-subida: la IA del backend puede haber identificado la imagen como
+      // "VEHÍCULO SIN CONDUCTOR" (capturas de pantalla, variantes que el hash local no cubre).
+      if (ocrData?.status === "no_driver_image") {
+        const hasDriver = f.payer_name && f.payer_name !== "SIN CONDUCTOR ASIGNADO";
+        if (hasDriver || amountN > 0) {
+          alert(buildNoDriverMsg());
+          // Limpiar el archivo seleccionado para que el usuario no intente de nuevo sin corregir
+          setFile(null);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          setProgressStep("idle");
+          setLoading(false);
+          return;
+        }
+      }
 
       const body: any = {
         payer_name: f.payer_name.trim(),
@@ -596,6 +641,8 @@ export default function App() {
 
       await createPayment(body);
     } catch (err: any) {
+      // Siempre mostramos err.message (el backend envía el texto literal en el campo "error").
+      // Para el código NO_DRIVER_IMAGE_WITH_DRIVER_OR_AMOUNT el mensaje ya viene formateado.
       const msg = String(err?.message || "Error creando pago");
       alert(msg);
       setProgressStep("idle");
@@ -603,6 +650,7 @@ export default function App() {
       setLoading(false);
     }
   }
+
 
   const input = (name: keyof typeof f, props: any = {}) => (
     <input
@@ -827,10 +875,27 @@ export default function App() {
             <div className="md:col-span-2">
               <label className="mb-1 block text-sm font-medium">Comprobante (imagen)</label>
               <input
+                ref={fileInputRef}
                 className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
                 type="file"
                 accept="image/*"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                onChange={async (e) => {
+                  const selected = e.target.files?.[0] || null;
+                  setFile(selected);
+
+                  // Capa 1: detección instantánea por hash SHA-256 (sin red, sin IA)
+                  if (selected && noDriverHashes.length > 0) {
+                    const hash = await fileSHA256(selected);
+                    if (noDriverHashes.includes(hash)) {
+                      const hasDriver = f.payer_name && f.payer_name !== "SIN CONDUCTOR ASIGNADO";
+                      if (hasDriver || amountN > 0) {
+                        alert(buildNoDriverMsg());
+                        setFile(null);
+                        e.target.value = "";
+                      }
+                    }
+                  }
+                }}
                 required
               />
               {file ? (

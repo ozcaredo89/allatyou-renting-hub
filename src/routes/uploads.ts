@@ -3,8 +3,15 @@ import multer from "multer";
 import { uploadToR2 } from "../lib/r2";
 import { parseReceipt } from "../lib/ocr";
 import { supabase } from "../lib/supabase";
+import { NO_DRIVER_IMAGE_HASHES } from "../lib/knownReceiptTemplates";
 
 const r = Router();
+
+// GET /uploads/templates — Hashes conocidos de plantillas que NO son comprobantes reales.
+// El frontend los consulta para la validación client-side sin duplicar constantes.
+r.get("/templates", (_req: Request, res: Response) => {
+  return res.json({ no_driver_image_hashes: NO_DRIVER_IMAGE_HASHES });
+});
 
 // Configuración de Multer (Subida en memoria)
 // Soporta PDFs de contratos escaneados y fotos de alta resolución hasta 30MB

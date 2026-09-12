@@ -375,7 +375,7 @@ r.post("/", async (req: Request, res: Response) => {
   }
 
   const amt = toIntMoney(amount);
-  if (!Number.isFinite(amt) || amt <= 0) {
+  if (!Number.isFinite(amt) || amt < 0) {
     return res.status(400).json({ error: "amount must be a positive number" });
   }
 
@@ -397,10 +397,10 @@ r.post("/", async (req: Request, res: Response) => {
 
   const upperPlate = plate.toUpperCase();
 
-  // validar placa existe y obtener el conductor actual
+  // validar placa existe y obtener el conductor actual + nombre para el mensaje
   const { data: v, error: vErr } = await supabase
     .from("vehicles")
-    .select("plate, current_driver_id")
+    .select("plate, current_driver_id, owner_name")
     .eq("plate", upperPlate)
     .single();
 
@@ -411,6 +411,60 @@ r.post("/", async (req: Request, res: Response) => {
   if (!v) {
     return res.status(400).json({ error: "unknown plate" });
   }
+
+  // ---------------- Validación temprana de comprobante "VEHÍCULO SIN CONDUCTOR" ----------------
+  // Se carga uploadData aquí (antes del split) para poder evaluar is_no_driver y la excepción
+  // de amt === 0 antes de continuar con el resto del flujo.
+  let earlyUploadData: any = null;
+  if (upload_id) {
+    const { data: _earlyUpload, error: _earlyErr } = await supabase
+      .from("receipt_uploads")
+      .select("*")
+      .eq("id", upload_id)
+      .single();
+
+    if (_earlyErr || !_earlyUpload) {
+      return res.status(400).json({ error: "Comprobante no encontrado." });
+    }
+    if (_earlyUpload.linked_payment_id !== null) {
+      return res.status(400).json({ error: "Este comprobante ya fue utilizado en otro pago." });
+    }
+    earlyUploadData = _earlyUpload;
+  }
+
+  const isNoDriverImage = earlyUploadData?.ocr_status === "no_driver_image";
+
+  if (isNoDriverImage) {
+    // La fuente de verdad para si hay conductor es current_driver_id (no owner_name)
+    const hasDriverAssigned = v.current_driver_id !== null;
+
+    if (hasDriverAssigned) {
+      // Caso 1: la imagen dice "sin conductor" pero el vehículo aún tiene uno asignado.
+      // owner_name solo se usa para componer el mensaje legible al usuario.
+      const driverName = (v.owner_name && v.owner_name !== "SIN CONDUCTOR ASIGNADO")
+        ? v.owner_name
+        : "el conductor asignado";
+      return res.status(400).json({
+        error: `Si el vehículo no tiene conductor el valor debe ser cero. Por favor desasigne al conductor ${driverName} del vehículo ${upperPlate}.`,
+        code: "NO_DRIVER_IMAGE_WITH_DRIVER_OR_AMOUNT",
+      });
+    }
+
+    if (amt > 0) {
+      // Caso 2: el vehículo ya no tiene conductor pero el monto quedó en > $0 por costumbre.
+      // No hay nadie que desasignar, solo hay que corregir el valor.
+      return res.status(400).json({
+        error: `Si el vehículo no tiene conductor el valor debe ser cero. Ajusta el monto a $0 para el vehículo ${upperPlate}.`,
+        code: "NO_DRIVER_IMAGE_WITH_DRIVER_OR_AMOUNT",
+      });
+    }
+  }
+
+  // Si no es imagen de VEHÍCULO SIN CONDUCTOR, rechazar $0 como antes
+  if (amt === 0 && !isNoDriverImage) {
+    return res.status(400).json({ error: "amount must be a positive number" });
+  }
+
 
   // ---------------- Split siempre ----------------
   const wantsOverride = force_override === true || hasAnyOverride(req.body);
@@ -547,22 +601,12 @@ r.post("/", async (req: Request, res: Response) => {
   let receipt_date = null;
   let flagDetailsObj: FlagDetails | null = null;
 
-  // Extraemos info de la tabla receipt_uploads (Zero-Trust al cliente)
+  // Reutilizamos earlyUploadData ya cargado en la validación temprana (Zero-Trust al cliente).
+  // No hay una segunda consulta a receipt_uploads; las comprobaciones de "no encontrado" y
+  // "ya utilizado" también se evaluaron ahí.
   let uploadData: any = null;
-  if (upload_id) {
-    const { data: _uploadData, error: upErr } = await supabase
-      .from("receipt_uploads")
-      .select("*")
-      .eq("id", upload_id)
-      .single();
-      
-    if (upErr || !_uploadData) {
-      return res.status(400).json({ error: "Comprobante no encontrado." });
-    }
-    if (_uploadData.linked_payment_id !== null) {
-      return res.status(400).json({ error: "Este comprobante ya fue utilizado en otro pago." });
-    }
-    uploadData = _uploadData;
+  if (upload_id && earlyUploadData) {
+    uploadData = earlyUploadData;
 
     // Aplicamos normalización por si acaso (aunque OCR ya lo hace)
     reference_number = uploadData.reference_number ? String(uploadData.reference_number).trim().toUpperCase() : null;
@@ -725,7 +769,8 @@ r.post("/", async (req: Request, res: Response) => {
   // ========= ROUTER / STRATEGY: Leasing vs. Renting Legacy =========
   // Si el vehículo tiene un contrato activo de leasing Y NO ES UN PAGO DE ANTICIPO,
   // se desvía la lógica de distribución al nuevo módulo. El flujo legacy queda 100% intacto.
-  if (safeStatus === "confirmed" && instNo == null) {
+  // amt > 0 garantiza que registros en $0 (vehículo sin conductor) no toquen la cascada de leasing.
+  if (safeStatus === "confirmed" && instNo == null && amt > 0) {
     const leasingContract = await getActiveLeasingContract(upperPlate);
     if (leasingContract) {
       const cascadeResult = await applyLeasingPayment(payment.id, amt, leasingContract.id);

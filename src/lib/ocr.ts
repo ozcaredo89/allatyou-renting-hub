@@ -1,5 +1,7 @@
+import { createHash } from "crypto";
 import { SchemaType } from "@google/generative-ai";
 import { executeWithModel, geminiClient, openaiClient, deepseekClient, DailyQuotaExhaustedError } from "./ai-registry";
+import { NO_DRIVER_IMAGE_HASHES } from "./knownReceiptTemplates";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 export interface OCRResult {
@@ -7,14 +9,21 @@ export interface OCRResult {
   provider_name: string | null;
   receipt_date: string | null;
   amount: number | null;
-  status: "verified" | "suspicious_ocr_failed" | "timeout";
-  ocr_provider?: "gemini" | "openai" | "deepseek";
+  // "no_driver_image" agregado para detectar plantilla "VEHÍCULO SIN CONDUCTOR"
+  status: "verified" | "suspicious_ocr_failed" | "timeout" | "no_driver_image";
+  ocr_provider?: "gemini" | "openai" | "deepseek" | "hash";
   message?: string;
+}
+
+// ── Detección por hash (Capa 1, costo cero) ───────────────────────────────────
+function isKnownNoDriverImageByHash(buffer: Buffer): boolean {
+  const sha256 = createHash("sha256").update(buffer).digest("hex");
+  return NO_DRIVER_IMAGE_HASHES.includes(sha256);
 }
 
 // ── Prompt compartido ─────────────────────────────────────────────────────────
 const RECEIPT_PROMPT = `Analiza este comprobante de pago colombiano (Nequi, Bancolombia, Daviplata, etc.) y extrae la información en formato JSON con exactamente estas claves:
-reference_number, provider_name, receipt_date, amount.
+reference_number, provider_name, receipt_date, amount, is_no_driver.
 
 Instrucciones estrictas:
 - reference_number: SOLO el número que identifica la TRANSACCIÓN — el campo etiquetado como "Referencia", "Número de aprobación", "Número de operación" o "Comprobante No.". Este número es DIFERENTE en cada comprobante, incluso entre pagos al mismo destinatario.
@@ -22,6 +31,7 @@ Instrucciones estrictas:
 - provider_name: Nombre del banco o app (Nequi, Bancolombia, Daviplata, etc.). Null si no hay.
 - receipt_date: Fecha del pago en formato YYYY-MM-DD. Convierte fechas como "21 de junio de 2026 a las 02:32 p. m." → "2026-06-21". Null si no hay.
 - amount: Monto como número entero sin símbolos. "$ 70.000,00" → 70000. Null si no hay.
+- is_no_driver: true si la imagen contiene el texto "VEHÍCULO SIN CONDUCTOR" o indica que el vehículo no tiene conductor asignado. false en cualquier otro caso (comprobante normal).
 
 Responde SOLO con el JSON, sin markdown ni texto adicional.`;
 
@@ -31,6 +41,19 @@ function normalizeRef(raw: any): string | null {
 }
 
 function buildResult(data: any, provider: "gemini" | "openai" | "deepseek"): OCRResult {
+  // Si la IA detectó que es imagen de "VEHÍCULO SIN CONDUCTOR", retornamos inmediatamente
+  if (data.is_no_driver === true) {
+    return {
+      reference_number: null,
+      provider_name: null,
+      receipt_date: null,
+      amount: null,
+      status: "no_driver_image",
+      ocr_provider: provider,
+      message: "La imagen indica que el vehículo no tiene conductor asignado.",
+    };
+  }
+
   const rawRef = normalizeRef(data.reference_number);
 
   if (!rawRef || !data.amount) {
@@ -72,8 +95,9 @@ async function parseWithGemini(buffer: Buffer, mimeType: string): Promise<OCRRes
             provider_name:    { type: SchemaType.STRING, description: "Banco o app de pago." },
             receipt_date:     { type: SchemaType.STRING, description: "Fecha en formato YYYY-MM-DD." },
             amount:           { type: SchemaType.NUMBER, description: "Monto entero sin símbolos. '$ 70.000,00' → 70000." },
+            is_no_driver:     { type: SchemaType.BOOLEAN, description: "true si la imagen dice VEHÍCULO SIN CONDUCTOR o indica que el vehículo no tiene conductor." },
           },
-          required: ["reference_number", "provider_name", "receipt_date", "amount"],
+          required: ["reference_number", "provider_name", "receipt_date", "amount", "is_no_driver"],
         },
       },
     });
@@ -145,8 +169,22 @@ async function parseWithDeepSeek(buffer: Buffer, mimeType: string): Promise<OCRR
   });
 }
 
-// ── Función pública: parseReceipt (Gemini → OpenAI → DeepSeek) ──────────────
+// ── Función pública: parseReceipt (Hash → Gemini → OpenAI → DeepSeek) ────────
 export async function parseReceipt(buffer: Buffer, mimeType: string): Promise<OCRResult> {
+  // Capa 1: detección por hash (instantánea, sin costo de IA)
+  if (isKnownNoDriverImageByHash(buffer)) {
+    console.log("⚡ Hash match: imagen de VEHÍCULO SIN CONDUCTOR detectada sin IA.");
+    return {
+      reference_number: null,
+      provider_name: null,
+      receipt_date: null,
+      amount: null,
+      status: "no_driver_image",
+      ocr_provider: "hash",
+      message: "La imagen indica que el vehículo no tiene conductor asignado.",
+    };
+  }
+
   const TIMEOUT_MS = 6000; // Increased to 6s to give rate limiter time to wait
 
   const timeoutResult: OCRResult = {
@@ -192,7 +230,7 @@ export async function parseReceipt(buffer: Buffer, mimeType: string): Promise<OC
     }
   }
 
-  // 1. Gemini
+  // 2. Gemini
   if (geminiClient) {
     const { result, shouldFallback } = await tryProvider(
       "Gemini",
@@ -201,7 +239,7 @@ export async function parseReceipt(buffer: Buffer, mimeType: string): Promise<OC
     if (!shouldFallback && result) return result;
   }
 
-  // 2. OpenAI GPT-4o-mini
+  // 3. OpenAI GPT-4o-mini
   if (openaiClient) {
     const { result, shouldFallback } = await tryProvider(
       "OpenAI GPT-4o-mini",
@@ -210,7 +248,7 @@ export async function parseReceipt(buffer: Buffer, mimeType: string): Promise<OC
     if (!shouldFallback && result) return result;
   }
 
-  // 3. DeepSeek (activo cuando tenga visión disponible)
+  // 4. DeepSeek (activo cuando tenga visión disponible)
   if (deepseekClient) {
     const { result, shouldFallback } = await tryProvider(
       "DeepSeek",
