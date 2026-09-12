@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { useJsApiLoader } from "@react-google-maps/api";
 import { MapPin, Clock, ExternalLink, RefreshCw, Satellite } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -94,6 +96,13 @@ export function TopDwellLocations({ plate, authHeader }: Props) {
   const [locations, setLocations] = useState<TopLocation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [addresses, setAddresses] = useState<Record<number, string>>({});
+
+  // Reuses the same cached Maps JS SDK script FleetMap loads (same id — no double-load)
+  const { isLoaded: mapsLoaded } = useJsApiLoader({
+    googleMapsApiKey: GOOGLE_MAPS_API_KEY,
+    id: "allatyou-fleet-map",
+  });
 
   async function fetchLocations() {
     setLoading(true);
@@ -105,6 +114,7 @@ export function TopDwellLocations({ plate, authHeader }: Props) {
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data: TopLocation[] = await res.json();
       setLocations(data);
+      setAddresses({});
     } catch (e: any) {
       setError("No se pudo cargar la información de parqueaderos.");
       console.error("[TopDwellLocations] fetch error:", e);
@@ -117,6 +127,26 @@ export function TopDwellLocations({ plate, authHeader }: Props) {
     if (plate) fetchLocations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plate]);
+
+  // Reverse-geocode each hotspot's coordinates into a human-readable address
+  useEffect(() => {
+    if (!mapsLoaded || locations.length === 0) return;
+    const geocoder = new google.maps.Geocoder();
+
+    locations.forEach((loc) => {
+      geocoder.geocode(
+        { location: { lat: loc.latitude, lng: loc.longitude } },
+        (results, status) => {
+          const address =
+            status === "OK" && results && results[0]
+              ? results[0].formatted_address
+              : `${formatCoord(loc.latitude)}, ${formatCoord(loc.longitude)}`;
+          setAddresses((prev) => ({ ...prev, [loc.rank_order]: address }));
+        }
+      );
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapsLoaded, locations]);
 
   // ── Loading skeleton ──────────────────────────────────────────────────────
   if (loading) {
@@ -224,8 +254,9 @@ export function TopDwellLocations({ plate, authHeader }: Props) {
                 <div className="flex items-start gap-2">
                   <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${cfg.text} opacity-70`} />
                   <div>
-                    <p className={`text-xs font-bold font-mono ${cfg.text}`}>
-                      {formatCoord(loc.latitude)}, {formatCoord(loc.longitude)}
+                    <p className={`text-xs font-bold ${cfg.text} max-w-[220px]`}>
+                      {addresses[loc.rank_order] ??
+                        (mapsLoaded ? "Buscando dirección…" : `${formatCoord(loc.latitude)}, ${formatCoord(loc.longitude)}`)}
                     </p>
                     <p className="text-[10px] text-slate-400 mt-0.5">
                       Visto por última vez:{" "}
