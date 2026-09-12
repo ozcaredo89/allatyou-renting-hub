@@ -106,56 +106,8 @@ export interface GenerationResult {
 }
 
 // =============================================================================
-// Helpers
-// =============================================================================
+import { fmt, toWords } from "./numberToWords";
 
-/** Formatea un número como pesos colombianos: 1234567 → "1.234.567" */
-function fmt(n: number): string {
-  return Math.round(n).toLocaleString("es-CO");
-}
-
-/** Convierte número a letras (simplificado — suficiente para contratos) */
-function toWords(n: number): string {
-  const units = ["","UN","DOS","TRES","CUATRO","CINCO","SEIS","SIETE","OCHO","NUEVE",
-    "DIEZ","ONCE","DOCE","TRECE","CATORCE","QUINCE","DIECISÉIS","DIECISIETE",
-    "DIECIOCHO","DIECINUEVE"];
-  const tens = ["","","VEINTE","TREINTA","CUARENTA","CINCUENTA","SESENTA","SETENTA",
-    "OCHENTA","NOVENTA"];
-  const hundreds = ["","CIENTO","DOSCIENTOS","TRESCIENTOS","CUATROCIENTOS","QUINIENTOS",
-    "SEISCIENTOS","SETECIENTOS","OCHOCIENTOS","NOVECIENTOS"];
-
-  if (n === 0) return "CERO";
-  if (n === 100) return "CIEN";
-  if (n < 0) return "MENOS " + toWords(-n);
-
-  let result = "";
-  const millions = Math.floor(n / 1_000_000);
-  const thousands = Math.floor((n % 1_000_000) / 1_000);
-  const rest = n % 1_000;
-
-  if (millions > 0) {
-    result += millions === 1 ? "UN MILLÓN " : toWords(millions) + " MILLONES ";
-  }
-  if (thousands > 0) {
-    result += thousands === 1 ? "MIL " : toWords(thousands) + " MIL ";
-  }
-  if (rest > 0) {
-    const h = Math.floor(rest / 100);
-    const t = Math.floor((rest % 100) / 10);
-    const u = rest % 10;
-    if (h > 0) result += hundreds[h] + " ";
-    if (t >= 2) {
-      result += tens[t];
-      if (u > 0) result += " Y " + units[u];
-      result += " ";
-    } else if (t === 1) {
-      result += units[10 + u] + " ";
-    } else if (u > 0) {
-      result += units[u] + " ";
-    }
-  }
-  return result.trim() + " PESOS M/CTE";
-}
 
 /** Genera los <tr> HTML de la tabla de amortización */
 function buildAmortizacionRows(rows: Array<Record<string, any>>): string {

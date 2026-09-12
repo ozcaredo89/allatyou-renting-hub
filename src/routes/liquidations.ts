@@ -1,5 +1,7 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
+import { generatePazSalvo } from "../lib/pazSalvoGenerator";
+import { getSignedDocUrl } from "../lib/documentRenderer";
 
 const r = Router();
 
@@ -8,10 +10,10 @@ r.get("/:driverId/data", async (req: Request, res: Response) => {
   const { driverId } = req.params;
 
   try {
-    // A. Driver basic info
+    // A. Driver basic info (enriquecido con cédula, teléfono, email, fechas)
     const { data: driver } = await supabase
       .from("drivers")
-      .select("id, full_name, deposit_amount, created_at, status")
+      .select("id, full_name, document_number, phone, email, address, deposit_amount, created_at, status, terminated_at")
       .eq("id", driverId)
       .single();
 
@@ -42,7 +44,46 @@ r.get("/:driverId/data", async (req: Request, res: Response) => {
       }
     }
 
-    // C. Get Total Ahorro (using driver_balances_view)
+    // Datos base del vehículo si existe placa asignada
+    let vehicle = null;
+    if (plate) {
+      const { data: vData } = await supabase
+        .from("vehicles")
+        .select("plate, brand, line, model_year, status")
+        .eq("plate", plate)
+        .maybeSingle();
+      vehicle = vData;
+    }
+
+    // C. Rango de fechas de ahorro puras desde payments (cuota diaria)
+    let savingsStartDate: string | null = null;
+    let savingsEndDate: string | null = null;
+
+    const { data: firstPayment } = await supabase
+      .from("payments")
+      .select("payment_date")
+      .eq("driver_id", driverId)
+      .gt("insurance_amount", 0)
+      .order("payment_date", { ascending: true })
+      .limit(1);
+
+    if (firstPayment && firstPayment.length > 0 && firstPayment[0]) {
+      savingsStartDate = firstPayment[0].payment_date;
+    }
+
+    const { data: lastPayment } = await supabase
+      .from("payments")
+      .select("payment_date")
+      .eq("driver_id", driverId)
+      .gt("insurance_amount", 0)
+      .order("payment_date", { ascending: false })
+      .limit(1);
+
+    if (lastPayment && lastPayment.length > 0 && lastPayment[0]) {
+      savingsEndDate = lastPayment[0].payment_date;
+    }
+
+    // D. Get Total Ahorro (using driver_balances_view)
     const { data: balanceData } = await supabase
       .from("driver_balances_view")
       .select("total_balance")
@@ -108,6 +149,9 @@ r.get("/:driverId/data", async (req: Request, res: Response) => {
     return res.json({
       driver,
       plate,
+      vehicle,
+      savingsStartDate,
+      savingsEndDate,
       ahorro,
       initialDeposit,
       pendingInstallments,
@@ -286,4 +330,56 @@ r.put("/:id", async (req: Request, res: Response) => {
   }
 });
 
+// 4. POST generate Paz y Salvo document (PDF + DOCX)
+r.post("/:id/generate-document", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const body = req.body || {};
+
+  try {
+    const result = await generatePazSalvo({
+      liquidationId: id,
+      ...body,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    console.error("Error generating Paz y Salvo:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. GET fresh presigned URLs for existing documents
+r.get("/:id/document-urls", async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const { data: liq, error } = await supabase
+      .from("liquidations")
+      .select("id, pdf_s3_key, docx_s3_key, audit_log")
+      .eq("id", id)
+      .single();
+
+    if (error || !liq) return res.status(404).json({ error: "Liquidación no encontrada" });
+
+    // Determinar claves fijas
+    const pdfKey = liq.pdf_s3_key || `liquidations/paz_salvo_${id}.pdf`;
+    const docxKey = liq.docx_s3_key || `liquidations/paz_salvo_${id}.docx`;
+
+    const [pdf_url, docx_url] = await Promise.all([
+      getSignedDocUrl(pdfKey),
+      getSignedDocUrl(docxKey),
+    ]);
+
+    return res.json({
+      pdf_url,
+      docx_url,
+      pdf_s3_key: pdfKey,
+      docx_s3_key: docxKey,
+    });
+  } catch (err: any) {
+    console.error("Error getting document URLs:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default r;
+

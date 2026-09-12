@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Paz y Salvo — {{conductor_nombre}} — {{vehiculo_placa}}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 2.5cm 2.5cm 2cm 2.5cm;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Calibri', Arial, Helvetica, sans-serif;
+      font-size: 11pt;
+      line-height: 1.45;
+      color: #111;
+      background: #fff;
+    }
+    .page-break {
+      page-break-before: always;
+      break-before: page;
+    }
+    .doc-title {
+      font-size: 12.5pt;
+      font-weight: bold;
+      text-align: center;
+      text-transform: uppercase;
+      margin-bottom: 24pt;
+      line-height: 1.35;
+      letter-spacing: 0.3pt;
+    }
+    .meta-line {
+      margin-bottom: 4pt;
+      font-size: 10.5pt;
+    }
+    .section-title {
+      font-weight: bold;
+      text-transform: uppercase;
+      margin-top: 14pt;
+      margin-bottom: 5pt;
+      font-size: 10.5pt;
+    }
+    p {
+      text-align: justify;
+      margin-bottom: 8pt;
+      font-size: 10.5pt;
+    }
+    .bold { font-weight: bold; }
+    .uppercase { text-transform: uppercase; }
+    
+    /* Grids para información de partes y vehículo */
+    .two-col-grid {
+      width: 100%;
+      margin: 6pt 0 10pt 0;
+      border-collapse: collapse;
+    }
+    .two-col-grid td {
+      width: 50%;
+      vertical-align: top;
+      padding: 2pt 4pt 2pt 0;
+      font-size: 10.5pt;
+    }
+    
+    .descuentos-box {
+      margin: 8pt 0 12pt 0;
+      line-height: 1.5;
+      font-size: 10.5pt;
+    }
+    .descuento-item {
+      display: flex;
+      justify-content: space-between;
+      max-width: 380px;
+    }
+    .descuento-item span:last-child {
+      font-weight: 500;
+    }
+    .descuento-total {
+      margin-top: 8pt;
+      font-weight: bold;
+    }
+
+    .checkbox-line {
+      margin: 10pt 0;
+      font-size: 10.5pt;
+    }
+    .checkbox-box {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 1px solid #333;
+      margin-right: 4px;
+      vertical-align: middle;
+      text-align: center;
+      line-height: 11px;
+      font-size: 9px;
+    }
+
+    /* Firmas */
+    .firmas-container {
+      margin-top: 25pt;
+    }
+    .firma-bloque {
+      margin-bottom: 30pt;
+    }
+    .firma-linea {
+      margin-top: 4pt;
+      font-size: 10.5pt;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PÁGINA 1
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="page">
+    <div class="doc-title">
+      PAZ Y SALVO, ACTA DE ENTREGA Y DEVOLUCIÓN DE GARANTÍA DE<br />
+      ALQUILER DE VEHÍCULO
+    </div>
+
+    <div class="meta-line">Ciudad: {{ciudad}}</div>
+    <div class="meta-line" style="margin-bottom: 14pt;">Fecha: {{fecha_documento}}</div>
+
+    <div class="meta-line">Entre los suscritos:</div>
+    <div class="meta-line" style="margin-top: 10pt;"><span class="bold">EL ARRENDADOR:</span> {{arrendador_nombre}}</div>
+    <div class="meta-line"><span class="bold">IDENTIFICACIÓN:</span> {{arrendador_nit}}</div>
+
+    <div class="meta-line" style="margin-top: 10pt;">
+      <span class="bold">EL ARRENDATARIO:</span> <span class="uppercase">{{conductor_nombre}}</span>, identificado(a) con cédula de ciudadanía No. {{conductor_cedula}}.
+    </div>
+
+    <p style="margin-top: 12pt;">
+      Las partes manifiestan que celebraron un acuerdo de alquiler del vehículo descrito a continuación:
+    </p>
+
+    <table class="two-col-grid">
+      <tr>
+        <td><span class="bold">PLACA DEL VEHÍCULO:</span> {{vehiculo_placa}}</td>
+        <td><span class="bold">Estado del vehículo:</span> {{vehiculo_estado}}</td>
+      </tr>
+      <tr>
+        <td><span class="bold">Tipo de servicio:</span> {{vehiculo_servicio}}</td>
+        <td><span class="bold">Clase de vehículo:</span> {{vehiculo_clase}}</td>
+      </tr>
+    </table>
+
+    <div class="bold" style="margin-top: 4pt; margin-bottom: 4pt; font-size: 10.5pt;">Información general del vehículo</div>
+    <table class="two-col-grid">
+      <tr>
+        <td><span class="bold">Marca:</span> {{vehiculo_marca}}</td>
+        <td><span class="bold">Línea:</span> {{vehiculo_linea}}</td>
+      </tr>
+      <tr>
+        <td><span class="bold">Modelo:</span> {{vehiculo_modelo}}</td>
+        <td><span class="bold">Tipo Combustible:</span> {{vehiculo_combustible}}</td>
+      </tr>
+      <tr>
+        <td><span class="bold">Cilindraje:</span> {{vehiculo_cilindraje}}</td>
+        <td><span class="bold">Tipo de carrocería:</span> {{vehiculo_carroceria}}</td>
+      </tr>
+    </table>
+
+    <p style="margin-top: 10pt;">
+      En virtud de lo anterior, las partes acuerdan suscribir el presente PAZ Y SALVO, ACTA DE ENTREGA Y DEVOLUCIÓN DE GARANTÍA, de conformidad con las siguientes cláusulas:
+    </p>
+
+    <div class="section-title">PRIMERA. ENTREGA DE LA GARANTÍA</div>
+    <p>
+      En cumplimiento de lo estipulado en el Contrato de Arrendamiento, EL ARRENDATARIO entregó a EL ARRENDADOR la suma total de {{total_garantia_letras}} (${{total_garantia_num}} COP) para respaldar las obligaciones contractuales, constituida así:
+    </p>
+    <p>
+      Esta suma se compone de un depósito inicial de ${{deposito_inicial_num}} COP y un fondo de ahorro acumulado de ${{ahorro_acumulado_num}} COP, generado entre el {{fecha_inicio_ahorro}} y el {{fecha_fin_ahorro}}.
+    </p>
+    <p>
+      Esta suma total consolidó el saldo base sobre el cual se aplicaron las liquidaciones y deducciones al finalizar el contrato.
+    </p>
+
+    <div class="section-title">SEGUNDA. DEVOLUCIÓN DEL VEHÍCULO</div>
+    <p>
+      EL ARRENDATARIO hace entrega del vehículo a EL ARRENDADOR en la fecha indicada en el presente documento, junto con sus llaves, documentos, accesorios y demás elementos que le fueron suministrados.
+    </p>
+    <p>
+      EL ARRENDADOR manifiesta recibir el vehículo y realizar la correspondiente revisión de su estado general.
+    </p>
+    <p>
+      Estado del vehículo al momento de la devolución:
+    </p>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PÁGINA 2
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="page page-break">
+    <div class="section-title" style="margin-top: 0;">TERCERA. REVISIÓN DEL VEHÍCULO</div>
+    <p>
+      Las partes dejan constancia de que, al momento de la devolución, se verificaron, entre otros, los siguientes aspectos:
+    </p>
+    <p>
+      Observaciones de la revisión:<br />
+      <span class="uppercase">{{observaciones_revision}}</span>
+    </p>
+
+    <div class="section-title" style="margin-top: 14pt;">CUARTA. DEVOLUCIÓN DE LA GARANTÍA</div>
+    <p>
+      Una vez realizada la revisión del vehículo y verificado el cumplimiento de las obligaciones conocidas a la fecha de devolución, EL ARRENDADOR devuelve a EL ARRENDATARIO la suma de:<br />
+      <span class="bold">${{monto_devolucion_num}} ({{monto_devolucion_letras}}).</span>
+    </p>
+
+    <div class="bold" style="margin-top: 10pt; font-size: 10.5pt;">Detalle de Descuentos</div>
+    <div class="descuentos-box">
+      {{descuentos_lista}}
+      <div class="descuento-total">Total Descuentos: ${{total_descuentos_num}}</div>
+    </div>
+
+    <div class="checkbox-line">
+      La devolución se efectúa mediante:<br /><br />
+      <span class="checkbox-box">{{check_transferencia}}</span> Transferencia bancaria &nbsp;&nbsp;&nbsp;&nbsp;
+      <span class="checkbox-box">{{check_efectivo}}</span> Efectivo
+    </div>
+
+    <div class="meta-line" style="margin-top: 8pt;">Fecha de devolución: {{fecha_devolucion}}</div>
+    <p style="margin-top: 8pt;">
+      EL ARRENDATARIO declara recibir el valor anteriormente indicado a satisfacción.
+    </p>
+
+    <div class="section-title" style="margin-top: 14pt;">QUINTA. RESPONSABILIDAD POR MULTAS, COMPARENDOS, INFRACCIONES Y OBLIGACIONES POSTERIORES</div>
+    <p>
+      EL ARRENDATARIO declara y acepta expresamente que será responsable de cualquier multa, comparendo, infracción de tránsito, sanción, cobro, peaje, parqueadero, daño, obligación pecuniaria, requerimiento o actuación administrativa o judicial que tenga su origen en hechos ocurridos durante el período en que el vehículo estuvo bajo su tenencia, uso, conducción o responsabilidad.
+    </p>
+    <p>
+      Esta responsabilidad se mantendrá, aunque la multa, comparendo, requerimiento, actuación administrativa o proceso judicial sea notificado, impuesto, iniciado o conocido con posterioridad a la fecha de devolución del vehículo.
+    </p>
+    <p>
+      En caso de que, después de la devolución del vehículo, EL ARRENDADOR reciba una notificación, requerimiento, multa, comparendo o cualquier otra actuación relacionada con hechos ocurridos durante el período de alquiler, EL ARRENDATARIO se obliga a asumir, pagar y/o responder por los valores que legalmente correspondan y que tengan origen en dichos hechos.
+    </p>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PÁGINA 3
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="page page-break">
+    <p style="margin-top: 0;">
+      Así mismo, EL ARRENDATARIO se compromete a suministrar la información, documentos y colaboración que sean necesarios para acreditar que se encontraba en posesión, uso o conducción del vehículo en la fecha en que ocurrieron los hechos.
+    </p>
+    <p>
+      Cuando corresponda, EL ARRENDATARIO deberá asumir igualmente los intereses, recargos, gastos razonables y demás costos directamente relacionados con la obligación generada durante el período en que tuvo el vehículo bajo su responsabilidad.
+    </p>
+
+    <div class="section-title" style="margin-top: 14pt;">SEXTA. PROCESOS ADMINISTRATIVOS O JUDICIALES</div>
+    <p>
+      Si con posterioridad a la firma del presente documento se llegare a iniciar o notificar cualquier proceso administrativo, contravencional o judicial derivado de hechos ocurridos durante el período de alquiler, EL ARRENDATARIO reconoce que deberá atender y asumir las obligaciones que legalmente le correspondan como consecuencia de dichos hechos.
+    </p>
+    <p>
+      La firma del presente Paz y Salvo y la devolución de la garantía no constituyen una exoneración respecto de hechos ocurridos durante el período de alquiler que sean conocidos con posterioridad.
+    </p>
+    <p>
+      Lo anterior no aplicará respecto de hechos que no sean atribuibles al período de tenencia, uso o conducción del vehículo por parte de EL ARRENDATARIO.
+    </p>
+
+    <div class="section-title" style="margin-top: 14pt;">SÉPTIMA. RESPONSABILIDAD POR EL USO DEL VEHÍCULO</div>
+    <p>
+      EL ARRENDATARIO declara que durante el período de alquiler tuvo bajo su responsabilidad el uso y cuidado del vehículo y que se comprometió a utilizarlo de manera diligente, respetando las normas de tránsito y demás disposiciones legales aplicables.
+    </p>
+    <p>
+      EL ARRENDATARIO manifiesta igualmente que no entregó ni permitió el uso del vehículo a terceros no autorizados, salvo autorización expresa de EL ARRENDADOR.
+    </p>
+    <p>
+      En caso de que los hechos hayan sido ocasionados por una persona a quien EL ARRENDATARIO haya permitido conducir el vehículo, EL ARRENDATARIO responderá frente a EL ARRENDADOR por las obligaciones que legalmente correspondan.
+    </p>
+
+    <div class="section-title" style="margin-top: 14pt;">OCTAVA. PAZ Y SALVO</div>
+    <p>
+      Con la devolución de la garantía indicada en este documento, las partes declaran encontrarse a paz y salvo respecto del valor de la garantía y de las obligaciones conocidas y verificadas a la fecha de firma.
+    </p>
+    <p>
+      No obstante, este Paz y Salvo no extingue las obligaciones que tengan origen en hechos ocurridos durante el período de alquiler y que no hubieren sido conocidos, notificados o determinados a la fecha de suscripción del presente documento, de acuerdo con lo establecido en las cláusulas quinta y sexta.
+    </p>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PÁGINA 4
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="page page-break">
+    <div class="section-title" style="margin-top: 0;">NOVENA. CONSTANCIA DE ACEPTACIÓN</div>
+    <p>
+      Las partes manifiestan que han leído el presente documento, que conocen su contenido y alcance y que lo suscriben de manera libre y voluntaria.
+    </p>
+    <p>
+      El presente documento se firma en dos ejemplares del mismo tenor, quedando un ejemplar en poder de cada una de las partes.
+    </p>
+
+    <div class="firmas-container">
+      <div class="firma-bloque">
+        <div class="bold uppercase">EL ARRENDADOR</div>
+        <div class="firma-linea" style="margin-top: 14pt;">Nombre: ______________________________________________</div>
+        <div class="firma-linea">C.C. No.: _____________________________________________</div>
+        <div class="firma-linea">Teléfono: _____________________________________________</div>
+        <div class="firma-linea">Firma: ________________________________________________</div>
+        <div class="firma-linea">Fecha: ________________________________________________</div>
+      </div>
+
+      <div class="firma-bloque" style="margin-top: 30pt;">
+        <div class="bold uppercase">EL ARRENDATARIO</div>
+        <div class="firma-linea" style="margin-top: 14pt;">Nombre: {{conductor_nombre_linea}}</div>
+        <div class="firma-linea">C.C. No.: {{conductor_cedula_linea}}</div>
+        <div class="firma-linea">Teléfono: {{conductor_telefono_linea}}</div>
+        <div class="firma-linea">Firma: ________________________________________________</div>
+        <div class="firma-linea">Fecha: ________________________________________________</div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
