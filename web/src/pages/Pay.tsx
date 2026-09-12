@@ -158,6 +158,9 @@ function InfoTooltip({
 export default function App() {
   const [items, setItems] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalPayments, setTotalPayments] = useState<number | null>(null);
   const [noPayHint, setNoPayHint] = useState<{ noPay: boolean; reason?: string; suggestedDate?: string } | null>(null);
   const [lastSuggestion, setLastSuggestion] = useState<LastAmountResp | null>(null);
 
@@ -376,20 +379,55 @@ export default function App() {
       const q = new URLSearchParams({
         plate: plate.toUpperCase(),
         limit: "10",
+        offset: "0",
       });
       const rs = await fetch(`${API}/payments?` + q.toString());
       if (!rs.ok) {
         const rsAll = await fetch(`${API}/payments`);
         const all = (await rsAll.json()) as any;
         const list = Array.isArray(all) ? all : all.items ?? [];
-        setItems(list.filter((p: Payment) => p.plate.toUpperCase() === plate.toUpperCase()).slice(0, 10));
+        const filtered = list.filter((p: Payment) => p.plate.toUpperCase() === plate.toUpperCase());
+        setItems(filtered.slice(0, 10));
+        setTotalPayments(filtered.length);
+        setHasMore(filtered.length > 10);
         return;
       }
-      const rows = (await rs.json()) as Payment[] | { items: Payment[] };
-      const list = Array.isArray(rows) ? rows : rows.items ?? [];
+      const data = await rs.json();
+      const list = Array.isArray(data) ? data : data.items ?? [];
+      const total = typeof data.total === "number" ? data.total : null;
       setItems(list);
+      setTotalPayments(total);
+      setHasMore(total !== null ? list.length < total : list.length === 10);
     } catch {
       setItems([]);
+      setTotalPayments(null);
+      setHasMore(false);
+    }
+  }
+
+  async function loadMorePayments() {
+    if (loadingMore || !f.plate) return;
+    setLoadingMore(true);
+    try {
+      const q = new URLSearchParams({
+        plate: f.plate.toUpperCase(),
+        limit: "10",
+        offset: String(items.length),
+      });
+      const rs = await fetch(`${API}/payments?` + q.toString());
+      if (rs.ok) {
+        const data = await rs.json();
+        const nextRows: Payment[] = Array.isArray(data) ? data : data.items ?? [];
+        const combined = [...items, ...nextRows];
+        const total = typeof data.total === "number" ? data.total : totalPayments;
+        setItems(combined);
+        setTotalPayments(total);
+        setHasMore(total !== null ? combined.length < total : nextRows.length === 10);
+      }
+    } catch {
+      // no bloqueante
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -400,6 +438,8 @@ export default function App() {
       fetchLeasingSummary(f.plate);
     } else {
       setItems([]);
+      setTotalPayments(null);
+      setHasMore(false);
       setLastSuggestion(null);
       setLeasingInfo(null);
     }
@@ -1038,7 +1078,14 @@ export default function App() {
         {/* Card: List */}
         {showRecent && (
           <>
-            <h2 className="mt-8 mb-3 text-xl font-semibold">Últimos pagos — {f.plate.toUpperCase()}</h2>
+            <div className="mt-8 mb-3 flex items-center justify-between">
+              <h2 className="text-xl font-semibold">Últimos pagos — {f.plate.toUpperCase()}</h2>
+              {totalPayments !== null && totalPayments > 0 && (
+                <span className="text-xs text-gray-500 font-medium">
+                  Mostrando {items.length} de {totalPayments}
+                </span>
+              )}
+            </div>
             <div className="space-y-3">
               {items.map((p) => {
                 const hasInst = p.installment_number != null;
@@ -1099,6 +1146,26 @@ export default function App() {
               })}
 
               {items.length === 0 && <div className="text-gray-500">Sin pagos recientes para esta placa.</div>}
+
+              {hasMore && (
+                <div className="pt-2 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={loadMorePayments}
+                    disabled={loadingMore}
+                    className="rounded-xl border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/60 disabled:opacity-50 transition-colors flex items-center gap-2 cursor-pointer"
+                  >
+                    {loadingMore ? (
+                      <>
+                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+                        <span>Cargando más registros...</span>
+                      </>
+                    ) : (
+                      <span>Ver más registros</span>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           </>
         )}
