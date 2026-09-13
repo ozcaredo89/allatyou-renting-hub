@@ -1,5 +1,20 @@
-import { useEffect, useState } from "react";
-import { ExternalLink, ArrowUp, ArrowDown, ChevronsUpDown, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ExternalLink,
+  ArrowUp,
+  ArrowDown,
+  ChevronsUpDown,
+  Trash2,
+  Search,
+  X,
+  Download,
+  Calendar,
+  AlertTriangle,
+  Clock,
+  Car,
+  Loader2,
+  RotateCcw,
+} from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { useSortableData } from "../hooks/useSortableData";
 import {
@@ -127,14 +142,22 @@ export default function Reports() {
     );
   };
 
-  async function load(nextOffset = 0) {
+  const isMounted = useRef(false);
+
+  async function load(
+    nextOffset = 0,
+    searchQuery = q,
+    isOverdue = onlyOverdue,
+    isSuspicious = onlySuspicious
+  ) {
     setLoading(true);
     setErrorMsg(null);
     try {
       const params = new URLSearchParams();
-      if (q) params.set("q", q);
-      if (onlyOverdue)    params.set("overdue_only",    "true");
-      if (onlySuspicious) params.set("suspicious_only", "true");
+      const trimmed = searchQuery.trim();
+      if (trimmed) params.set("q", trimmed);
+      if (isOverdue)    params.set("overdue_only",    "true");
+      if (isSuspicious) params.set("suspicious_only", "true");
       params.set("limit",  String(limit));
       params.set("offset", String(nextOffset));
 
@@ -164,9 +187,35 @@ export default function Reports() {
     }
   }
 
+  // Búsqueda en tiempo real con debounce: al teclear, espera 300ms y filtra automáticamente
   useEffect(() => {
-    load(0);
-  }, []);
+    if (!isMounted.current) {
+      isMounted.current = true;
+      load(0, q, onlyOverdue, onlySuspicious);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      load(0, q, onlyOverdue, onlySuspicious);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [q, onlyOverdue, onlySuspicious]);
+
+  const handleClearSearch = () => {
+    setQ("");
+    load(0, "", onlyOverdue, onlySuspicious);
+  };
+
+  const handleResetFilters = () => {
+    setQ("");
+    setOnlyOverdue(false);
+    setOnlySuspicious(false);
+    setShowInactive(true);
+    load(0, "", false, false);
+  };
+
+  const hasActiveFilters = Boolean(q.trim() || onlyOverdue || onlySuspicious || !showInactive);
 
   const canPrev = offset > 0;
   const canNext = offset + limit < total;
@@ -286,87 +335,163 @@ export default function Reports() {
   }
 
   return (
-    <div className="min-h-screen p-6">
-      <div className="mx-auto max-w-5xl">
-        <h1 className="mb-6 text-3xl font-bold tracking-tight">
-          Reportes — Último pago por vehículo
-        </h1>
+    <div className="min-h-screen p-4 sm:p-6 bg-gray-50/50">
+      <div className="mx-auto max-w-7xl">
+        {/* Header con título y sección de exportación organizada */}
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900">
+              Reportes — Último pago por vehículo
+            </h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Consulta en tiempo real el estado de recaudo, morosidad y comprobantes de la flota.
+            </p>
+          </div>
 
-        {/* Filtros + acciones */}
-        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex-1 flex flex-col gap-2 md:flex-row md:items-center">
-            <div className="flex-1 flex gap-2">
-              <input
-                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
-                placeholder="Buscar por placa o nombre…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
-              <button
-                onClick={() => load(0)}
-                className="rounded-xl bg-black px-5 py-2.5 font-medium text-white shadow hover:opacity-90 disabled:opacity-50"
-                disabled={loading}
-              >
-                Buscar
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-700 md:text-sm">Mes para exportar:</label>
+          {/* Widget de exportación mensual */}
+          <div className="flex items-center gap-2 self-start sm:self-auto bg-white border border-gray-200/90 shadow-xs rounded-2xl p-1.5 sm:p-2">
+            <div className="flex items-center gap-1.5 px-2 text-gray-600">
+              <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
+              <span className="text-xs font-medium text-gray-600 hidden md:inline">Exportar mes:</span>
               <input
                 type="month"
                 value={month}
                 onChange={(e) => setMonth(e.target.value)}
-                className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black/60"
+                className="rounded-lg bg-gray-50 border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-black/60 cursor-pointer"
               />
             </div>
-          </div>
-
-          <div className="flex flex-col gap-2 md:flex-row md:items-center">
-            <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={onlyOverdue}
-                onChange={(e) => {
-                  setOnlyOverdue(e.target.checked);
-                  load(0);
-                }}
-              />
-              Mostrar solo en mora
-            </label>
-
-            <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={onlySuspicious}
-                onChange={(e) => {
-                  setOnlySuspicious(e.target.checked);
-                  load(0);
-                }}
-              />
-              ⚠️ Solo con inconsistencias
-            </label>
-
             <button
               type="button"
               onClick={downloadCsv}
               disabled={loading}
-              className="mt-1 md:mt-0 rounded-xl border px-4 py-2 text-sm shadow-sm hover:bg-gray-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-black px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-gray-800 disabled:opacity-50 transition-all cursor-pointer shrink-0"
+              title="Descargar pagos del mes en CSV"
             >
-              Descargar CSV por mes
+              <Download className="w-3.5 h-3.5" />
+              <span>Descargar CSV</span>
             </button>
           </div>
         </div>
 
-        <div className="mb-4">
-          <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 px-3 py-2 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors shadow-sm w-max">
-            <input
-              type="checkbox"
-              checked={showInactive}
-              onChange={(e) => setShowInactive(e.target.checked)}
-              className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
-            />
-            Incluir vehículos inactivos/vendidos
-          </label>
+        {/* Barra principal de búsqueda y filtros interactivos */}
+        <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-xs">
+          <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+            {/* Input de búsqueda amplio en tiempo real */}
+            <div className="relative flex-1 min-w-[280px]">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              <input
+                type="text"
+                className="w-full h-11 rounded-xl border border-gray-300 bg-white pl-10 pr-10 text-sm outline-none transition-all placeholder:text-gray-400 focus:border-black focus:ring-2 focus:ring-black/10 shadow-xs"
+                placeholder="Escribe para filtrar por placa o conductor en tiempo real…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    load(0, q, onlyOverdue, onlySuspicious);
+                  }
+                }}
+              />
+              {/* Spinner de búsqueda o botón limpiar búsqueda */}
+              {loading ? (
+                <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
+                  <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+                </div>
+              ) : q ? (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                  title="Limpiar búsqueda"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              ) : null}
+            </div>
+
+            {/* Chips de filtro rápido */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setOnlyOverdue(!onlyOverdue)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  onlyOverdue
+                    ? "bg-red-50 text-red-700 border-red-300 shadow-xs"
+                    : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
+                }`}
+              >
+                <Clock className={`w-3.5 h-3.5 ${onlyOverdue ? "text-red-600" : "text-gray-400"}`} />
+                <span>Solo en mora</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setOnlySuspicious(!onlySuspicious)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  onlySuspicious
+                    ? "bg-amber-50 text-amber-800 border-amber-300 shadow-xs"
+                    : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
+                }`}
+              >
+                <AlertTriangle className={`w-3.5 h-3.5 ${onlySuspicious ? "text-amber-600" : "text-gray-400"}`} />
+                <span>Con inconsistencias</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowInactive(!showInactive)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  showInactive
+                    ? "bg-slate-100 text-slate-800 border-slate-300 shadow-xs"
+                    : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
+                }`}
+              >
+                <Car className={`w-3.5 h-3.5 ${showInactive ? "text-slate-700" : "text-gray-400"}`} />
+                <span>Incluir inactivos/vendidos</span>
+              </button>
+
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  className="inline-flex items-center gap-1 px-2.5 py-2 text-xs font-medium text-gray-500 hover:text-black transition-colors cursor-pointer"
+                  title="Restablecer todos los filtros"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Limpiar</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Subbarra de estado de resultados */}
+          <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span>
+                {total > 0
+                  ? `Mostrando ${offset + 1}–${Math.min(offset + limit, total)} de ${total} vehículos`
+                  : "No se encontraron vehículos"}
+              </span>
+              {q.trim() && (
+                <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 px-2 py-0.5 rounded-md text-[11px]">
+                  Buscando: <strong className="font-semibold">"{q.trim()}"</strong>
+                  <button
+                    type="button"
+                    onClick={handleClearSearch}
+                    className="hover:text-black ml-0.5 cursor-pointer"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+            </div>
+
+            {loading && (
+              <span className="inline-flex items-center gap-1 text-gray-400">
+                <Loader2 className="w-3 h-3 animate-spin" /> Filtrando...
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Errores */}
@@ -507,8 +632,25 @@ export default function Reports() {
               })}
               {visibleItems.length === 0 && !loading && (
                 <tr>
-                  <td className="px-4 py-6 text-gray-500" colSpan={7}>
-                    Sin resultados.
+                  <td className="px-4 py-12 text-center text-gray-500" colSpan={7}>
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <Search className="w-8 h-8 text-gray-300 stroke-1" />
+                      <p className="font-medium text-gray-700">No se encontraron vehículos</p>
+                      <p className="text-xs text-gray-400">
+                        {hasActiveFilters
+                          ? "Intenta ajustar o limpiar los filtros de búsqueda."
+                          : "No hay registros disponibles en este momento."}
+                      </p>
+                      {hasActiveFilters && (
+                        <button
+                          type="button"
+                          onClick={handleResetFilters}
+                          className="mt-2 text-xs font-semibold text-black underline hover:opacity-80 cursor-pointer"
+                        >
+                          Restablecer todos los filtros
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )}
@@ -517,24 +659,24 @@ export default function Reports() {
         </div>
 
         {/* Paginación para la vista de últimos pagos */}
-        <div className="mt-4 flex items-center justify-between">
-          <div className="text-sm text-gray-600">
-            {items.length > 0
-              ? `Mostrando ${offset + 1}–${Math.min(offset + limit, total)} de ${total}`
-              : `Mostrando 0 de ${total}`}
+        <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="text-sm text-gray-500 font-medium">
+            {total > 0
+              ? `Mostrando ${offset + 1}–${Math.min(offset + limit, total)} de ${total} registros`
+              : `0 registros`}
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <button
               disabled={!canPrev || loading}
-              onClick={() => load(Math.max(0, offset - limit))}
-              className="rounded-xl border px-4 py-2 text-sm disabled:opacity-50"
+              onClick={() => load(Math.max(0, offset - limit), q, onlyOverdue, onlySuspicious)}
+              className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-xs hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               Anterior
             </button>
             <button
               disabled={!canNext || loading}
-              onClick={() => load(offset + limit)}
-              className="rounded-xl border px-4 py-2 text-sm disabled:opacity-50"
+              onClick={() => load(offset + limit, q, onlyOverdue, onlySuspicious)}
+              className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-xs hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               Siguiente
             </button>
