@@ -14,6 +14,7 @@ import {
   Car,
   Loader2,
   RotateCcw,
+  Landmark,
 } from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { useSortableData } from "../hooks/useSortableData";
@@ -23,6 +24,7 @@ import {
   type MatchContext,
   type AmountMismatchDetails,
 } from "../components/ReceiptBadge";
+import { BankReconciliationModal } from "../components/BankReconciliationModal";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -99,6 +101,7 @@ export default function Reports() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
+  const [showBankModal, setShowBankModal] = useState(false);
   const limit = 20;
 
   const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
@@ -371,7 +374,19 @@ export default function Reports() {
               <span>Descargar CSV</span>
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setShowBankModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 transition-all cursor-pointer shrink-0 self-start sm:self-auto"
+            title="Ver movimientos bancarios para conciliación"
+          >
+            <Landmark className="w-3.5 h-3.5" />
+            <span>Conciliación bancaria</span>
+          </button>
         </div>
+
+        <BankReconciliationModal isOpen={showBankModal} onClose={() => setShowBankModal(false)} />
 
         {/* Barra principal de búsqueda y filtros interactivos */}
         <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-xs">

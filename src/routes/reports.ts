@@ -350,6 +350,40 @@ r.get("/global-mileage", async (_req: Request, res: Response) => {
   }
 });
 
+// ── GET /reports/bank-transactions ────────────────────────────────────────────
+// Movimientos bancarios entrantes extraidos por bank-sync (script local, ver
+// bank-sync/README.md) desde la Sucursal Virtual Negocios, para que el equipo
+// contable los cruce contra los comprobantes de pago que le envian.
+r.get("/bank-transactions", async (req: Request, res: Response) => {
+  const q = String(req.query.q || "").trim();
+  const from = String(req.query.from || "").trim();
+  const to = String(req.query.to || "").trim();
+
+  const rawLimit = parseInt(String(req.query.limit ?? 200), 10);
+  const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 200, 1), MAX_LIMIT);
+
+  try {
+    let query = supabase
+      .from("transacciones_entrantes")
+      .select("id, fecha, descripcion, referencia, monto_entrada, sucursal, moneda, created_at")
+      .order("fecha", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(limit);
+
+    if (from) query = query.gte("fecha", from);
+    if (to) query = query.lte("fecha", to);
+    if (q) query = query.or(`descripcion.ilike.%${q}%,referencia.ilike.%${q}%,sucursal.ilike.%${q}%`);
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+
+    return res.json({ items: data ?? [] });
+  } catch (err: any) {
+    console.error("[bank-transactions] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default r;
 
 

@@ -11,5 +11,8 @@ web/node_modules/
 web/dist/
 web/.env
 
+# bank-sync: script local (no se despliega, no va en el repo compartido)
+bank-sync/
+
 # Misc
 .DS_Store
