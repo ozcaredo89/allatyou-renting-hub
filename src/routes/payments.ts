@@ -374,16 +374,56 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
     return res.status(500).json({ error: dvErr.message });
   }
 
-  // Verificar si tiene anticipo activo para incluir cuota en el desglose
-  const { data: advData } = await supabase
-    .from("operational_advances")
-    .select("id, daily_installment, current_installment, installments, status")
-    .eq("plate", plate)
-    .eq("status", "active")
-    .maybeSingle();
+  // Verificar si tiene contrato activo de leasing para obtener la tarifa contractual
+  let dailyRate = driverVw?.default_amount ? Number(driverVw.default_amount) : 0;
+  let isLeasing = false;
+  const leasingContract = await getActiveLeasingContract(plate);
+  if (leasingContract) {
+    isLeasing = true;
+    const { data: nextCuota } = await supabase
+      .from("leasing_schedule")
+      .select("maintenance_expected, admin_expected, interest_expected, principal_expected")
+      .eq("contract_id", leasingContract.id)
+      .neq("status", "paid")
+      .order("installment_no", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
+    if (nextCuota) {
+      dailyRate = Math.round(
+        Number(nextCuota.maintenance_expected) +
+        Number(nextCuota.admin_expected) +
+        Number(nextCuota.interest_expected) +
+        Number(nextCuota.principal_expected)
+      );
+    }
+  }
+
+  // Verificar si tiene anticipo activo para incluir cuota en el desglose (solo si no es leasing)
+  let advanceSummary: any = null;
   const dailyInstallment = driverVw?.daily_installment ? Number(driverVw.daily_installment) : 0;
-  const dailyRate = driverVw?.default_amount ? Number(driverVw.default_amount) : 0;
+
+  if (!isLeasing) {
+    const { data: advData } = await supabase
+      .from("operational_advances")
+      .select("id, daily_installment, current_installment, installments, status")
+      .eq("plate", plate)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (advData) {
+      const cuotasPendientes = Math.max(0, (advData.installments ?? 0) - (advData.current_installment ?? 0));
+      const cuotasEnLote = Math.min(days_count, cuotasPendientes);
+      advanceSummary = {
+        advance_id: advData.id,
+        daily_installment: dailyInstallment,
+        current_installment: advData.current_installment ?? 0,
+        total_installments: advData.installments ?? 0,
+        cuotas_pendientes: cuotasPendientes,
+        cuotas_en_lote: cuotasEnLote,
+      };
+    }
+  }
 
   // Calcular fechas pagables reales (saltando Pico y Placa / Calendario)
   let payableDates: string[] = [];
@@ -394,27 +434,12 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
     return res.status(500).json({ error: `Error calculando fechas: ${e.message}` });
   }
 
-  // Calcular cuotas de anticipo pendientes a cubrir en el lote
-  let advanceSummary: any = null;
-  if (advData) {
-    const cuotasPendientes = Math.max(0, (advData.installments ?? 0) - (advData.current_installment ?? 0));
-    const cuotasEnLote = Math.min(days_count, cuotasPendientes);
-    advanceSummary = {
-      advance_id: advData.id,
-      daily_installment: dailyInstallment,
-      current_installment: advData.current_installment ?? 0,
-      total_installments: advData.installments ?? 0,
-      cuotas_pendientes: cuotasPendientes,
-      cuotas_en_lote: cuotasEnLote,
-    };
-  }
-
   // Desglose por día
   const dayBreakdown = payableDates.map((date, idx) => {
     const amount = dailyRate;
-    // El installment_number viene del anticipo activo, no de drivers_vw
-    const baseInstNo = advanceSummary ? (advanceSummary.current_installment + idx + 1) : null;
-    const instNo = driverVw?.installment_number != null ? baseInstNo : null;
+    // Si es leasing, no hay cuota de crédito de anticipo operativo
+    const baseInstNo = (!isLeasing && advanceSummary) ? (advanceSummary.current_installment + idx + 1) : null;
+    const instNo = (!isLeasing && driverVw?.installment_number != null) ? baseInstNo : null;
     const split = instNo != null ? computeInstallmentSplit(amount) : computeBaseSplit(amount);
     return {
       date,
@@ -431,6 +456,7 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
     start_date,
     days_count,
     daily_rate: dailyRate,
+    is_leasing: isLeasing,
     payable_dates: payableDates,
     total_amount: totalAmount,
     day_breakdown: dayBreakdown,
@@ -557,7 +583,7 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "No se encontraron fechas pagables para el período solicitado." }); return;
   }
 
-  // Anti-colisión: verificar que ninguna fecha del lote tenga pago activo
+  // Anti-colisión: verificar que ninguna fecha del lote tenga pago activo (bloqueo estricto 409)
   const { data: collision } = await supabase
     .from("payments")
     .select("id, payment_date")
@@ -566,26 +592,147 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
     .in("status", ["pending", "confirmed"])
     .limit(5);
 
-  if (collision && collision.length > 0 && skip_receipt_check !== true) {
+  if (collision && collision.length > 0) {
     const colDates = collision.map((c: any) => c.payment_date).join(", ");
     res.status(409).json({
       code: "BATCH_DATE_COLLISION",
-      error: `Ya existen pagos para las fechas: ${colDates}. Confirma para registrar de todas formas.`,
+      error: `Ya existen pagos registrados para las fechas: ${colDates}. Por favor revise las fechas del lote.`,
       collision_dates: collision.map((c: any) => c.payment_date),
     }); return;
   }
 
-  // Calcular split por día y construir array para el RPC
-  // El comprobante (proof_url, reference_number, upload_id) solo va en el día 1 (índice 0)
-  const reference_number = uploadData?.reference_number
+  const totalBatchAmount = amt * payableDates.length;
+
+  // ---------------- Validación de Comprobante (Lectura DB + Anomalías) ----------------
+  let finalReceiptStatus = uploadData?.ocr_status || "unverified";
+  let reference_number = uploadData?.reference_number
     ? String(uploadData.reference_number).trim().toUpperCase()
     : null;
-  const receipt_status = uploadData?.ocr_status || "unverified";
+  const provider_name = uploadData?.provider_name || null;
+  const receipt_date = uploadData?.receipt_date || null;
+  let flagDetailsObj: FlagDetails | null = null;
 
+  if (uploadData && (finalReceiptStatus === "verified" || finalReceiptStatus === "unverified")) {
+    const warnings: string[] = [];
+    let duplicateIds: number[] = [];
+    let matchType: "reference" | "amount_date" | undefined;
+
+    // 1. Buscar duplicado por referencia exacta en payments
+    if (reference_number) {
+      const { data: dupRef } = await supabase
+        .from("payments")
+        .select("id")
+        .eq("reference_number", reference_number)
+        .limit(5);
+
+      if (dupRef && dupRef.length > 0) {
+        warnings.push("Se detectó otro pago con el mismo número de referencia.");
+        duplicateIds = dupRef.map((d: any) => d.id);
+        matchType = "reference";
+      }
+    }
+
+    // 2. Validar que el monto del comprobante coincida con el total del lote
+    const ocrAmount = uploadData?.amount ?? null;
+    let amountMismatch: { db_amount: number; ocr_amount: number; difference: number } | null = null;
+    if (ocrAmount !== null && ocrAmount !== totalBatchAmount) {
+      warnings.push(
+        `El monto total del lote ($${totalBatchAmount.toLocaleString("es-CO")}) no coincide con el valor del comprobante ($${ocrAmount.toLocaleString("es-CO")}).`
+      );
+      amountMismatch = { db_amount: totalBatchAmount, ocr_amount: ocrAmount, difference: totalBatchAmount - ocrAmount };
+    }
+
+    if (duplicateIds.length > 0 || amountMismatch) {
+      flagDetailsObj = {};
+      if (duplicateIds.length > 0 && matchType) {
+        flagDetailsObj.duplicate_payment_ids = duplicateIds;
+        flagDetailsObj.match_type = matchType;
+        if (matchType === "reference" && reference_number) {
+          flagDetailsObj.matched_reference = reference_number;
+        }
+      }
+      if (amountMismatch) {
+        flagDetailsObj.db_amount = amountMismatch.db_amount;
+        flagDetailsObj.ocr_amount = amountMismatch.ocr_amount;
+        flagDetailsObj.difference = amountMismatch.difference;
+      }
+    }
+
+    if (warnings.length > 0) {
+      if (skip_receipt_check === true) {
+        finalReceiptStatus = duplicateIds.length > 0 ? "suspicious_duplicate" : "suspicious_amount_mismatch";
+      } else {
+        // Bloquear con 409 para que el frontend muestre el modal
+        res.status(409).json({
+          code: "RECEIPT_WARNING",
+          error: warnings.join(" "),
+          warnings,
+          ocr_reference: reference_number,
+          ocr_amount: ocrAmount ?? totalBatchAmount,
+          ocr_date: receipt_date,
+        });
+        return;
+      }
+    }
+  }
+
+  // Obtener cuotas de anticipo operativo a avanzar (SOLO si instNo != null y safeStatus != rejected)
+  let advanceUpdates: any[] = [];
+  let startingInstallmentNo: number | null = instNo;
+
+  if (instNo != null && safeStatus !== "rejected") {
+    const advRes = await getActiveAdvanceByPlateOrError(upperPlate, batchStartDate, null);
+    if (advRes.kind === "multiple") {
+      res.status(400).json({
+        error: "No puede haber más de un préstamo activo por placa. Consulte el encargado.",
+      }); return;
+    }
+    if (advRes.kind === "none") {
+      res.status(400).json({
+        error: "El pago indica cuota de anticipo, pero no hay ningún préstamo activo para esta placa.",
+      }); return;
+    }
+    if (advRes.kind === "error") {
+      res.status(500).json({ error: advRes.error }); return;
+    }
+
+    const advance = advRes.advance;
+    // Sincronizar cuota inicial con la siguiente cuota real en la base de datos
+    const nextDbCuota = (advance.current_installment ?? 0) + 1;
+    startingInstallmentNo = nextDbCuota;
+
+    for (let i = 0; i < payableDates.length; i++) {
+      const pDate = payableDates[i]!;
+      const cuotaNo = nextDbCuota + i;
+      if (cuotaNo > (advance.installments ?? 0)) break; // límite de cuotas del préstamo
+
+      const ensured = await ensureScheduleRow({
+        advance_id: advance.id,
+        start_date: advance.start_date,
+        installment_no: cuotaNo,
+        payment_date: pDate,
+        plate: upperPlate,
+        payment_id: null,
+        desired_status: "paid",
+      });
+
+      if (ensured.ok && ensured.row.status !== "paid") {
+        advanceUpdates.push({
+          schedule_id: ensured.row.id,
+          desired_status: "paid",
+          paid_date: pDate,
+        });
+      }
+    }
+  }
+
+  // Calcular split por día y construir array para el RPC
+  // El comprobante (proof_url, reference_number, upload_id) solo va en el día 1 (índice 0)
   const batchId = randomUUID();
   const batchRows = payableDates.map((date: string, idx: number) => {
     const dayAmt = amt; // misma tarifa para todos los días del lote
-    const split = instNo != null ? computeInstallmentSplit(dayAmt) : computeBaseSplit(dayAmt);
+    const dayInstNo = startingInstallmentNo != null ? startingInstallmentNo + idx : null;
+    const split = dayInstNo != null ? computeInstallmentSplit(dayAmt) : computeBaseSplit(dayAmt);
     const isFirst = idx === 0;
     return {
       payer_name: payer_name.trim(),
@@ -593,7 +740,7 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
       driver_id: v.current_driver_id ?? null,
       payment_date: date,
       amount: dayAmt,
-      installment_number: instNo != null ? instNo + idx : null,
+      installment_number: dayInstNo,
       proof_url: isFirst ? proof_url : null,
       status: safeStatus,
       insurance_amount: split.insurance,
@@ -604,51 +751,15 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
       installment_shortfall: "shortfall" in split ? (split as any).shortfall : null,
       // reference_number ÚNICO solo en la fila 1 (índice único en payments)
       reference_number: isFirst ? (skip_receipt_check ? null : reference_number) : null,
-      provider_name: isFirst ? (uploadData?.provider_name ?? null) : null,
-      receipt_date: isFirst ? (uploadData?.receipt_date ?? null) : null,
-      receipt_status: isFirst ? receipt_status : "unverified",
-      flag_details: null,
+      provider_name: isFirst ? provider_name : null,
+      receipt_date: isFirst ? receipt_date : null,
+      receipt_status: isFirst ? finalReceiptStatus : "unverified",
+      flag_details: isFirst ? flagDetailsObj : null,
       batch_id: batchId,
       batch_index: idx,
       batch_total_days: payableDates.length,
     };
   });
-
-  // Obtener cuotas de anticipo operativo a avanzar (si aplica)
-  let advanceUpdates: any[] = [];
-  if (instNo != null || true) {
-    // Buscamos anticipo activo para el lote (siempre lo intentamos para renting con anticipo)
-    const { data: advData } = await supabase
-      .from("operational_advances")
-      .select("id, current_installment, installments, start_date, status")
-      .eq("plate", upperPlate)
-      .eq("status", "active")
-      .maybeSingle();
-
-    if (advData) {
-      // Para cada día del lote, avanzar la cuota correspondiente si aún hay pendientes
-      for (let i = 0; i < payableDates.length; i++) {
-        const cuotaNo = (advData.current_installment ?? 0) + i + 1;
-        if (cuotaNo > (advData.installments ?? 0)) break; // ya no hay cuotas pendientes
-
-        // Buscar o crear la fila del schedule para esta cuota
-        const { data: schedRow } = await supabase
-          .from("operational_advance_schedule")
-          .select("id, status")
-          .eq("advance_id", advData.id)
-          .eq("installment_no", cuotaNo)
-          .maybeSingle();
-
-        if (schedRow && schedRow.status !== "paid") {
-          advanceUpdates.push({
-            schedule_id: schedRow.id,
-            desired_status: "paid",
-            paid_date: payableDates[i],
-          });
-        }
-      }
-    }
-  }
 
   // Paso 1: Llamar al RPC transaccional (ACID en Postgres)
   const { data: rpcResult, error: rpcErr } = await supabase.rpc("create_payment_batch", {
@@ -683,8 +794,8 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
     }
   }
 
-  // Actualizar current_installment en operational_advances si avanzamos cuotas
-  if (advanceUpdates.length > 0) {
+  // Actualizar current_installment en operational_advances solo si avanzamos cuotas y instNo != null
+  if (advanceUpdates.length > 0 && instNo != null) {
     const { data: advData2 } = await supabase
       .from("operational_advances")
       .select("id, current_installment, installments")

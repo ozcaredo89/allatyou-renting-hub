@@ -522,6 +522,17 @@ r.get("/summary", async (req: Request, res: Response) => {
   const lastPending = [...schedule].reverse().find((r: any) => r.status !== "paid");
   const estimatedEndDate = lastPending?.due_date ?? null;
 
+  // Cuota diaria contractual obtenida del cronograma de leasing
+  const firstPending = [...schedule].reverse().find((r: any) => r.status !== "paid") || schedule[0];
+  const dailyRate = firstPending
+    ? Math.round(
+        Number(firstPending.maintenance_expected) +
+        Number(firstPending.admin_expected) +
+        Number(firstPending.interest_expected) +
+        Number(firstPending.principal_expected)
+      )
+    : null;
+
   return res.json({
     has_leasing: true,
     contract_id: contract.id,
@@ -530,7 +541,7 @@ r.get("/summary", async (req: Request, res: Response) => {
     financed_capital: Number(contract.financed_capital),
     start_date: contract.start_date,
     status: contract.status,
-    daily_rate: contract.daily_rate ? Number(contract.daily_rate) : null,
+    daily_rate: dailyRate,
     total_installments: totalInstallments,
     paid_installments: paidInstallments,
     pending_installments: pendingInstallments,
