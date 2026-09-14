@@ -658,7 +658,9 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
   });
 
   if (rpcErr || !rpcResult?.ok) {
-    res.status(500).json({ error: rpcErr?.message ?? "create_payment_batch RPC falló" }); return;
+    const errMsg = rpcErr?.message ?? "create_payment_batch RPC falló";
+    const status = errMsg.includes("Conflicto de fecha") ? 409 : 500;
+    res.status(status).json({ error: errMsg }); return;
   }
 
   // Obtener IDs insertados

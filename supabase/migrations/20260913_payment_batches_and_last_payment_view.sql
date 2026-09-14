@@ -1,12 +1,15 @@
 -- =============================================================================
 -- Migración: Pagos multi-día (lotes / batch payments)
--- 
--- Incluye:
---   1. Versionar get_payable_days (función auxiliar para mora dinámica)
---   2. Versionar vehicle_last_payment (vista de última fecha de pago)
---   3. Nuevas columnas en payments: batch_id, batch_index, batch_total_days
---   4. Índice para búsqueda eficiente por lote
---   5. RPC transaccional create_payment_batch
+--
+-- IMPORTANTE ANTES DE APLICAR:
+--   Verificar que get_payable_days y vehicle_last_payment en producción coincidan
+--   con este texto usando:
+--     SELECT pg_get_functiondef('get_payable_days'::regproc);
+--     SELECT pg_get_viewdef('vehicle_last_payment', true);
+--   CREATE OR REPLACE VIEW solo permite agregar columnas al final, nunca quitarlas
+--   o reordenarlas. En este archivo el orden de columnas es 100% idéntico a producción:
+--   (plate, owner_name, payment_date, amount, ref_date, today_bogota, days_since,
+--    is_overdue, installment_number, proof_url).
 -- =============================================================================
 
 -- 1. Función auxiliar: cuenta días efectivos a pagar descontando Pico y Placa / Calendario
@@ -32,22 +35,22 @@ BEGIN
 
   -- Empezamos a contar desde el día siguiente al último pago
   v_curr := p_start_date + 1;
-  
+
   WHILE v_curr <= p_end_date LOOP
     v_is_no_pay := FALSE;
     v_dow := EXTRACT(ISODOW FROM v_curr); -- 1 (Lunes) a 7 (Domingo)
-    
+
     -- A) Chequeo Reglas Semanales (Pico y Placa)
     IF EXISTS (
-      SELECT 1 FROM no_pay_rules 
-      WHERE city = 'Cali' 
-        AND weekday = v_dow 
-        AND v_curr >= CAST(active_from AS DATE) AND v_curr <= CAST(active_to AS DATE) 
+      SELECT 1 FROM no_pay_rules
+      WHERE city = 'Cali'
+        AND weekday = v_dow
+        AND v_curr >= CAST(active_from AS DATE) AND v_curr <= CAST(active_to AS DATE)
         AND v_last_digit = ANY(ends_in)
     ) THEN
       v_is_no_pay := TRUE;
     END IF;
-    
+
     -- B) Chequeo Calendario (Feriados o Excepciones de No Pago)
     IF EXISTS (
       SELECT 1 FROM no_pay_calendar
@@ -61,7 +64,7 @@ BEGIN
     IF NOT v_is_no_pay THEN
       v_days := v_days + 1;
     END IF;
-    
+
     v_curr := v_curr + 1;
   END LOOP;
 
@@ -69,7 +72,9 @@ BEGIN
 END;
 $$;
 
--- 2. Vista de último pago por vehículo (usa get_payable_days para mora dinámica)
+-- 2. Vista de último pago por vehículo (usa get_payable_days para mora dinámica).
+--    FIX batch: proof_url se resuelve vía batch_id cuando la fila más reciente
+--    pertenece a un lote (solo batch_index=0 guarda proof_url; las demás lo tienen NULL).
 CREATE OR REPLACE VIEW public.vehicle_last_payment
 WITH (security_invoker = true) AS
 SELECT
@@ -79,23 +84,38 @@ SELECT
   lp.amount,
   COALESCE(lp.payment_date, v.created_at::date) AS ref_date,
   (now() AT TIME ZONE 'America/Bogota'::text)::date AS today_bogota,
-  
+
   -- Días pagables reales desde el último pago (descontando Pico y Placa)
   public.get_payable_days(
     v.plate,
     COALESCE(lp.payment_date, v.created_at::date),
     (now() AT TIME ZONE 'America/Bogota'::text)::date
   ) AS days_since,
-  
+
   -- Es mora si debe 2 días pagables o más
   public.get_payable_days(
     v.plate,
     COALESCE(lp.payment_date, v.created_at::date),
     (now() AT TIME ZONE 'America/Bogota'::text)::date
   ) >= 2 AS is_overdue,
-  
+
   lp.installment_number,
-  lp.proof_url
+
+  -- FIX: si el pago más reciente es parte de un lote, buscamos proof_url
+  -- en la fila con proof_url no nulo de ese batch. Para pagos
+  -- individuales (batch_id IS NULL) lo tomamos directo.
+  CASE
+    WHEN lp.batch_id IS NOT NULL THEN (
+      SELECT p2.proof_url
+      FROM payments p2
+      WHERE p2.batch_id = lp.batch_id
+        AND p2.proof_url IS NOT NULL
+      ORDER BY p2.batch_index ASC
+      LIMIT 1
+    )
+    ELSE lp.proof_url
+  END AS proof_url
+
 FROM
   vehicles v
   LEFT JOIN LATERAL (
@@ -103,7 +123,8 @@ FROM
       p.payment_date,
       p.amount,
       p.installment_number,
-      p.proof_url
+      p.proof_url,
+      p.batch_id
     FROM
       payments p
     WHERE
@@ -120,18 +141,39 @@ ALTER TABLE payments
   ADD COLUMN IF NOT EXISTS batch_index INT NULL,
   ADD COLUMN IF NOT EXISTS batch_total_days INT NULL;
 
--- 4. Índice para búsqueda eficiente por batch_id (solo filas que pertenecen a un lote)
+-- 4. Índice para búsqueda eficiente por batch_id (solo filas de lote)
 CREATE INDEX IF NOT EXISTS idx_payments_batch_id
   ON payments(batch_id)
   WHERE batch_id IS NOT NULL;
 
--- 5. RPC transaccional para crear N pagos en un solo commit ACID
+-- 5. Índices únicos parciales para anti-colisión de fechas a nivel DB.
+--    Cierran la ventana de carrera entre el SELECT de Node y el INSERT del RPC.
+--    Evitan duplicidad de pagos pending o confirmed para una misma fecha/placa.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_plate_date_pending_unique
+  ON payments(plate, payment_date)
+  WHERE status = 'pending';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_plate_date_confirmed_unique
+  ON payments(plate, payment_date)
+  WHERE status = 'confirmed';
+
+-- 6. RPC transaccional para crear N pagos en un solo commit ACID
+--    + chequeo anti-colisión en transacción
 --    + avanzar cuotas en operational_advance_schedule
 --
---    p_batch_id: UUID del lote (generado por Node antes de llamar)
---    p_payments: JSONB array de objetos con todos los campos de cada fila de payments
---    p_advance_updates: JSONB array de { schedule_id, desired_status, paid_date }
---                       para actualizar cuotas de anticipo operativo en la misma TX
+--    Correcciones aplicadas:
+--      [CRÍTICO] driver_id castea a BIGINT (no UUID): drivers.id es BIGINT en todo
+--                el esquema. El cast UUID abortaba cualquier pago con conductor asignado.
+--      [BUG]     flag_details usa jsonb_typeof() = 'null' en vez de ->> = 'null':
+--                el operador ->> sobre JSON null devuelve NULL de SQL, no el texto
+--                'null', por lo que la comparación nunca era TRUE y los lotes
+--                sin marca guardaban un literal JSON null en vez de NULL real.
+--      [RIESGO]  GET DIAGNOSTICS ROW_COUNT en el UPDATE de cuotas: si una cuota
+--                ya estaba 'paid' o el schedule_id no existe, 0 filas -> RAISE
+--                aborta el lote completo en lugar de dejar pagos huérfanos sin cuota.
+--      [ACID]    Chequeo anti-colisión dentro de la transacción plpgsql antes de
+--                insertar cualquier fila, garantizando atomicidad real frente a
+--                solicitudes concurrentes.
 CREATE OR REPLACE FUNCTION public.create_payment_batch(
   p_batch_id UUID,
   p_payments JSONB,
@@ -147,8 +189,28 @@ DECLARE
   v_inserted_ids BIGINT[] := '{}';
   v_new_id BIGINT;
   v_schedule_id BIGINT;
+  v_row_count INTEGER;
+  v_existing_status TEXT;
 BEGIN
-  -- Insertar cada fila del lote
+  -- 1. Anti-colisión dentro de la transacción ACID:
+  --    Verificar que ninguna de las fechas del lote tenga ya un pago activo (pending o confirmed)
+  FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payments)
+  LOOP
+    SELECT status INTO v_existing_status
+    FROM payments
+    WHERE plate = (v_payment->>'plate')
+      AND payment_date = (v_payment->>'payment_date')::DATE
+      AND status IN ('pending', 'confirmed')
+    LIMIT 1;
+
+    IF v_existing_status IS NOT NULL THEN
+      RAISE EXCEPTION
+        'Conflicto de fecha: ya existe un pago (%) para la placa % en la fecha %',
+        v_existing_status, (v_payment->>'plate'), (v_payment->>'payment_date');
+    END IF;
+  END LOOP;
+
+  -- 2. Insertar cada fila del lote
   FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payments)
   LOOP
     INSERT INTO payments (
@@ -177,7 +239,8 @@ BEGIN
     ) VALUES (
       (v_payment->>'payer_name'),
       (v_payment->>'plate'),
-      NULLIF(v_payment->>'driver_id', '')::UUID,
+      -- FIX CRÍTICO: BIGINT, no UUID. drivers.id es BIGINT en todo el esquema.
+      NULLIF(v_payment->>'driver_id', '')::BIGINT,
       (v_payment->>'payment_date')::DATE,
       (v_payment->>'amount')::BIGINT,
       NULLIF(v_payment->>'installment_number', '')::INT,
@@ -193,9 +256,13 @@ BEGIN
       NULLIF(v_payment->>'provider_name', ''),
       NULLIF(v_payment->>'receipt_date', '')::DATE,
       COALESCE(v_payment->>'receipt_status', 'unverified'),
-      CASE WHEN v_payment->'flag_details' IS NULL OR v_payment->>'flag_details' = 'null'
-           THEN NULL
-           ELSE (v_payment->'flag_details')::JSONB
+      -- FIX: jsonb_typeof detecta correctamente el escalar JSON null.
+      -- ->> sobre null JSON devuelve NULL de SQL (no el string 'null').
+      CASE
+        WHEN v_payment->'flag_details' IS NULL
+          OR jsonb_typeof(v_payment->'flag_details') = 'null'
+        THEN NULL
+        ELSE (v_payment->'flag_details')::JSONB
       END,
       p_batch_id,
       (v_payment->>'batch_index')::INT,
@@ -206,12 +273,13 @@ BEGIN
     v_inserted_ids := array_append(v_inserted_ids, v_new_id);
   END LOOP;
 
-  -- Avanzar cuotas de anticipo operativo (si hay)
+  -- 3. Avanzar cuotas de anticipo operativo (si hay)
   FOR v_update IN SELECT * FROM jsonb_array_elements(p_advance_updates)
   LOOP
     v_schedule_id := (v_update->>'schedule_id')::BIGINT;
-    
-    -- Solo actualizar si la cuota no está ya marcada como pagada (protección)
+
+    -- FIX: verificar ROW_COUNT. Si la cuota ya estaba 'paid' (carrera)
+    -- o el schedule_id no existe, 0 filas -> RAISE fuerza rollback completo.
     UPDATE operational_advance_schedule
     SET
       status    = COALESCE(v_update->>'desired_status', 'paid'),
@@ -219,6 +287,14 @@ BEGIN
     WHERE
       id = v_schedule_id
       AND status != 'paid';
+
+    GET DIAGNOSTICS v_row_count = ROW_COUNT;
+
+    IF v_row_count = 0 THEN
+      RAISE EXCEPTION
+        'Cuota % ya estaba pagada o no existe — lote revertido para evitar inconsistencia',
+        v_schedule_id;
+    END IF;
   END LOOP;
 
   RETURN jsonb_build_object(
@@ -228,7 +304,7 @@ BEGIN
   );
 
 EXCEPTION WHEN OTHERS THEN
-  -- La transacción se revierte automáticamente al lanzar la excepción
+  -- La transacción se revierte automáticamente; relanzamos para que Node reciba el error.
   RAISE;
 END;
 $$;
