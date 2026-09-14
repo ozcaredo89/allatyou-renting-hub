@@ -100,9 +100,11 @@ function clampNonNeg(n: number) {
 function computeBaseSplit(amount: number) {
   const a = clampNonNeg(amount);
   const insurance = a >= 5000 ? 5000 : 0;
-  const delivery = a > insurance ? Math.min(65000, a - insurance) : 0;
-  const credit = Math.max(0, a - insurance - delivery);
-  return { insurance, delivery, credit };
+  const maintenance = a > insurance ? Math.min(6000, a - insurance) : 0;
+  // Sin tope: el remanente completo va a delivery (sin cuota de crédito)
+  const delivery = a > (insurance + maintenance) ? a - insurance - maintenance : 0;
+  const credit = 0; // siempre 0 sin installment_number
+  return { insurance, maintenance, delivery, credit };
 }
 
 function computeInstallmentSplit(amount: number) {
@@ -191,6 +193,41 @@ export default function App() {
   const [leasingInfo, setLeasingInfo] = useState<LeasingSummary | null>(null);
   const [showLeasingPopup, setShowLeasingPopup] = useState(false);
   const [loadingLeasing, setLoadingLeasing] = useState(false);
+
+  // Modalidad de pago multi-día
+  type PaymentMode = "1d" | "week" | "month" | "custom";
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>("1d");
+  const [customDays, setCustomDays] = useState<string>("");
+
+  type BatchPreview = {
+    plate: string;
+    start_date: string;
+    days_count: number;
+    daily_rate: number;
+    payable_dates: string[];
+    total_amount: number;
+    day_breakdown: Array<{
+      date: string;
+      amount: number;
+      insurance: number;
+      maintenance: number;
+      delivery: number;
+      credit: number;
+      installment_number: number | null;
+    }>;
+    advance: {
+      advance_id: number;
+      daily_installment: number;
+      current_installment: number;
+      total_installments: number;
+      cuotas_pendientes: number;
+      cuotas_en_lote: number;
+    } | null;
+    driver_name: string | null;
+  };
+  const [batchPreview, setBatchPreview] = useState<BatchPreview | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const [f, setF] = useState({
     payer_name: "",
@@ -461,6 +498,63 @@ export default function App() {
     }
   }
 
+  // --- Batch Preview: días según modalidad ---
+  // 1 semana = 6 días pagables (hay 1 día de pico y placa)
+  // 1 mes = 26 días pagables aprox. (30 días - 4 pico y placa)
+  const MODE_DAYS: Record<"1d" | "week" | "month", number> = { "1d": 1, week: 6, month: 26 };
+
+  const daysCount = paymentMode === "custom"
+    ? (parseInt(customDays, 10) || 0)
+    : MODE_DAYS[paymentMode as "1d" | "week" | "month"];
+
+  async function fetchBatchPreview() {
+    if (!plateValid || !plateExists || !f.plate || !f.payment_date || daysCount < 2) {
+      setBatchPreview(null);
+      setPreviewError(null);
+      return;
+    }
+    setLoadingPreview(true);
+    setPreviewError(null);
+    try {
+      const q = new URLSearchParams({
+        plate: f.plate.toUpperCase(),
+        start_date: f.payment_date,
+        days_count: String(daysCount),
+      });
+      const rs = await fetch(`${API}/payments/batch-preview?` + q.toString());
+      if (!rs.ok) {
+        const json = await rs.json().catch(() => ({}));
+        setPreviewError(json.error || "Error cargando vista previa");
+        setBatchPreview(null);
+        return;
+      }
+      const data = await rs.json();
+      setBatchPreview(data);
+    } catch {
+      setPreviewError("No se pudo cargar la vista previa");
+      setBatchPreview(null);
+    } finally {
+      setLoadingPreview(false);
+    }
+  }
+
+  // Cargar preview cuando cambia modalidad, placa o fecha de inicio
+  useEffect(() => {
+    if (paymentMode === "1d") {
+      setBatchPreview(null);
+      setPreviewError(null);
+      return;
+    }
+    if (paymentMode === "custom" && (!customDays || parseInt(customDays) < 2)) {
+      setBatchPreview(null);
+      setPreviewError(null);
+      return;
+    }
+    const timer = setTimeout(fetchBatchPreview, 400);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentMode, customDays, f.plate, f.payment_date, plateValid, plateExists]);
+
   // --- Sugerencias automáticas (Incluyendo Fecha) ---
   useEffect(() => {
     if (!lastSuggestion) return;
@@ -660,6 +754,8 @@ export default function App() {
         }
       }
 
+      const isBatch = paymentMode !== "1d" && daysCount > 1;
+
       const body: any = {
         payer_name: f.payer_name.trim(),
         plate: f.plate.trim().toUpperCase(),
@@ -671,8 +767,15 @@ export default function App() {
         status: f.status as Payment["status"],
       };
 
-      // Fase 2: enviamos override si el usuario lo activó
-      if (editSplit) {
+      // Campos adicionales para pago en lote
+      if (isBatch) {
+        body.batch_mode = true;
+        body.days_count = daysCount;
+        body.start_date = f.payment_date; // fecha de inicio del lote
+      }
+
+      // Fase 2: enviamos override si el usuario lo activó (solo aplica en 1 día)
+      if (editSplit && !isBatch) {
         body.force_override = true;
         body.insurance_amount = splitN.i;
         body.delivery_amount = splitN.d;
@@ -772,9 +875,9 @@ export default function App() {
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium">Fecha</label>
+              <label className="mb-1 block text-sm font-medium">Fecha de inicio</label>
               {input("payment_date", { type: "date", required: true })}
-              {noPayHint?.noPay ? (
+              {noPayHint?.noPay && paymentMode === "1d" ? (
                 <div className="mt-1 text-xs text-amber-700">
                   ⚠️ No paga hoy (pico y placa).{" "}
                   {noPayHint.suggestedDate ? `Sugerido: ${noPayHint.suggestedDate}` : ""}
@@ -782,17 +885,131 @@ export default function App() {
               ) : (
                 f.payment_date &&
                 plateValid &&
-                plateExists && (
+                plateExists && paymentMode === "1d" && (
                   <div className="mt-1 text-xs text-green-700">✔️ Fecha válida para registrar.</div>
                 )
               )}
             </div>
 
+            {/* Selector de Modalidad de Pago */}
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-sm font-medium">Modalidad de pago</label>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    { key: "1d", label: "1 Día" },
+                    { key: "week", label: "1 Semana (6 días)" },
+                    { key: "month", label: "1 Mes (~26 días)" },
+                    { key: "custom", label: "Personalizado" },
+                  ] as { key: "1d" | "week" | "month" | "custom"; label: string }[]
+                ).map(({ key, label }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => {
+                      setPaymentMode(key);
+                      setBatchPreview(null);
+                      setPreviewError(null);
+                    }}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                      paymentMode === key
+                        ? "border-black bg-black text-white"
+                        : "border-gray-300 bg-white text-gray-700 hover:border-gray-500"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {paymentMode === "custom" && (
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="number"
+                    className="w-24 rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black/60"
+                    placeholder="Días"
+                    min="2"
+                    max="31"
+                    value={customDays}
+                    onChange={(e) => setCustomDays(e.target.value)}
+                  />
+                  <span className="text-xs text-gray-500">días (máx. 31)</span>
+                </div>
+              )}
+              {paymentMode !== "1d" && (
+                <div className="mt-1 text-xs text-blue-600">
+                  💡 El comprobante cubre {daysCount} días de pago. Solo se sube 1 imagen.
+                </div>
+              )}
+            </div>
+
+            {/* Banner de vista previa del lote */}
+            {paymentMode !== "1d" && daysCount >= 2 && (
+              <div className="md:col-span-3">
+                {loadingPreview && (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-600 animate-pulse">
+                    📅 Calculando fechas pagables...
+                  </div>
+                )}
+                {previewError && !loadingPreview && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-600">
+                    ⚠️ {previewError}
+                  </div>
+                )}
+                {batchPreview && !loadingPreview && (
+                  <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">📅</span>
+                      <div>
+                        <p className="text-sm font-bold text-blue-900">
+                          Lote de {batchPreview.payable_dates.length} día(s) pagable(s)
+                        </p>
+                        <p className="text-xs text-blue-700">
+                          Desde: <strong>{batchPreview.payable_dates[0]}</strong>
+                          {" · "}
+                          Hasta: <strong>{batchPreview.payable_dates[batchPreview.payable_dates.length - 1]}</strong>
+                        </p>
+                      </div>
+                      <div className="ml-auto text-right">
+                        <p className="text-xs text-blue-600">Total del lote</p>
+                        <p className="text-lg font-bold text-blue-900">${fmtCOP.format(batchPreview.total_amount)}</p>
+                      </div>
+                    </div>
+
+                    {/* Fechas pagables */}
+                    <div className="flex flex-wrap gap-1">
+                      {batchPreview.payable_dates.map((d) => (
+                        <span key={d} className="rounded-full bg-white border border-blue-200 px-2 py-0.5 text-xs text-blue-800">
+                          {d}
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Desglose diario */}
+                    {batchPreview.day_breakdown.length > 0 && (
+                      <div className="text-xs text-blue-700 border-t border-blue-200 pt-2">
+                        <span className="font-medium">Por día:</span>{" "}
+                        ${fmtCOP.format(batchPreview.daily_rate)} · Seguro: ${fmtCOP.format(batchPreview.day_breakdown[0].insurance)} · Mant: ${fmtCOP.format(batchPreview.day_breakdown[0].maintenance ?? 0)} · Entrega: ${fmtCOP.format(batchPreview.day_breakdown[0].delivery)}
+                      </div>
+                    )}
+
+                    {/* Info anticipo si aplica */}
+                    {batchPreview.advance && (
+                      <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                        💰 Anticipo activo: se avanzarán <strong>{batchPreview.advance.cuotas_en_lote}</strong> cuota(s) de ${fmtCOP.format(batchPreview.advance.daily_installment)} c/u
+                        {" ("}cuota {batchPreview.advance.current_installment + 1} a {batchPreview.advance.current_installment + batchPreview.advance.cuotas_en_lote}{" "}
+                        de {batchPreview.advance.total_installments}{")"}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Monto (COP) + tooltip */}
             <div>
               <label className="mb-1 block text-sm font-medium">
-                Monto (COP)
-                <InfoTooltip lines={tooltipLinesForCurrent} />
+                {paymentMode === "1d" ? "Monto (COP)" : "Monto por día (COP)"}
+                {paymentMode === "1d" && <InfoTooltip lines={tooltipLinesForCurrent} />}
               </label>
 
               <input

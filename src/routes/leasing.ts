@@ -530,6 +530,7 @@ r.get("/summary", async (req: Request, res: Response) => {
     financed_capital: Number(contract.financed_capital),
     start_date: contract.start_date,
     status: contract.status,
+    daily_rate: contract.daily_rate ? Number(contract.daily_rate) : null,
     total_installments: totalInstallments,
     paid_installments: paidInstallments,
     pending_installments: pendingInstallments,
