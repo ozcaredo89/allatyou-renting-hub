@@ -286,7 +286,8 @@ r.get("/", async (req: Request, res: Response) => {
   if (to) q = q.lte("date", to);
 
   if (plate) {
-    q = q.eq("expense_vehicles.plate", plate);
+    const safePlate = sanitizePostgrestIlike(plate);
+    q = q.ilike("expense_vehicles.plate", `%${safePlate}%`);
   }
 
   if (search) {
