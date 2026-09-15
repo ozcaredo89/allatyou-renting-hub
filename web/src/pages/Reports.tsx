@@ -374,8 +374,9 @@ export default function Reports() {
   return (
     <div className="min-h-screen p-4 sm:p-6 bg-gray-50/50">
       <div className="mx-auto max-w-7xl">
-        {/* Header con título y sección de exportación organizada */}
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        {/* Header: título arriba, barra de acciones abajo (envuelve en líneas
+            si no cabe, en vez de desbordarse fuera de la pantalla) */}
+        <div className="mb-6 space-y-4">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900">
               Reportes — Último pago por vehículo
@@ -385,11 +386,12 @@ export default function Reports() {
             </p>
           </div>
 
-          {/* Widget de exportación mensual */}
-          <div className="flex items-center gap-2 self-start sm:self-auto bg-white border border-gray-200/90 shadow-xs rounded-2xl p-1.5 sm:p-2">
-            <div className="flex items-center gap-1.5 px-2 text-gray-600">
+          {/* Cada control es un chip independiente: envuelve libremente en
+              varias líneas en vez de forzar el ancho de la pantalla. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 bg-white border border-gray-200/90 shadow-xs rounded-2xl px-3 py-2 shrink-0">
               <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
-              <span className="text-xs font-medium text-gray-600 hidden md:inline">Exportar mes:</span>
+              <span className="text-xs font-medium text-gray-600 hidden md:inline whitespace-nowrap">Exportar mes:</span>
               <input
                 type="month"
                 value={month}
@@ -397,36 +399,36 @@ export default function Reports() {
                 className="rounded-lg bg-gray-50 border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-black/60 cursor-pointer"
               />
             </div>
+
             <button
               type="button"
               onClick={downloadCsv}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-black px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-gray-800 disabled:opacity-50 transition-all cursor-pointer shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-2xl bg-black px-3.5 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-gray-800 disabled:opacity-50 transition-all cursor-pointer shrink-0 whitespace-nowrap"
               title="Descargar pagos del mes en CSV"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Descargar CSV</span>
             </button>
-          </div>
 
-          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => {
                 setBankModalQuery(null);
                 setShowBankModal(true);
               }}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 transition-all cursor-pointer shrink-0 self-start sm:self-auto"
+              className="inline-flex items-center gap-1.5 rounded-2xl bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 transition-all cursor-pointer shrink-0 whitespace-nowrap"
               title="Ver movimientos bancarios para conciliación"
             >
               <Landmark className="w-3.5 h-3.5" />
               <span>Conciliación bancaria</span>
             </button>
+
             <button
               type="button"
               onClick={handleReconcile}
               disabled={reconciling}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-white border border-emerald-300 px-3.5 py-2.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-all cursor-pointer shrink-0 self-start sm:self-auto"
+              className="inline-flex items-center gap-1.5 rounded-2xl border border-emerald-300 bg-white px-3.5 py-2.5 text-xs font-semibold text-emerald-700 shadow-xs hover:bg-emerald-50 disabled:opacity-50 transition-all cursor-pointer shrink-0 whitespace-nowrap"
               title="Cruzar pagos sin conciliar contra movimientos bancarios sin reclamar (misma fecha y monto exactos)"
             >
               {reconciling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
