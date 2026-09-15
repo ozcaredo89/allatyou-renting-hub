@@ -19,6 +19,9 @@ type BankTransaction = {
 interface BankReconciliationModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Referencia a buscar de una (ej. al abrir desde el badge "Conciliado"
+   * de un pago). Amplía el rango de fechas por si el movimiento es viejo. */
+  initialQuery?: string | null;
 }
 
 function defaultFromDate() {
@@ -27,7 +30,13 @@ function defaultFromDate() {
   return d.toISOString().slice(0, 10);
 }
 
-export function BankReconciliationModal({ isOpen, onClose }: BankReconciliationModalProps) {
+function wideFromDate() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 2);
+  return d.toISOString().slice(0, 10);
+}
+
+export function BankReconciliationModal({ isOpen, onClose, initialQuery }: BankReconciliationModalProps) {
   const [items, setItems] = useState<BankTransaction[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -35,13 +44,15 @@ export function BankReconciliationModal({ isOpen, onClose }: BankReconciliationM
   const [from, setFrom] = useState(defaultFromDate());
   const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
 
-  async function load() {
+  async function load(overrideQ?: string, overrideFrom?: string) {
     setLoading(true);
     setErrorMsg(null);
     try {
+      const effectiveQ = overrideQ ?? q;
+      const effectiveFrom = overrideFrom ?? from;
       const params = new URLSearchParams();
-      if (q.trim()) params.set("q", q.trim());
-      if (from) params.set("from", from);
+      if (effectiveQ.trim()) params.set("q", effectiveQ.trim());
+      if (effectiveFrom) params.set("from", effectiveFrom);
       if (to) params.set("to", to);
 
       let auth = ensureBasicAuth();
@@ -69,9 +80,17 @@ export function BankReconciliationModal({ isOpen, onClose }: BankReconciliationM
   }
 
   useEffect(() => {
-    if (isOpen) load();
+    if (!isOpen) return;
+    if (initialQuery) {
+      const wideFrom = wideFromDate();
+      setQ(initialQuery);
+      setFrom(wideFrom);
+      load(initialQuery, wideFrom);
+    } else {
+      load();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [isOpen, initialQuery]);
 
   function downloadCsv() {
     const header = ["Fecha", "Descripcion", "Referencia", "Monto", "Sucursal"];
@@ -147,7 +166,7 @@ export function BankReconciliationModal({ isOpen, onClose }: BankReconciliationM
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={load}
+              onClick={() => load()}
               disabled={loading}
               className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2.5 text-xs font-semibold text-white hover:bg-black disabled:opacity-50 cursor-pointer"
             >

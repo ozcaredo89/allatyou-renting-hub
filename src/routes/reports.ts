@@ -131,16 +131,16 @@ r.get("/last-payments", async (req: Request, res: Response) => {
     let auditPageErr: { message: string } | null;
     ({ data: auditPage, error: auditPageErr } = await supabase
       .from("payments")
-      .select(`${auditBaseColumns}, flag_details, proof_url, amount, reference_number`)
+      .select(`${auditBaseColumns}, flag_details, proof_url, amount, reference_number, id, bank_transaction_id`)
       .in("plate", plates)
       .gte("payment_date", twoYearsAgoStr)
       .order("payment_date", { ascending: false })
       .order("created_at",   { ascending: false }));
 
-    // flag_details puede no existir todavía (migración pendiente de aplicar en
-    // Supabase). No dejamos que eso tumbe la clasificación base: reintentamos
-    // sin esas columnas para no perder receipt_status/flagged_for_review, que
-    // sí existen desde antes.
+    // flag_details / bank_transaction_id pueden no existir todavía (migración
+    // pendiente de aplicar en Supabase). No dejamos que eso tumbe la
+    // clasificación base: reintentamos sin esas columnas para no perder
+    // receipt_status/flagged_for_review, que sí existen desde antes.
     if (auditPageErr) {
       console.error("[reports/last-payments] Paso 3 audit query (con flag_details) falló, reintentando sin ella:", auditPageErr.message);
       const retry = await supabase
@@ -160,6 +160,8 @@ r.get("/last-payments", async (req: Request, res: Response) => {
       flag_reason: string | null;
       flag_details: FlagDetails | null;
       created_at: string | null;
+      payment_id: number | null;
+      bank_transaction_id: number | null;
     }>();
     for (const row of (auditPage ?? [])) {
       if (!auditMap.has(row.plate)) {
@@ -169,6 +171,8 @@ r.get("/last-payments", async (req: Request, res: Response) => {
           flag_reason:       row.flag_reason,
           flag_details:      row.flag_details ?? null,
           created_at:        row.created_at ?? null,
+          payment_id:        row.id ?? null,
+          bank_transaction_id: row.bank_transaction_id ?? null,
         });
       }
     }
@@ -183,6 +187,26 @@ r.get("/last-payments", async (req: Request, res: Response) => {
         .select("id, plate, payment_date, amount, reference_number, proof_url")
         .in("id", [...duplicateIds]);
       for (const row of dupRows ?? []) duplicateResolver.set(row.id, row as DuplicatePaymentSummary);
+    }
+
+    // Resolver en 1 query batch el movimiento bancario exacto con el que se
+    // concilio cada pago de esta pagina (ver POST /reconcile-bank).
+    const bankTransactionIds = new Set<number>();
+    for (const a of auditMap.values()) if (a.bank_transaction_id) bankTransactionIds.add(a.bank_transaction_id);
+    const bankMatchResolver = new Map<number, {
+      id: number;
+      fecha: string | null;
+      descripcion: string | null;
+      referencia: string | null;
+      monto_entrada: number | null;
+      sucursal: string | null;
+    }>();
+    if (bankTransactionIds.size > 0) {
+      const { data: bankRows } = await supabase
+        .from("transacciones_entrantes")
+        .select("id, fecha, descripcion, referencia, monto_entrada, sucursal")
+        .in("id", [...bankTransactionIds]);
+      for (const row of bankRows ?? []) bankMatchResolver.set(row.id, row);
     }
 
     items = items.map((row: any) => {
@@ -205,11 +229,94 @@ r.get("/last-payments", async (req: Request, res: Response) => {
         duplicate_payments,
         amount_mismatch: buildAmountMismatch(audit?.flag_details),
         match_context: buildMatchContext(audit?.flag_details),
+        payment_id: audit?.payment_id ?? null,
+        bank_match: audit?.bank_transaction_id ? bankMatchResolver.get(audit.bank_transaction_id) ?? null : null,
       };
     });
   }
 
   return res.json({ items, total: count ?? 0, limit, offset });
+});
+
+// ── POST /reports/reconcile-bank ──────────────────────────────────────────────
+// Cruce estricto y persistente entre pagos y movimientos bancarios entrantes:
+// misma fecha + mismo monto exacto, 1 a 1. Si para un pago hay 0 candidatos
+// (no llego a la cuenta, o llego con otro monto/fecha) o mas de 1 (ambiguo -
+// p.ej. dos transferencias identicas el mismo dia) se deja SIN conciliar a
+// proposito, nunca se adivina. El resultado queda en payments.bank_transaction_id,
+// asi el link de "con que se concilio" es estable entre recargas y no vuelve a
+// recalcularse distinto cada vez.
+r.post("/reconcile-bank", async (_req: Request, res: Response) => {
+  try {
+    const twoYearsAgo = new Date();
+    twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+    const twoYearsAgoStr = twoYearsAgo.toISOString().slice(0, 10);
+
+    const { data: pendingPayments, error: payErr } = await supabase
+      .from("payments")
+      .select("id, payment_date, amount")
+      .is("bank_transaction_id", null)
+      .neq("status", "rejected")
+      .not("payment_date", "is", null)
+      .not("amount", "is", null)
+      .gte("payment_date", twoYearsAgoStr)
+      .order("payment_date", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (payErr) throw new Error(payErr.message);
+
+    const { data: claimedRows, error: claimedErr } = await supabase
+      .from("payments")
+      .select("bank_transaction_id")
+      .not("bank_transaction_id", "is", null);
+    if (claimedErr) throw new Error(claimedErr.message);
+    const claimedIds = new Set((claimedRows ?? []).map((r: any) => r.bank_transaction_id as number));
+
+    const { data: bankRows, error: bankErr } = await supabase
+      .from("transacciones_entrantes")
+      .select("id, fecha, monto_entrada")
+      .gte("fecha", twoYearsAgoStr);
+    if (bankErr) throw new Error(bankErr.message);
+
+    // Agrupa los movimientos bancarios AUN NO reclamados por "fecha|monto".
+    const byKey = new Map<string, number[]>();
+    for (const b of bankRows ?? []) {
+      if (claimedIds.has(b.id)) continue;
+      const key = `${b.fecha}|${b.monto_entrada}`;
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key)!.push(b.id);
+    }
+
+    const updates: { paymentId: number; bankTransactionId: number }[] = [];
+    let ambiguous = 0;
+
+    for (const p of pendingPayments ?? []) {
+      const key = `${p.payment_date}|${p.amount}`;
+      const candidates = byKey.get(key);
+      if (!candidates || candidates.length === 0) continue; // no llego a la cuenta
+      if (candidates.length > 1) { ambiguous++; continue; } // ambiguo -> no se adivina
+      const bankTransactionId = candidates[0] as number;
+      updates.push({ paymentId: p.id, bankTransactionId });
+      // Se retira del pool para que ningun otro pago de este mismo lote lo reclame.
+      byKey.delete(key);
+    }
+
+    for (const u of updates) {
+      const { error } = await supabase
+        .from("payments")
+        .update({ bank_transaction_id: u.bankTransactionId })
+        .eq("id", u.paymentId);
+      if (error) console.error("[reconcile-bank] error actualizando pago", u.paymentId, error.message);
+    }
+
+    return res.json({
+      checked: (pendingPayments ?? []).length,
+      reconciled: updates.length,
+      ambiguous,
+    });
+  } catch (err: any) {
+    console.error("[reconcile-bank] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ── GET /reports/global-oil ────────────────────────────────────────────────

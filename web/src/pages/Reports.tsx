@@ -15,6 +15,7 @@ import {
   Loader2,
   RotateCcw,
   Landmark,
+  CheckCircle2,
 } from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { useSortableData } from "../hooks/useSortableData";
@@ -25,6 +26,7 @@ import {
   type AmountMismatchDetails,
 } from "../components/ReceiptBadge";
 import { BankReconciliationModal } from "../components/BankReconciliationModal";
+import { ReconciliationBadge, type BankMatch } from "../components/ReconciliationBadge";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -47,6 +49,8 @@ type Row = {
   duplicate_payments?: DuplicatePaymentSummary[];
   match_context?: MatchContext | null;
   amount_mismatch?: AmountMismatchDetails | null;
+  payment_id?: number | null;
+  bank_match?: BankMatch | null;
 };
 
 function formatRegistrationTime(isoStr?: string | null): string | null {
@@ -102,7 +106,37 @@ export default function Reports() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [showBankModal, setShowBankModal] = useState(false);
+  const [bankModalQuery, setBankModalQuery] = useState<string | null>(null);
+  const [reconciling, setReconciling] = useState(false);
   const limit = 20;
+
+  function openBankModalFor(referencia: string) {
+    setBankModalQuery(referencia);
+    setShowBankModal(true);
+  }
+
+  async function handleReconcile() {
+    setReconciling(true);
+    try {
+      const auth = ensureBasicAuth();
+      const res = await fetch(`${API}/reports/reconcile-bank`, {
+        method: "POST",
+        headers: { Authorization: auth },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      alert(
+        `Conciliación completa.\n\nPagos revisados: ${json.checked}\n` +
+          `Conciliados ahora: ${json.reconciled}\n` +
+          `Ambiguos (más de un movimiento igual, sin tocar): ${json.ambiguous}`
+      );
+      load(offset);
+    } catch (e: any) {
+      alert(`Error al conciliar: ${e.message}`);
+    } finally {
+      setReconciling(false);
+    }
+  }
 
   const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
   const visibleItems = showInactive ? sortedItems : sortedItems.filter(r => r.status !== 'sold' && r.status !== 'inactive');
@@ -375,18 +409,37 @@ export default function Reports() {
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowBankModal(true)}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 transition-all cursor-pointer shrink-0 self-start sm:self-auto"
-            title="Ver movimientos bancarios para conciliación"
-          >
-            <Landmark className="w-3.5 h-3.5" />
-            <span>Conciliación bancaria</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setBankModalQuery(null);
+                setShowBankModal(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 transition-all cursor-pointer shrink-0 self-start sm:self-auto"
+              title="Ver movimientos bancarios para conciliación"
+            >
+              <Landmark className="w-3.5 h-3.5" />
+              <span>Conciliación bancaria</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleReconcile}
+              disabled={reconciling}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-white border border-emerald-300 px-3.5 py-2.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-all cursor-pointer shrink-0 self-start sm:self-auto"
+              title="Cruzar pagos sin conciliar contra movimientos bancarios sin reclamar (misma fecha y monto exactos)"
+            >
+              {reconciling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+              <span>Conciliar ahora</span>
+            </button>
+          </div>
         </div>
 
-        <BankReconciliationModal isOpen={showBankModal} onClose={() => setShowBankModal(false)} />
+        <BankReconciliationModal
+          isOpen={showBankModal}
+          onClose={() => setShowBankModal(false)}
+          initialQuery={bankModalQuery}
+        />
 
         {/* Barra principal de búsqueda y filtros interactivos */}
         <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-xs">
@@ -615,6 +668,9 @@ export default function Reports() {
                             proof_url: r.proof_url,
                           }}
                         />
+                        {r.payment_date && r.amount != null && (
+                          <ReconciliationBadge bankMatch={r.bank_match} onViewInBankModal={openBankModalFor} />
+                        )}
                       </div>
                     </td>
                     <td className={`px-4 py-3 ${color}`}>
