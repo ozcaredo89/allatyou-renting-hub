@@ -139,7 +139,7 @@ export default function Reports() {
   }
 
   const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
-  const visibleItems = showInactive ? sortedItems : sortedItems.filter(r => r.status !== 'sold' && r.status !== 'inactive');
+  const visibleItems = sortedItems;
 
   async function handleDeleteLastPayment(plate: string) {
     if (!window.confirm(`⚠️ ¿Estás seguro de deshacer el último pago de la placa ${plate}? Esta acción no se puede revertir.`)) {
@@ -185,7 +185,8 @@ export default function Reports() {
     nextOffset = 0,
     searchQuery = q,
     isOverdue = onlyOverdue,
-    isSuspicious = onlySuspicious
+    isSuspicious = onlySuspicious,
+    withInactive = showInactive
   ) {
     setLoading(true);
     setErrorMsg(null);
@@ -195,6 +196,7 @@ export default function Reports() {
       if (trimmed) params.set("q", trimmed);
       if (isOverdue)    params.set("overdue_only",    "true");
       if (isSuspicious) params.set("suspicious_only", "true");
+      if (!withInactive) params.set("include_inactive", "false");
       params.set("limit",  String(limit));
       params.set("offset", String(nextOffset));
 
@@ -224,24 +226,24 @@ export default function Reports() {
     }
   }
 
-  // Búsqueda en tiempo real con debounce: al teclear, espera 300ms y filtra automáticamente
+  // Búsqueda en tiempo real con debounce: al teclear o cambiar filtros, espera 300ms y filtra automáticamente
   useEffect(() => {
     if (!isMounted.current) {
       isMounted.current = true;
-      load(0, q, onlyOverdue, onlySuspicious);
+      load(0, q, onlyOverdue, onlySuspicious, showInactive);
       return;
     }
 
     const timer = setTimeout(() => {
-      load(0, q, onlyOverdue, onlySuspicious);
+      load(0, q, onlyOverdue, onlySuspicious, showInactive);
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [q, onlyOverdue, onlySuspicious]);
+  }, [q, onlyOverdue, onlySuspicious, showInactive]);
 
   const handleClearSearch = () => {
     setQ("");
-    load(0, "", onlyOverdue, onlySuspicious);
+    load(0, "", onlyOverdue, onlySuspicious, showInactive);
   };
 
   const handleResetFilters = () => {
@@ -249,7 +251,7 @@ export default function Reports() {
     setOnlyOverdue(false);
     setOnlySuspicious(false);
     setShowInactive(true);
-    load(0, "", false, false);
+    load(0, "", false, false, true);
   };
 
   const hasActiveFilters = Boolean(q.trim() || onlyOverdue || onlySuspicious || !showInactive);
@@ -458,7 +460,7 @@ export default function Reports() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    load(0, q, onlyOverdue, onlySuspicious);
+                    load(0, q, onlyOverdue, onlySuspicious, showInactive);
                   }
                 }}
               />
@@ -741,14 +743,14 @@ export default function Reports() {
           <div className="flex items-center gap-2">
             <button
               disabled={!canPrev || loading}
-              onClick={() => load(Math.max(0, offset - limit), q, onlyOverdue, onlySuspicious)}
+              onClick={() => load(Math.max(0, offset - limit), q, onlyOverdue, onlySuspicious, showInactive)}
               className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-xs hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               Anterior
             </button>
             <button
               disabled={!canNext || loading}
-              onClick={() => load(offset + limit, q, onlyOverdue, onlySuspicious)}
+              onClick={() => load(offset + limit, q, onlyOverdue, onlySuspicious, showInactive)}
               className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-xs hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               Siguiente

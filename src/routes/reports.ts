@@ -25,8 +25,9 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 20, 1), MAX_LIMIT);
   const offset = Math.max(Number.isFinite(rawOffset) ? rawOffset : 0, 0);
 
-  const overdueOnly    = String(req.query.overdue_only    || "false") === "true";
-  const suspiciousOnly = String(req.query.suspicious_only || "false") === "true";
+  const overdueOnly     = String(req.query.overdue_only     || "false") === "true";
+  const suspiciousOnly  = String(req.query.suspicious_only  || "false") === "true";
+  const includeInactive = String(req.query.include_inactive ?? "true") !== "false";
 
   // Cota práctica compartida por Paso 1 y Paso 3: un pago más antiguo no sería
   // "el último" si hay alguno más reciente, así que ninguno de los dos pasos
@@ -78,6 +79,29 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   }
 
   // ── Paso 2: consultar vehicle_last_payment con paginación correcta ────────
+  let allowedPlates: string[] | null = null;
+
+  if (!includeInactive) {
+    const { data: vRows, error: vErr } = await supabase
+      .from("vehicles")
+      .select("plate, status");
+
+    if (vErr) return res.status(500).json({ error: vErr.message });
+
+    allowedPlates = (vRows ?? [])
+      .filter((v: any) => v.status !== "sold" && v.status !== "inactive")
+      .map((v: any) => v.plate);
+  }
+
+  if (suspiciousPlates !== null) {
+    if (allowedPlates !== null) {
+      const allowedSet = new Set(allowedPlates);
+      allowedPlates = [...suspiciousPlates].filter((p) => allowedSet.has(p));
+    } else {
+      allowedPlates = [...suspiciousPlates];
+    }
+  }
+
   let query = supabase
     .from("vehicle_last_payment")
     .select("*", { count: "exact" })
@@ -92,14 +116,14 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   if (overdueOnly) {
     query = query.eq("is_overdue", true);
   }
-  // Filtrar por placas sospechosas ANTES del range — el .in() opera a nivel SQL
-  // sobre la vista, así el count y la paginación son correctos.
-  if (suspiciousPlates !== null) {
-    if (suspiciousPlates.size === 0) {
-      // No hay ninguna placa sospechosa: responder vacío directamente
+  // Filtrar por placas permitidas (activas y/o sospechosas) ANTES del range — el .in() opera a nivel SQL
+  // sobre la vista, así el count y la paginación son exactos.
+  if (allowedPlates !== null) {
+    if (allowedPlates.length === 0) {
+      // No hay ninguna placa que cumpla: responder vacío directamente
       return res.json({ items: [], total: 0, limit, offset });
     }
-    query = query.in("plate", [...suspiciousPlates]);
+    query = query.in("plate", allowedPlates);
   }
 
   const { data, error, count } = await query;
