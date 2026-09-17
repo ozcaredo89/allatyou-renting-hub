@@ -189,6 +189,18 @@ export default function App() {
   };
   const [dupWarning, setDupWarning] = useState<DuplicateWarning | null>(null);
 
+  // Success confirmation modal state
+  type SuccessPaymentInfo = {
+    plate: string;
+    payerName?: string;
+    totalAmount: number;
+    daysCount: number;
+    payableDates: string[];
+    installmentNumber?: number | null;
+    proofUrl?: string | null;
+  };
+  const [successInfo, setSuccessInfo] = useState<SuccessPaymentInfo | null>(null);
+
   // Leasing info popup
   const [leasingInfo, setLeasingInfo] = useState<LeasingSummary | null>(null);
   const [showLeasingPopup, setShowLeasingPopup] = useState(false);
@@ -705,10 +717,27 @@ export default function App() {
     }
 
     // Pago exitoso
+    const result = await rs.json().catch(() => ({}));
     setProgressStep("done");
     setDupWarning(null);
+
+    const daysCount = result.days_count ?? (body.batch_mode ? body.days_count : 1);
+    const payableDates: string[] = result.payable_dates ?? (body.payment_date ? [body.payment_date] : []);
+    const totalAmount = result.total_amount ?? (body.amount * (body.days_count || 1));
+
+    setSuccessInfo({
+      plate: body.plate?.toUpperCase() || "",
+      payerName: body.payer_name || f.payer_name,
+      totalAmount,
+      daysCount,
+      payableDates,
+      installmentNumber: body.installment_number ?? null,
+      proofUrl: body.proof_url ?? null,
+    });
+
     setF((prev) => ({ ...prev, amountStr: "", installment_number: "" }));
     setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setEditSplit(false);
     setSplit({ insurance_amount: "", delivery_amount: "", credit_installment_amount: "" });
     await loadRecentByPlate(body.plate);
@@ -1184,8 +1213,8 @@ export default function App() {
               </select>
             </div>
 
-            {/* Barra de progreso */}
-            {progressStep !== "idle" && (
+            {/* Barra de progreso (oculta si ya se muestra el modal de éxito, para no duplicar la confirmación) */}
+            {progressStep !== "idle" && !successInfo && (
               <div className="md:col-span-3 mt-1">
                 <div className="flex items-center justify-between text-xs font-medium mb-1">
                   <span className={progressStep === "done" ? "text-green-600" : "text-gray-600"}>
@@ -1262,6 +1291,121 @@ export default function App() {
                   }}
                 >
                   Guardar de todas formas
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Confirmación de Pago Exitoso */}
+        {successInfo && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => setSuccessInfo(null)}
+          >
+            <div
+              className="flex max-h-[85vh] w-full max-w-md flex-col rounded-3xl bg-white shadow-2xl overflow-hidden border border-emerald-100 animate-in fade-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Encabezado Verde Esmeralda */}
+              <div className="flex-shrink-0 bg-gradient-to-br from-emerald-500 to-teal-700 p-6 text-center text-white relative">
+                <button
+                  type="button"
+                  onClick={() => setSuccessInfo(null)}
+                  className="absolute top-4 right-4 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full w-8 h-8 flex items-center justify-center transition-colors"
+                >
+                  ✕
+                </button>
+                <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-white/20 text-white shadow-inner backdrop-blur-md">
+                  <svg className="h-9 w-9 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl font-black tracking-tight">¡Pago Guardado con Éxito!</h3>
+                <p className="mt-1 text-xs text-emerald-100 font-medium">
+                  El comprobante y el registro fueron procesados satisfactoriamente.
+                </p>
+              </div>
+
+              {/* Contenido con detalles (scrollable si el lote tiene muchas fechas) */}
+              <div className="min-h-0 overflow-y-auto p-6 space-y-4">
+                {/* Vehículo y conductor */}
+                <div className="flex items-center justify-between rounded-2xl bg-slate-50 border border-slate-200/70 p-3.5">
+                  <div>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Vehículo</span>
+                    <div className="text-xl font-black text-slate-800 tracking-wide">{successInfo.plate}</div>
+                  </div>
+                  {successInfo.payerName && (
+                    <div className="text-right">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Conductor</span>
+                      <div className="text-sm font-bold text-slate-700 max-w-[180px] truncate">{successInfo.payerName}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Monto total abonado */}
+                <div className="rounded-2xl bg-emerald-50 border border-emerald-200/80 p-4 text-center">
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">Total Abonado</span>
+                  <div className="text-3xl font-black text-emerald-700 mt-0.5">
+                    ${fmtCOP.format(successInfo.totalAmount)} <span className="text-sm font-semibold text-emerald-600">COP</span>
+                  </div>
+                </div>
+
+                {/* Días cubiertos */}
+                {successInfo.daysCount > 1 ? (
+                  <div className="rounded-2xl bg-blue-50 border border-blue-200/70 p-3.5">
+                    <div className="flex items-center justify-between text-xs font-bold text-blue-900 mb-1.5">
+                      <span>🗓️ Pago en Lote ({successInfo.daysCount} días cubiertos)</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {successInfo.payableDates.map((d) => (
+                        <span key={d} className="inline-block rounded-lg bg-blue-100/90 border border-blue-200 px-2.5 py-1 text-xs font-bold text-blue-800">
+                          {d}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between rounded-xl bg-slate-50 border border-slate-200/70 px-3.5 py-2.5 text-xs text-slate-600">
+                    <span className="font-medium">Fecha aplicada:</span>
+                    <span className="font-bold text-slate-800">{successInfo.payableDates[0]}</span>
+                  </div>
+                )}
+
+                {/* Cuota si aplica */}
+                {successInfo.installmentNumber && (
+                  <div className="flex items-center justify-between rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-xs text-amber-900">
+                    <span className="font-medium">Cuota de anticipo:</span>
+                    <span className="font-bold">
+                      #{successInfo.installmentNumber}
+                      {successInfo.daysCount > 1 ? ` a #${successInfo.installmentNumber + successInfo.daysCount - 1}` : ""}
+                    </span>
+                  </div>
+                )}
+
+                {/* Enlace a comprobante si existe */}
+                {successInfo.proofUrl && (
+                  <div className="text-center pt-1">
+                    <a
+                      href={successInfo.proofUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 underline"
+                    >
+                      Ver comprobante adjunto
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              {/* Botón cerrar (fijo, siempre visible aunque el contenido tenga scroll) */}
+              <div className="flex-shrink-0 border-t border-slate-100 p-4">
+                <button
+                  type="button"
+                  onClick={() => setSuccessInfo(null)}
+                  className="w-full rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white shadow-lg hover:bg-black transition-all cursor-pointer"
+                >
+                  Entendido / Continuar
                 </button>
               </div>
             </div>
