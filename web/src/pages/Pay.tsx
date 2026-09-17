@@ -516,11 +516,15 @@ export default function App() {
     setLoadingPreview(true);
     setPreviewError(null);
     try {
+      const currentAmt = parseCOP(f.amountStr);
       const q = new URLSearchParams({
         plate: f.plate.toUpperCase(),
         start_date: f.payment_date,
         days_count: String(daysCount),
       });
+      if (currentAmt > 0) {
+        q.set("amount", String(currentAmt));
+      }
       const rs = await fetch(`${API}/payments/batch-preview?` + q.toString());
       if (!rs.ok) {
         const json = await rs.json().catch(() => ({}));
@@ -530,6 +534,9 @@ export default function App() {
       }
       const data = await rs.json();
       setBatchPreview(data);
+      if (data.daily_rate > 0) {
+        setF((prev) => (!prev.amountStr ? { ...prev, amountStr: fmtCOP.format(data.daily_rate) } : prev));
+      }
     } catch {
       setPreviewError("No se pudo cargar la vista previa");
       setBatchPreview(null);
@@ -538,7 +545,7 @@ export default function App() {
     }
   }
 
-  // Cargar preview cuando cambia modalidad, placa o fecha de inicio
+  // Cargar preview cuando cambia modalidad, placa, monto o fecha de inicio
   useEffect(() => {
     if (paymentMode === "1d") {
       setBatchPreview(null);
@@ -553,7 +560,7 @@ export default function App() {
     const timer = setTimeout(fetchBatchPreview, 400);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paymentMode, customDays, f.plate, f.payment_date, plateValid, plateExists]);
+  }, [paymentMode, customDays, f.plate, f.payment_date, f.amountStr, plateValid, plateExists]);
 
   // --- Sugerencias automáticas (Incluyendo Fecha) ---
   useEffect(() => {

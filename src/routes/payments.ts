@@ -399,6 +399,45 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
     }
   }
 
+  // Fallbacks si el vehículo no tiene default_amount configurado
+  const queryAmount = Number(req.query.amount || 0);
+  if (dailyRate === 0 && queryAmount > 0) {
+    dailyRate = queryAmount;
+  }
+
+  if (dailyRate === 0) {
+    const { data: lastPayment } = await supabase
+      .from("payments")
+      .select("amount")
+      .eq("plate", plate)
+      .order("payment_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastPayment?.amount) {
+      dailyRate = Number(lastPayment.amount);
+    }
+  }
+
+  if (dailyRate === 0) {
+    const { data: pendingLc } = await supabase
+      .from("leasing_contracts")
+      .select("daily_maintenance, daily_admin, daily_capital_interest")
+      .eq("plate", plate)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (pendingLc) {
+      dailyRate = Math.round(
+        Number(pendingLc.daily_maintenance || 0) +
+        Number(pendingLc.daily_admin || 0) +
+        Number(pendingLc.daily_capital_interest || 0)
+      );
+    }
+  }
+
   // Verificar si tiene anticipo activo para incluir cuota en el desglose (solo si no es leasing)
   let advanceSummary: any = null;
   const fallbackDailyInstallment = driverVw?.default_installment ? Number(driverVw.default_installment) : 0;
