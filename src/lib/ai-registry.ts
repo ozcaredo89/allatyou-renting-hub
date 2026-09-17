@@ -18,8 +18,7 @@ export interface AIModelConfig {
 
 export const MODELS: Record<string, AIModelConfig> = {
   // Free tier Gemini (vision)
-  "gemini-2.0-flash-lite": { id: "gemini-2.0-flash-lite", provider: "gemini", rpmLimit: 30, capabilities: { vision: true } },
-  "gemini-2.5-flash": { id: "gemini-2.5-flash", provider: "gemini", rpmLimit: 5, capabilities: { vision: true } },
+  "gemini-2.5-flash": { id: "gemini-2.5-flash", provider: "gemini", rpmLimit: 15, capabilities: { vision: true } },
   
   // Pago OpenAI (vision) - límite alto
   "gpt-4o-mini": { id: "gpt-4o-mini", provider: "openai", rpmLimit: 500, capabilities: { vision: true } },

@@ -83,9 +83,9 @@ function buildResult(data: any, provider: "gemini" | "openai" | "deepseek"): OCR
 async function parseWithGemini(buffer: Buffer, mimeType: string): Promise<OCRResult> {
   if (!geminiClient) throw new Error("GEMINI_API_KEY no configurado");
 
-  return executeWithModel("gemini-2.0-flash-lite", async () => {
+  return executeWithModel("gemini-2.5-flash", async () => {
     const model = geminiClient!.getGenerativeModel({
-      model: "gemini-2.0-flash-lite",
+      model: "gemini-2.5-flash",
       generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {

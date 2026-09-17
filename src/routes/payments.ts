@@ -366,7 +366,7 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
   // Obtener tarifa diaria del vehículo (drivers_vw o vehicles)
   const { data: driverVw, error: dvErr } = await supabase
     .from("drivers_vw")
-    .select("plate, full_name, default_amount, installment_number, daily_installment")
+    .select("plate, driver_name, has_credit, default_amount, default_installment")
     .eq("plate", plate)
     .maybeSingle();
 
@@ -401,7 +401,7 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
 
   // Verificar si tiene anticipo activo para incluir cuota en el desglose (solo si no es leasing)
   let advanceSummary: any = null;
-  const dailyInstallment = driverVw?.daily_installment ? Number(driverVw.daily_installment) : 0;
+  const fallbackDailyInstallment = driverVw?.default_installment ? Number(driverVw.default_installment) : 0;
 
   if (!isLeasing) {
     const { data: advData } = await supabase
@@ -416,7 +416,7 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
       const cuotasEnLote = Math.min(days_count, cuotasPendientes);
       advanceSummary = {
         advance_id: advData.id,
-        daily_installment: dailyInstallment,
+        daily_installment: advData.daily_installment ? Number(advData.daily_installment) : fallbackDailyInstallment,
         current_installment: advData.current_installment ?? 0,
         total_installments: advData.installments ?? 0,
         cuotas_pendientes: cuotasPendientes,
@@ -439,7 +439,7 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
     const amount = dailyRate;
     // Si es leasing, no hay cuota de crédito de anticipo operativo
     const baseInstNo = (!isLeasing && advanceSummary) ? (advanceSummary.current_installment + idx + 1) : null;
-    const instNo = (!isLeasing && driverVw?.installment_number != null) ? baseInstNo : null;
+    const instNo = (!isLeasing && advanceSummary) ? baseInstNo : null;
     const split = instNo != null ? computeInstallmentSplit(amount) : computeBaseSplit(amount);
     return {
       date,
@@ -461,7 +461,7 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
     total_amount: totalAmount,
     day_breakdown: dayBreakdown,
     advance: advanceSummary,
-    driver_name: driverVw?.full_name ?? null,
+    driver_name: driverVw?.driver_name ?? null,
   });
 });
 
@@ -688,40 +688,36 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
       }); return;
     }
     if (advRes.kind === "none") {
-      res.status(400).json({
-        error: "El pago indica cuota de anticipo, pero no hay ningún préstamo activo para esta placa.",
-      }); return;
-    }
-    if (advRes.kind === "error") {
-      res.status(500).json({ error: advRes.error }); return;
-    }
+      // Sin anticipo activo: no se guardan cuotas de anticipo y se permite el pago sin error
+      advanceUpdates = [];
+    } else if (advRes.kind === "one") {
+      const advance = advRes.advance;
+      // Sincronizar cuota inicial con la siguiente cuota real en la base de datos
+      const nextDbCuota = (advance.current_installment ?? 0) + 1;
+      startingInstallmentNo = nextDbCuota;
 
-    const advance = advRes.advance;
-    // Sincronizar cuota inicial con la siguiente cuota real en la base de datos
-    const nextDbCuota = (advance.current_installment ?? 0) + 1;
-    startingInstallmentNo = nextDbCuota;
+      for (let i = 0; i < payableDates.length; i++) {
+        const pDate = payableDates[i]!;
+        const cuotaNo = nextDbCuota + i;
+        if (cuotaNo > (advance.installments ?? 0)) break; // límite de cuotas del préstamo
 
-    for (let i = 0; i < payableDates.length; i++) {
-      const pDate = payableDates[i]!;
-      const cuotaNo = nextDbCuota + i;
-      if (cuotaNo > (advance.installments ?? 0)) break; // límite de cuotas del préstamo
-
-      const ensured = await ensureScheduleRow({
-        advance_id: advance.id,
-        start_date: advance.start_date,
-        installment_no: cuotaNo,
-        payment_date: pDate,
-        plate: upperPlate,
-        payment_id: null,
-        desired_status: "paid",
-      });
-
-      if (ensured.ok && ensured.row.status !== "paid") {
-        advanceUpdates.push({
-          schedule_id: ensured.row.id,
+        const ensured = await ensureScheduleRow({
+          advance_id: advance.id,
+          start_date: advance.start_date,
+          installment_no: cuotaNo,
+          payment_date: pDate,
+          plate: upperPlate,
+          payment_id: null,
           desired_status: "paid",
-          paid_date: pDate,
         });
+
+        if (ensured.ok && ensured.row.status !== "paid") {
+          advanceUpdates.push({
+            schedule_id: ensured.row.id,
+            desired_status: "paid",
+            paid_date: pDate,
+          });
+        }
       }
     }
   }
