@@ -182,6 +182,7 @@ export async function generatePazSalvo(params: PazSalvoParams): Promise<PazSalvo
     html,
     pdfKey,
     docxKey,
+    pdfMargins: { top: "20mm", bottom: "20mm", left: "20mm", right: "20mm" },
   });
 
   // 11. Registrar en audit_log y persistir claves en DB ÚNICAMENTE tras confirmación de subida exitosa
