@@ -196,11 +196,11 @@ BEGIN
   --    Verificar que ninguna de las fechas del lote tenga ya un pago activo (pending o confirmed)
   FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payments)
   LOOP
-    SELECT status INTO v_existing_status
+    SELECT status::TEXT INTO v_existing_status
     FROM payments
     WHERE plate = (v_payment->>'plate')
       AND payment_date = (v_payment->>'payment_date')::DATE
-      AND status IN ('pending', 'confirmed')
+      AND status::TEXT IN ('pending', 'confirmed')
     LIMIT 1;
 
     IF v_existing_status IS NOT NULL THEN
@@ -245,7 +245,7 @@ BEGIN
       (v_payment->>'amount')::BIGINT,
       NULLIF(v_payment->>'installment_number', '')::INT,
       NULLIF(v_payment->>'proof_url', ''),
-      COALESCE(v_payment->>'status', 'pending'),
+      COALESCE(v_payment->>'status', 'pending')::payment_status,
       COALESCE((v_payment->>'insurance_amount')::BIGINT, 0),
       COALESCE((v_payment->>'maintenance_amount')::BIGINT, 0),
       COALESCE((v_payment->>'delivery_amount')::BIGINT, 0),
