@@ -31,8 +31,8 @@ function isISODate(s: any): s is string {
 
 // ============================================================================
 // POST /leasing/contracts
-// Crea el contrato de leasing y genera el cronograma completo de cuotas.
-// Retorna el contrato + las primeras 30 filas del cronograma (para el PDF).
+// @deprecated — Flujo legacy v1 (sin Pico y Placa completo). 
+// Usar el flujo oficial de dos fases: POST /contracts/generate + PATCH /contracts/:id/activate.
 // ============================================================================
 r.post("/contracts", async (req: Request, res: Response) => {
   const {
@@ -208,13 +208,18 @@ r.post("/contracts", async (req: Request, res: Response) => {
 // ============================================================================
 // GET /leasing/contracts
 // Lista todos los contratos con filtros opcionales.
+// Soporta ?expand=1 para incluir datos de driver y vehicle.
 // ============================================================================
 r.get("/contracts", async (req: Request, res: Response) => {
-  const { plate, driver_id, status, limit = "50", offset = "0" } = req.query as Record<string, string>;
+  const { plate, driver_id, status, expand, limit = "50", offset = "0" } = req.query as Record<string, string>;
+
+  const selectFields = expand === "1"
+    ? "*, driver:drivers(id, full_name, phone, document_number), vehicle:vehicles(plate, brand, line, model_year)"
+    : "*";
 
   let q = supabase
     .from("leasing_contracts")
-    .select("*", { count: "exact" })
+    .select(selectFields, { count: "exact" })
     .order("created_at", { ascending: false })
     .limit(Number(limit))
     .range(Number(offset), Number(offset) + Number(limit) - 1);
@@ -231,14 +236,19 @@ r.get("/contracts", async (req: Request, res: Response) => {
 
 // ============================================================================
 // GET /leasing/contracts/:id
-// Detalle de un contrato.
+// Detalle de un contrato. Soporta ?expand=1.
 // ============================================================================
 r.get("/contracts/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
+  const { expand } = req.query as Record<string, string>;
+
+  const selectFields = expand === "1"
+    ? "*, driver:drivers(id, full_name, phone, document_number), vehicle:vehicles(plate, brand, line, model_year)"
+    : "*";
 
   const { data, error } = await supabase
     .from("leasing_contracts")
-    .select("*")
+    .select(selectFields)
     .eq("id", Number(id))
     .single();
 
@@ -754,15 +764,29 @@ r.post("/contracts/generate", async (req: Request, res: Response) => {
 
 // ============================================================================
 // PATCH /leasing/contracts/:id/activate
-// Activa un contrato pendiente, guarda la URL del documento firmado (opcional),
-// cambia el vehículo a 'leasing' y genera el cronograma de cuotas.
+// Activa un contrato pendiente de manera atómica (RPC en Postgres),
+// exigiendo el documento autenticado en Cloudflare R2 y confirmación de start_date.
 // ============================================================================
 r.patch("/contracts/:id/activate", async (req: Request, res: Response) => {
   const contractId = Number(req.params.id);
-  const { signed_contract_url } = req.body || {};
+  const { signed_contract_url, start_date, start_date_confirmed } = req.body || {};
 
   try {
-    // 1. Obtener contrato
+    // 1. Validación estricta de URL en Cloudflare R2
+    if (!signed_contract_url || typeof signed_contract_url !== "string" || !signed_contract_url.trim()) {
+      return res.status(400).json({ error: "El contrato firmado/autenticado es obligatorio para activar el leasing" });
+    }
+    const r2Base = (process.env.R2_PUBLIC_URL || "").replace(/\/+$/, "");
+    if (!r2Base || !signed_contract_url.startsWith(r2Base + "/")) {
+      return res.status(400).json({ error: "La URL del contrato firmado debe provenir del almacenamiento oficial R2" });
+    }
+
+    // 2. Validación de confirmación explícita de start_date
+    if (start_date_confirmed !== true) {
+      return res.status(400).json({ error: "Debe confirmar explícitamente que la fecha de inicio coincide con la del contrato firmado y autenticado" });
+    }
+
+    // 3. Obtener contrato para verificar y tomar valores
     const { data: contract, error: cErr } = await supabase
       .from("leasing_contracts")
       .select("*")
@@ -773,91 +797,88 @@ r.patch("/contracts/:id/activate", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Contrato no encontrado" });
     }
     if (contract.status !== "pending") {
-      return res.status(400).json({ error: `Solo se pueden activar contratos en estado 'pending'. Estado actual: '${contract.status}'` });
+      return res.status(409).json({ error: `Solo se pueden activar contratos en estado 'pending'. Estado actual: '${contract.status}'` });
     }
 
-    // 2. Verificar que no haya ya otro activo para esa placa
-    const existing = await getActiveLeasingContract(contract.plate);
-    if (existing) {
-      return res.status(400).json({ error: "Ya existe un contrato de leasing activo para esta placa" });
+    // 4. Determinar fecha efectiva y validar formato ISO
+    const effectiveStartDate = (start_date && typeof start_date === "string") ? start_date : contract.start_date;
+    if (!isISODate(effectiveStartDate)) {
+      return res.status(400).json({ error: "start_date debe tener formato YYYY-MM-DD" });
     }
 
-    // 3. Validar explícitamente que el contrato tenga fechas de pico y placa calculadas
-    const validPaymentDatesArray = contract.valid_payment_dates || [];
+    // 5. Garantía y recálculo de Pico y Placa
+    let validPaymentDatesArray: string[] = contract.valid_payment_dates || [];
+    const dateChanged = effectiveStartDate !== contract.start_date;
+    const datesMissing = !Array.isArray(validPaymentDatesArray) || validPaymentDatesArray.length === 0;
+
+    if (dateChanged || datesMissing) {
+      try {
+        const datesRes = await getAmortizationDates(contract.plate, String(effectiveStartDate), 1500, "Cali");
+        validPaymentDatesArray = datesRes.dates;
+      } catch (e: any) {
+        console.error("Error recalculando Pico y Placa:", e?.message);
+        return res.status(422).json({ error: "No se pudieron calcular las restricciones de pico y placa para la fecha de inicio indicada" });
+      }
+    }
+
     if (!Array.isArray(validPaymentDatesArray) || validPaymentDatesArray.length === 0) {
-      return res.status(422).json({ error: "El contrato no tiene fechas de pico y placa calculadas, no se puede activar" });
+      return res.status(422).json({ error: "El calendario de días de pago no puede estar vacío" });
     }
 
-    // 4. Generar cronograma de pagos usando las fechas persistidas
+    // 6. Generar cronograma de pagos en memoria
     const capitalFinanciado = Number(contract.financed_capital);
     const validPaymentDates = new Set<string>(validPaymentDatesArray);
 
-    const rows = generateLeasingSchedule(
+    const scheduleRows = generateLeasingSchedule(
       contract.id,
       capitalFinanciado,
       Number(contract.monthly_rate_pct),
       Number(contract.daily_maintenance),
       Number(contract.daily_admin),
       Number(contract.daily_capital_interest),
-      String(contract.start_date),
+      String(effectiveStartDate),
       validPaymentDates
     );
 
-    if (rows.length === 0) {
-      return res.status(500).json({ error: "No se pudieron generar las cuotas del cronograma" });
+    if (!scheduleRows || scheduleRows.length === 0) {
+      return res.status(422).json({ error: "No se pudieron generar las cuotas del cronograma" });
     }
 
-    // 4. Insertar las cuotas en lotes
-    const BATCH = 500;
-    let scheduleRowsInserted = 0;
-    for (let i = 0; i < rows.length; i += BATCH) {
-      const batch = rows.slice(i, i + BATCH);
-      const { error: sErr } = await supabase
-        .from("leasing_schedule")
-        .insert(batch);
+    // 7. Llamar a la RPC transaccional en Postgres
+    const { data: rpcData, error: rpcErr } = await supabase.rpc("activate_leasing_contract", {
+      p_contract_id: contract.id,
+      p_start_date: effectiveStartDate,
+      p_valid_dates: validPaymentDatesArray,
+      p_schedule: scheduleRows,
+      p_signed_url: signed_contract_url,
+    });
 
-      if (sErr) {
-        return res.status(500).json({ error: `Error insertando cronograma: ${sErr.message}` });
+    if (rpcErr) {
+      const msg = rpcErr.message || "";
+      const code = rpcErr.code || "";
+      console.error("RPC activate_leasing_contract error:", rpcErr);
+
+      if (code === "23P01" || msg.includes("ALREADY_ACTIVE") || msg.includes("NOT_PENDING")) {
+        return res.status(409).json({ error: msg });
       }
-      scheduleRowsInserted += batch.length;
-    }
-
-    // 5. Actualizar estado del contrato
-    const updateData: any = { status: "active" };
-    if (signed_contract_url) {
-      updateData.signed_contract_url = signed_contract_url;
-      updateData.signed_at = new Date().toISOString();
-    }
-
-    const { error: updErr } = await supabase
-      .from("leasing_contracts")
-      .update(updateData)
-      .eq("id", contract.id);
-
-    if (updErr) {
-      return res.status(500).json({ error: `Error activando contrato: ${updErr.message}` });
-    }
-
-    // 6. Actualizar vehículo a leasing
-    const { error: vUpErr } = await supabase
-      .from("vehicles")
-      .update({ status: "leasing" })
-      .eq("plate", contract.plate);
-
-    if (vUpErr) {
-      // Nota: Idealmente correr en una transacción
-      console.error("No se pudo marcar el vehículo como leasing:", vUpErr);
+      if (msg.includes("CONTRACT_NOT_FOUND")) {
+        return res.status(404).json({ error: msg });
+      }
+      if (msg.includes("EMPTY_SCHEDULE") || msg.includes("EMPTY_VALID_DATES")) {
+        return res.status(422).json({ error: msg });
+      }
+      return res.status(500).json({ error: `Error activando contrato: ${msg}` });
     }
 
     return res.json({
       ok: true,
       message: "Contrato activado exitosamente",
       contract_id: contract.id,
-      schedule_rows: scheduleRowsInserted,
+      schedule_rows: rpcData?.schedule_count ?? scheduleRows.length,
     });
 
   } catch (err: any) {
-    console.error("❌ Error activando contrato:", err?.message);
+    console.error("❌ Error inesperado activando contrato:", err?.message);
     return res.status(500).json({ error: err?.message || "Error interno activando contrato" });
   }
 });

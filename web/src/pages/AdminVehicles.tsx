@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
+import { Link } from "react-router-dom";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search, FileText, ExternalLink, Settings2, Satellite } from "lucide-react";
+import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search, FileText, ExternalLink, Settings2, Satellite, Rocket } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useSortableData } from "../hooks/useSortableData";
 import { TopDwellLocations } from "../components/TopDwellLocations";
@@ -901,30 +902,46 @@ export default function AdminVehicles() {
                             status={v.status}
                             onClick={v.status === 'leasing' ? () => openLeasingDrawer(v.plate) : undefined}
                           />
-                          {v.status === 'reserved' && v.leasing_contracts && (() => {
-                            const pendingContract = v.leasing_contracts.find((c: any) => c.status === 'pending');
-                            if (!pendingContract) return null;
+                          {v.status === 'reserved' && (() => {
+                            const pendingContract = v.leasing_contracts?.find((c: any) => c.status === 'pending');
+                            if (pendingContract) {
+                              return (
+                                <div className="mt-1 flex flex-col items-center gap-1">
+                                  <Link
+                                    to={`/amortization?tab=pending&plate=${v.plate}`}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm shadow-emerald-600/20 transition-all hover:scale-105 active:scale-95"
+                                    title="Activar contrato de leasing pendiente"
+                                  >
+                                    <Rocket className="w-3 h-3 shrink-0" />
+                                    <span>Activar Leasing</span>
+                                  </Link>
+                                  <button
+                                    onClick={async () => {
+                                      if (!window.confirm("¿Seguro que deseas cancelar este contrato pendiente y liberar el vehículo?")) return;
+                                      try {
+                                        const auth = ensureBasicAuth();
+                                        const rs = await fetch(`${API}/leasing/contracts/${pendingContract.id}/cancel-pending`, {
+                                          method: 'POST',
+                                          headers: { Authorization: auth }
+                                        });
+                                        if (!rs.ok) throw new Error(await rs.text());
+                                        alert("Contrato cancelado y vehículo liberado.");
+                                        loadData();
+                                      } catch (e: any) {
+                                        alert("Error: " + e.message);
+                                      }
+                                    }}
+                                    className="text-[9px] text-red-600 underline hover:text-red-800"
+                                  >
+                                    Cancelar Contrato
+                                  </button>
+                                </div>
+                              );
+                            }
                             return (
-                              <button
-                                onClick={async () => {
-                                  if (!window.confirm("¿Seguro que deseas cancelar este contrato pendiente y liberar el vehículo?")) return;
-                                  try {
-                                    const auth = ensureBasicAuth();
-                                    const rs = await fetch(`${API}/leasing/contracts/${pendingContract.id}/cancel-pending`, {
-                                      method: 'POST',
-                                      headers: { Authorization: auth }
-                                    });
-                                    if (!rs.ok) throw new Error(await rs.text());
-                                    alert("Contrato cancelado y vehículo liberado.");
-                                    loadData();
-                                  } catch (e: any) {
-                                    alert("Error: " + e.message);
-                                  }
-                                }}
-                                className="mt-1 text-[9px] text-red-600 underline hover:text-red-800"
-                              >
-                                Cancelar Contrato
-                              </button>
+                              <span className="mt-1 text-[9px] text-amber-700 font-semibold bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded text-center leading-tight" title="Vehículo reservado sin contrato pendiente">
+                                Sin Contrato Pendiente
+                              </span>
                             );
                           })()}
                         </div>

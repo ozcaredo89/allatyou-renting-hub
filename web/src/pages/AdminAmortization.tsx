@@ -1,8 +1,10 @@
 import { useEffect, useState, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import {
   Calculator, Save, X, Calendar as CalendarIcon, Loader2, Info,
-  ChevronDown, ChevronUp, Download, Rocket, Trash2, ClipboardList
+  ChevronDown, ChevronUp, Download, Rocket, Trash2, ClipboardList,
+  AlertTriangle, CheckCircle2, FileCheck, Phone, Search, RefreshCw
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -19,7 +21,7 @@ type Vehicle = {
   line: string | null;
   model_year?: number | null;
   current_driver_id?: number | null;
-  driver?: { id: number; full_name: string } | null;
+  driver?: { id: number; full_name: string; phone?: string; document_number?: string } | null;
   precio_venta?: number | null;
   [key: string]: any;
 };
@@ -49,16 +51,101 @@ type Simulation = {
   created_at: string;
 };
 
+type PendingContract = {
+  id: number;
+  plate: string;
+  driver_id: number;
+  purchase_price: number;
+  down_payment: number;
+  financed_capital: number;
+  monthly_rate_pct: number;
+  daily_maintenance: number;
+  daily_admin: number;
+  daily_capital_interest: number;
+  start_date: string;
+  original_start_date?: string | null;
+  status: string;
+  created_at: string;
+  signed_contract_url?: string | null;
+  driver?: {
+    id: number;
+    full_name: string;
+    phone?: string;
+    document_number?: string;
+  } | null;
+  vehicle?: {
+    plate: string;
+    brand?: string;
+    line?: string;
+    model_year?: number;
+  } | null;
+  [key: string]: any;
+};
+
 const fmtCOP = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
   maximumFractionDigits: 0,
 });
 
+function getTodayColombia(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+}
+
+function getTomorrowColombia(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+}
+
+function formatDaysDiff(dateStr: string) {
+  if (!dateStr) return "";
+  const todayStr = getTodayColombia();
+  if (dateStr === todayStr) return "Inicia hoy";
+  const target = new Date(dateStr + "T12:00:00");
+  const today = new Date(todayStr + "T12:00:00");
+  const diffDays = Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays > 0) return `Inicia en ${diffDays} día${diffDays > 1 ? "s" : ""}`;
+  const pastDays = Math.abs(diffDays);
+  return `Vencida hace ${pastDays} día${pastDays > 1 ? "s" : ""}`;
+}
+
+function formatCreatedAgo(isoDate: string) {
+  if (!isoDate) return "";
+  const created = new Date(isoDate);
+  const now = new Date();
+  const diffHours = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60));
+  if (diffHours < 1) return "Hace un momento";
+  if (diffHours < 24) return `Hace ${diffHours}h`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `Hace ${diffDays}d`;
+}
+
 export default function AdminAmortization() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loadingVehicles, setLoadingVehicles] = useState(false);
   const [authHeader, setAuthHeader] = useState("");
+
+  // Tabs navigation
+  const [activeTab, setActiveTab] = useState<"simulation" | "pending">("simulation");
+  const [pendingFilterPlate, setPendingFilterPlate] = useState<string>("");
+  const [pendingContracts, setPendingContracts] = useState<PendingContract[]>([]);
+  const [loadingPending, setLoadingPending] = useState(false);
+  const [pendingTotal, setPendingTotal] = useState(0);
+
+  // Active modal for activation (unified)
+  const [activeModalContractId, setActiveModalContractId] = useState<number | null>(null);
+
+  const filteredPending = useMemo(() => {
+    if (!pendingFilterPlate.trim()) return pendingContracts;
+    const q = pendingFilterPlate.trim().toUpperCase();
+    return pendingContracts.filter((c) =>
+      c.plate.toUpperCase().includes(q) ||
+      (c.driver?.full_name && c.driver.full_name.toUpperCase().includes(q)) ||
+      (c.driver?.document_number && c.driver.document_number.includes(q))
+    );
+  }, [pendingContracts, pendingFilterPlate]);
 
   // Simulation inputs
   const [selectedPlate, setSelectedPlate] = useState<string>("");
@@ -71,10 +158,7 @@ export default function AdminAmortization() {
   const [displayAdminExpenses, setDisplayAdminExpenses] = useState<string>("11.000");
   const [maintenanceFund, setMaintenanceFund] = useState<string>("10000");
   const [displayMaintenanceFund, setDisplayMaintenanceFund] = useState<string>("10.000");
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
-
+  const tomorrowStr = getTomorrowColombia();
   const [startDate, setStartDate] = useState<string>(tomorrowStr);
 
   // Price modal
@@ -94,16 +178,6 @@ export default function AdminAmortization() {
   const [loadingSimulations, setLoadingSimulations] = useState(false);
   const [savingSimulation, setSavingSimulation] = useState(false);
   const [showSimulations, setShowSimulations] = useState(true);
-
-  // Activate Leasing modal
-  const [showLeasingModal, setShowLeasingModal] = useState(false);
-  const [activatingLeasing, setActivatingLeasing] = useState(false);
-  const [leasingModalData, setLeasingModalData] = useState({
-    notes: "",
-  });
-  const [leasingFile, setLeasingFile] = useState<File | null>(null);
-  const [attachLater, setAttachLater] = useState(false);
-  const [leasingSuccess, setLeasingSuccess] = useState<any>(null);
 
   // Generate Contract modal
   const [showContractModal, setShowContractModal] = useState(false);
@@ -125,6 +199,20 @@ export default function AdminAmortization() {
     vehiculo_carroceria: "",
     medio_pago: "transferencia electrónica o consignación en la cuenta designada por EL VENDEDOR",
   });
+
+  // URL searchParams sync
+  useEffect(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "pending") {
+      setActiveTab("pending");
+    } else if (tabParam === "simulation") {
+      setActiveTab("simulation");
+    }
+    const plateParam = searchParams.get("plate");
+    if (plateParam) {
+      setPendingFilterPlate(plateParam.toUpperCase());
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     let auth = ensureBasicAuth();
@@ -152,7 +240,26 @@ export default function AdminAmortization() {
 
     loadVehicles();
     loadSimulations(auth);
+    loadPendingContracts(auth);
   }, []);
+
+  async function loadPendingContracts(auth?: string) {
+    const hdr = auth || authHeader;
+    setLoadingPending(true);
+    try {
+      const rs = await fetch(`${API}/leasing/contracts?status=pending&expand=1`, {
+        headers: { Authorization: hdr },
+      });
+      if (!rs.ok) return;
+      const data = await rs.json();
+      setPendingContracts(data.items || []);
+      setPendingTotal(data.total || 0);
+    } catch (err) {
+      console.error("Error loading pending contracts:", err);
+    } finally {
+      setLoadingPending(false);
+    }
+  }
 
   async function loadSimulations(auth?: string) {
     const hdr = auth || authHeader;
@@ -359,7 +466,7 @@ export default function AdminAmortization() {
 
   // ── LOAD SIMULATION INTO FORM + AUTO-SIMULATE ──
   const handleLoadSimulation = (sim: Simulation) => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getTodayColombia();
     // Update all state
     setSelectedPlate(sim.plate);
     setCapital(String(sim.purchase_price));
@@ -373,7 +480,6 @@ export default function AdminAmortization() {
     setDisplayAdminExpenses(new Intl.NumberFormat("es-CO").format(sim.daily_admin));
     setStartDate(tomorrowStr);
     setSchedule([]);
-    setLeasingModalData((prev) => ({ ...prev, start_date: tomorrowStr }));
 
     // Auto-simulate immediately using the sim's values directly (bypasses async state)
     handleSimulate({
@@ -385,50 +491,28 @@ export default function AdminAmortization() {
     });
   };
 
-  // ── ACTIVATE LEASING ──
-  const handleActivateLeasing = async () => {
-    if (!contractResult?.contract_id) return alert("Primero debes generar el contrato oficial.");
-
-    if (!attachLater && !leasingFile) {
-      return alert("Por favor adjunta el contrato firmado, o marca la opción 'Adjuntar después'.");
+  // ── CANCEL PENDING CONTRACT ──
+  const handleCancelPending = async (contractId: number, plate: string) => {
+    if (!confirm(`¿Estás seguro de cancelar el contrato borrador #${contractId} para el vehículo ${plate}?\n\nEl vehículo volverá a estar disponible en la flota.`)) {
+      return;
     }
-
-    setActivatingLeasing(true);
     try {
-      let contractPdfUrl = null;
-
-      if (!attachLater && leasingFile) {
-        const fd = new FormData();
-        fd.append("file", leasingFile);
-        const upRes = await fetch(`${API}/uploads`, {
-          method: "POST",
-          headers: { Authorization: authHeader },
-          body: fd,
-        });
-        if (!upRes.ok) throw new Error("Error subiendo el archivo del contrato");
-        const upData = await upRes.json();
-        contractPdfUrl = upData.url;
-      }
-
-      const rs = await fetch(`${API}/leasing/contracts/${contractResult.contract_id}/activate`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: authHeader },
-        body: JSON.stringify({
-          signed_contract_url: contractPdfUrl,
-        }),
+      const rs = await fetch(`${API}/leasing/contracts/${contractId}/cancel-pending`, {
+        method: "POST",
+        headers: { Authorization: authHeader },
       });
-      if (!rs.ok) {
-        const err = await rs.json();
-        throw new Error(err.error || "Error activando leasing");
-      }
       const data = await rs.json();
-      setLeasingSuccess(data);
-      setShowLeasingModal(false);
-      alert("Contrato activado y cronograma generado exitosamente.");
+      if (!rs.ok) throw new Error(data.error || "Error al cancelar el contrato");
+      alert("✅ Contrato cancelado y vehículo liberado.");
+      await loadPendingContracts();
+      // Refresh vehicles
+      const vRs = await fetch(`${API}/vehicles?status=all`, { headers: { Authorization: authHeader } });
+      if (vRs.ok) {
+        const vData = await vRs.json();
+        setVehicles(Array.isArray(vData) ? vData : []);
+      }
     } catch (err: any) {
-      alert(err.message || "Error activando leasing");
-    } finally {
-      setActivatingLeasing(false);
+      alert(err.message || "Error al cancelar el contrato");
     }
   };
 
@@ -705,7 +789,11 @@ export default function AdminAmortization() {
               {/* Activar leasing */}
               <button
                 type="button"
-                onClick={() => { setShowLeasingModal(true); setLeasingSuccess(null); }}
+                onClick={() => {
+                  if (contractResult?.contract_id) {
+                    setActiveModalContractId(contractResult.contract_id);
+                  }
+                }}
                 disabled={!contractResult?.contract_id || !!changedField}
                 className="flex items-center gap-2 rounded-xl px-5 py-2.5 font-semibold text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-40"
                 title={!contractResult?.contract_id ? "Primero genera el contrato borrador" : (changedField ? "Debes regenerar la simulación antes de activar" : "")}
@@ -789,84 +877,426 @@ export default function AdminAmortization() {
           </div>
         </div>
 
-        {/* RESULTADOS DE SIMULACIÓN */}
-        {schedule.length > 0 && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 mt-8">
-            <div className="mb-6 grid gap-4 sm:grid-cols-3">
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm text-center">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Total Cuotas a Pagar</p>
-                <p className="text-3xl font-black text-slate-900">{totalTerm}</p>
-                <p className="text-xs text-slate-500 mt-1">({totalDays} días calendario)</p>
+        {/* TABS NAVEGACIÓN */}
+        <div className="mt-8 border-b border-slate-200">
+          <div className="flex space-x-8">
+            <button
+              onClick={() => {
+                setActiveTab("simulation");
+                setSearchParams((prev) => {
+                  const n = new URLSearchParams(prev);
+                  n.delete("tab");
+                  return n;
+                });
+              }}
+              className={`pb-4 px-1 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+                activeTab === "simulation"
+                  ? "border-black text-slate-900"
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <Calculator className="h-4 w-4" />
+              Simulación de Cuotas
+              {schedule.length > 0 && (
+                <span className="ml-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                  {schedule.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveTab("pending");
+                setSearchParams((prev) => {
+                  const n = new URLSearchParams(prev);
+                  n.set("tab", "pending");
+                  return n;
+                });
+              }}
+              className={`pb-4 px-1 text-sm font-bold flex items-center gap-2 border-b-2 transition-all relative ${
+                activeTab === "pending"
+                  ? "border-black text-slate-900"
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <Rocket className="h-4 w-4" />
+              Contratos Pendientes
+              {pendingTotal > 0 && (
+                <span className="ml-1.5 rounded-full bg-amber-100 text-amber-800 px-2.5 py-0.5 text-xs font-bold">
+                  {pendingTotal}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* TAB 1: RESULTADOS DE SIMULACIÓN */}
+        {activeTab === "simulation" && (
+          schedule.length > 0 ? (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 mt-6">
+              <div className="mb-6 grid gap-4 sm:grid-cols-3">
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm text-center">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Total Cuotas a Pagar</p>
+                  <p className="text-3xl font-black text-slate-900">{totalTerm}</p>
+                  <p className="text-xs text-slate-500 mt-1">({totalDays} días calendario)</p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm text-center">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Cuota Diaria Total</p>
+                  <p className="text-3xl font-black text-blue-600">{fmtCOP.format(totalDailyPayment)}</p>
+                  <p className="text-xs text-slate-500 mt-1">Capital + Interés + Gastos</p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm text-center">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Fecha de Finalización</p>
+                  <p className="text-3xl font-black text-emerald-600">{finalDate}</p>
+                  <p className="text-xs text-slate-500 mt-1">Estimada</p>
+                </div>
               </div>
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm text-center">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Cuota Diaria Total</p>
-                <p className="text-3xl font-black text-blue-600">{fmtCOP.format(totalDailyPayment)}</p>
-                <p className="text-xs text-slate-500 mt-1">Capital + Interés + Gastos</p>
+
+              {/* Gráfica */}
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 mb-8 h-96">
+                <h3 className="text-lg font-bold text-slate-800 mb-4">Proyección de Amortización</h3>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={schedule}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="date" tick={{ fontSize: 12 }} tickMargin={10} minTickGap={30} />
+                    <YAxis yAxisId="left" tickFormatter={(val) => `$${(val / 1000000).toFixed(1)}M`} tick={{ fontSize: 12 }} />
+                    <YAxis yAxisId="right" orientation="right" tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`} tick={{ fontSize: 12 }} />
+                    <RechartsTooltip formatter={(val: any) => fmtCOP.format(val)} />
+                    <Legend />
+                    <Line yAxisId="left" type="monotone" dataKey="balance" name="Saldo Deuda" stroke="#0ea5e9" strokeWidth={2} dot={false} />
+                    <Line yAxisId="right" type="monotone" dataKey="interestAccrued" name="Interés Diario" stroke="#ef4444" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
               </div>
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm text-center">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Fecha de Finalización</p>
-                <p className="text-3xl font-black text-emerald-600">{finalDate}</p>
-                <p className="text-xs text-slate-500 mt-1">Estimada</p>
+
+              {/* Tabla desplegable */}
+              <div className="flex items-center justify-between mb-4 px-2">
+                <button onClick={() => setShowRows(!showRows)} className="flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-black transition-colors">
+                  {showRows ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  {showRows ? "Ocultar Detalles" : "Ver Detalle de Cuotas"}
+                </button>
+                <button onClick={exportPDF} className="flex items-center gap-2 text-sm font-semibold bg-red-50 text-red-600 px-4 py-2 rounded-lg hover:bg-red-100 transition-colors">
+                  <Download className="w-4 h-4" /> Imprimir PDF
+                </button>
+              </div>
+
+              {showRows && (
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm animate-in fade-in">
+                  <div className="max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-sm text-left">
+                      <thead className="sticky top-0 bg-slate-100 z-10 shadow-sm">
+                        <tr>
+                          <th className="px-6 py-4 font-bold text-slate-700"># Día</th>
+                          <th className="px-6 py-4 font-bold text-slate-700">Fecha</th>
+                          <th className="px-6 py-4 font-bold text-slate-700">Cuota</th>
+                          <th className="px-6 py-4 font-bold text-slate-700">Interés</th>
+                          <th className="px-6 py-4 font-bold text-slate-700">Abono Capital</th>
+                          <th className="px-6 py-4 font-bold text-slate-700">Saldo Final</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {schedule.map((row) => (
+                          <tr key={row.dayNumber} className={row.isPaymentDay ? "hover:bg-slate-50" : "bg-red-50/50 opacity-60"}>
+                            <td className="px-6 py-3 text-slate-500 font-mono">{row.dayNumber} {!row.isPaymentDay && "(P&P)"}</td>
+                            <td className="px-6 py-3 font-medium text-slate-900">{row.date}</td>
+                            <td className="px-6 py-3 font-medium text-emerald-600">{row.isPaymentDay ? fmtCOP.format(row.quotaPaid) : "—"}</td>
+                            <td className="px-6 py-3 text-red-600">{fmtCOP.format(row.interestAccrued)}</td>
+                            <td className="px-6 py-3 text-blue-600">{row.isPaymentDay ? fmtCOP.format(row.principalPaid) : "—"}</td>
+                            <td className="px-6 py-3 font-bold text-slate-900">{fmtCOP.format(row.balance)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="mt-8 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-sm">
+              <Calculator className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+              <h3 className="text-base font-bold text-slate-700">Sin simulación proyectada</h3>
+              <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
+                Ajusta el capital, interés y cuota en el formulario superior y presiona <strong>Simular</strong> para visualizar la gráfica de amortización y el desglose de cuotas.
+              </p>
+            </div>
+          )
+        )}
+
+        {/* TAB 2: CONTRATOS PENDIENTES */}
+        {activeTab === "pending" && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 mt-6 space-y-4">
+            {/* Header del tab con buscador y refresh */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex-1 relative max-w-md">
+                <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filtrar por placa o conductor..."
+                  value={pendingFilterPlate}
+                  onChange={(e) => setPendingFilterPlate(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-black/60"
+                />
+                {pendingFilterPlate && (
+                  <button
+                    onClick={() => {
+                      setPendingFilterPlate("");
+                      setSearchParams((prev) => {
+                        const n = new URLSearchParams(prev);
+                        n.delete("plate");
+                        return n;
+                      });
+                    }}
+                    className="absolute right-3 top-2.5 text-xs text-slate-400 hover:text-slate-600 bg-slate-100 rounded-md px-1.5 py-0.5"
+                    title="Limpiar búsqueda"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3 justify-between sm:justify-end">
+                <span className="text-xs text-slate-500 font-medium">
+                  {filteredPending.length} {filteredPending.length === 1 ? "contrato pendiente" : "contratos pendientes"}
+                </span>
+                <button
+                  onClick={() => loadPendingContracts()}
+                  disabled={loadingPending}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loadingPending ? "animate-spin" : ""}`} />
+                  Actualizar
+                </button>
               </div>
             </div>
 
-            {/* Gráfica */}
-            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 mb-8 h-96">
-              <h3 className="text-lg font-bold text-slate-800 mb-4">Proyección de Amortización</h3>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={schedule}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 12 }} tickMargin={10} minTickGap={30} />
-                  <YAxis yAxisId="left" tickFormatter={(val) => `$${(val / 1000000).toFixed(1)}M`} tick={{ fontSize: 12 }} />
-                  <YAxis yAxisId="right" orientation="right" tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`} tick={{ fontSize: 12 }} />
-                  <RechartsTooltip formatter={(val: any) => fmtCOP.format(val)} />
-                  <Legend />
-                  <Line yAxisId="left" type="monotone" dataKey="balance" name="Saldo Deuda" stroke="#0ea5e9" strokeWidth={2} dot={false} />
-                  <Line yAxisId="right" type="monotone" dataKey="interestAccrued" name="Interés Diario" stroke="#ef4444" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Tabla desplegable */}
-            <div className="flex items-center justify-between mb-4 px-2">
-              <button onClick={() => setShowRows(!showRows)} className="flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-black transition-colors">
-                {showRows ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                {showRows ? "Ocultar Detalles" : "Ver Detalle de Cuotas"}
-              </button>
-              <button onClick={exportPDF} className="flex items-center gap-2 text-sm font-semibold bg-red-50 text-red-600 px-4 py-2 rounded-lg hover:bg-red-100 transition-colors">
-                <Download className="w-4 h-4" /> Imprimir PDF
-              </button>
-            </div>
-
-            {showRows && (
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm animate-in fade-in">
-                <div className="max-h-[600px] overflow-y-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead className="sticky top-0 bg-slate-100 z-10 shadow-sm">
+            {/* Listado de contratos pendientes */}
+            {loadingPending ? (
+              <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-slate-400" />
+                <p className="text-sm font-medium">Cargando contratos pendientes...</p>
+              </div>
+            ) : filteredPending.length === 0 ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center shadow-sm">
+                <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto mb-3" />
+                <h3 className="text-base font-bold text-slate-800">
+                  {pendingFilterPlate ? "No se encontraron contratos para el filtro aplicado" : "No hay contratos de leasing pendientes"}
+                </h3>
+                <p className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">
+                  {pendingFilterPlate
+                    ? "Prueba buscando con otra placa o limpiando el filtro de búsqueda."
+                    : "Todos los contratos generados han sido activados formalmente o cancelados."}
+                </p>
+                {pendingFilterPlate && (
+                  <button
+                    onClick={() => {
+                      setPendingFilterPlate("");
+                      setSearchParams((prev) => {
+                        const n = new URLSearchParams(prev);
+                        n.delete("plate");
+                        return n;
+                      });
+                    }}
+                    className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 transition-colors"
+                  >
+                    Limpiar Filtro
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                {/* ── Vista Escritorio: Tabla completa (>= md) ── */}
+                <div className="hidden md:block overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase tracking-wider">
                       <tr>
-                        <th className="px-6 py-4 font-bold text-slate-700"># Día</th>
-                        <th className="px-6 py-4 font-bold text-slate-700">Fecha</th>
-                        <th className="px-6 py-4 font-bold text-slate-700">Cuota</th>
-                        <th className="px-6 py-4 font-bold text-slate-700">Interés</th>
-                        <th className="px-6 py-4 font-bold text-slate-700">Abono Capital</th>
-                        <th className="px-6 py-4 font-bold text-slate-700">Saldo Final</th>
+                        <th className="px-5 py-3.5">Contrato</th>
+                        <th className="px-5 py-3.5">Vehículo</th>
+                        <th className="px-5 py-3.5">Conductor</th>
+                        <th className="px-5 py-3.5">Condiciones Financieras</th>
+                        <th className="px-5 py-3.5">Inicio Programado</th>
+                        <th className="px-5 py-3.5 text-right">Acciones</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {schedule.map((row) => (
-                        <tr key={row.dayNumber} className={row.isPaymentDay ? "hover:bg-slate-50" : "bg-red-50/50 opacity-60"}>
-                          <td className="px-6 py-3 text-slate-500 font-mono">{row.dayNumber} {!row.isPaymentDay && "(P&P)"}</td>
-                          <td className="px-6 py-3 font-medium text-slate-900">{row.date}</td>
-                          <td className="px-6 py-3 font-medium text-emerald-600">{row.isPaymentDay ? fmtCOP.format(row.quotaPaid) : "—"}</td>
-                          <td className="px-6 py-3 text-red-600">{fmtCOP.format(row.interestAccrued)}</td>
-                          <td className="px-6 py-3 text-blue-600">{row.isPaymentDay ? fmtCOP.format(row.principalPaid) : "—"}</td>
-                          <td className="px-6 py-3 font-bold text-slate-900">{fmtCOP.format(row.balance)}</td>
-                        </tr>
-                      ))}
+                      {filteredPending.map((c) => {
+                        const todayStr = getTodayColombia();
+                        const isPast = c.start_date < todayStr;
+                        const totalDaily = Number(c.daily_capital_interest) + Number(c.daily_maintenance || 10000) + Number(c.daily_admin || 11000);
+                        return (
+                          <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
+                            {/* Contrato ID + creación */}
+                            <td className="px-5 py-4">
+                              <span className="font-mono font-bold text-slate-900 block">#{c.id}</span>
+                              <span className="text-[11px] text-slate-400 block" title={c.created_at}>
+                                {formatCreatedAgo(c.created_at)}
+                              </span>
+                            </td>
+
+                            {/* Vehículo */}
+                            <td className="px-5 py-4">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-black text-slate-900 px-2 py-0.5 bg-slate-100 rounded border border-slate-200 text-xs">
+                                  {c.plate}
+                                </span>
+                              </div>
+                              <span className="text-xs text-slate-500 block mt-0.5">
+                                {c.vehicle?.brand} {c.vehicle?.line} {c.vehicle?.model_year ? `(${c.vehicle.model_year})` : ""}
+                              </span>
+                            </td>
+
+                            {/* Conductor */}
+                            <td className="px-5 py-4">
+                              <span className="font-semibold text-slate-800 block text-xs">
+                                {c.driver?.full_name || `Conductor #${c.driver_id}`}
+                              </span>
+                              <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5">
+                                {c.driver?.document_number && <span>CC: {c.driver.document_number}</span>}
+                                {c.driver?.phone && (
+                                  <a href={`tel:${c.driver.phone}`} className="text-blue-600 hover:underline flex items-center gap-0.5 font-medium">
+                                    <Phone className="h-2.5 w-2.5" /> {c.driver.phone}
+                                  </a>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Condiciones */}
+                            <td className="px-5 py-4">
+                              <div className="text-xs space-y-0.5">
+                                <div>
+                                  <span className="text-slate-400 text-[10px] uppercase font-semibold mr-1">Capital:</span>
+                                  <span className="font-semibold text-slate-800">{fmtCOP.format(Number(c.financed_capital || c.purchase_price))}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400 text-[10px] uppercase font-semibold mr-1">Cuota Diaria:</span>
+                                  <span className="font-bold text-blue-700">{fmtCOP.format(totalDaily)}</span>
+                                  <span className="text-[10px] text-slate-400 ml-1">({c.monthly_rate_pct}%/m)</span>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Inicio Programado */}
+                            <td className="px-5 py-4">
+                              <span className="font-medium text-slate-800 text-xs block">{c.start_date}</span>
+                              <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border mt-1 ${
+                                isPast
+                                  ? "bg-amber-50 text-amber-800 border-amber-200"
+                                  : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                              }`}>
+                                {formatDaysDiff(c.start_date)}
+                              </span>
+                            </td>
+
+                            {/* Acciones */}
+                            <td className="px-5 py-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveModalContractId(c.id)}
+                                  className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm transition-all"
+                                >
+                                  <Rocket className="h-3.5 w-3.5" />
+                                  Activar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelPending(c.id, c.plate)}
+                                  className="inline-flex items-center gap-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-xl text-xs font-medium transition-colors"
+                                  title="Cancelar contrato borrador y liberar vehículo"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
-              </div>
+
+                {/* ── Vista Móvil: Tarjetas táctiles (< md) ── */}
+                <div className="block md:hidden space-y-3">
+                  {filteredPending.map((c) => {
+                    const todayStr = getTodayColombia();
+                    const isPast = c.start_date < todayStr;
+                    const totalDaily = Number(c.daily_capital_interest) + Number(c.daily_maintenance || 10000) + Number(c.daily_admin || 11000);
+                    return (
+                      <div key={c.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
+                        {/* Cabecera Tarjeta */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-black text-sm text-slate-900 px-2 py-0.5 bg-slate-100 rounded border border-slate-200">
+                              {c.plate}
+                            </span>
+                            <span className="text-xs text-slate-400 font-mono">#{c.id}</span>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            isPast
+                              ? "bg-amber-50 text-amber-800 border-amber-200"
+                              : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                          }`}>
+                            {formatDaysDiff(c.start_date)}
+                          </span>
+                        </div>
+
+                        {/* Vehículo y Conductor */}
+                        <div className="text-xs space-y-1">
+                          <p className="text-slate-600 font-medium">
+                            {c.vehicle?.brand} {c.vehicle?.line} {c.vehicle?.model_year ? `(${c.vehicle.model_year})` : ""}
+                          </p>
+                          <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                            <span className="font-semibold text-slate-800">
+                              {c.driver?.full_name || `Conductor #${c.driver_id}`}
+                            </span>
+                            {c.driver?.phone && (
+                              <a href={`tel:${c.driver.phone}`} className="text-blue-600 font-semibold flex items-center gap-1">
+                                <Phone className="h-3 w-3" /> {c.driver.phone}
+                              </a>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Finanzas en Grid 2x2 */}
+                        <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-xl text-xs border border-slate-100">
+                          <div>
+                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Capital</span>
+                            <span className="font-bold text-slate-800">{fmtCOP.format(Number(c.financed_capital || c.purchase_price))}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Cuota Diaria Total</span>
+                            <span className="font-bold text-blue-700">{fmtCOP.format(totalDaily)}</span>
+                          </div>
+                        </div>
+
+                        {/* Fecha de inicio */}
+                        <div className="flex items-center justify-between text-xs text-slate-500">
+                          <span>Inicio: <strong className="text-slate-700">{c.start_date}</strong></span>
+                          <span className="text-[11px] text-slate-400">{formatCreatedAgo(c.created_at)}</span>
+                        </div>
+
+                        {/* Botones de acción móvil (touch target >= 44px) */}
+                        <div className="pt-1 space-y-2">
+                          <button
+                            type="button"
+                            onClick={() => setActiveModalContractId(c.id)}
+                            className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-sm transition-colors text-sm"
+                          >
+                            <Rocket className="h-4 w-4" />
+                            Activar Contrato
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCancelPending(c.id, c.plate)}
+                            className="w-full py-2 text-center text-xs font-semibold text-slate-500 hover:text-rose-600 transition-colors"
+                          >
+                            Cancelar Contrato Borrador
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
             )}
           </div>
         )}
@@ -897,108 +1327,20 @@ export default function AdminAmortization() {
         </div>
       )}
 
-      {/* ── MODAL ACTIVAR LEASING ── */}
-      {showLeasingModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-2xl bg-emerald-100 flex items-center justify-center">
-                  <Rocket className="h-5 w-5 text-emerald-600" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 text-lg">Activar Contrato de Leasing</h3>
-                  <p className="text-xs text-slate-500">Placa: <span className="font-mono font-bold">{selectedPlate}</span></p>
-                </div>
-              </div>
-              <button onClick={() => { setShowLeasingModal(false); setLeasingSuccess(null); }}
-                className="text-slate-400 hover:text-slate-600 rounded-lg p-1 bg-slate-50 hover:bg-slate-100"><X className="w-5 h-5" /></button>
-            </div>
-
-            {leasingSuccess ? (
-              <div className="p-8 text-center">
-                <div className="h-16 w-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
-                  <span className="text-3xl">🎉</span>
-                </div>
-                <h4 className="text-xl font-black text-slate-900 mb-2">¡Leasing Activado!</h4>
-                <p className="text-slate-600 text-sm mb-1">Contrato ID: <span className="font-mono font-bold">{leasingSuccess.contract?.id}</span></p>
-                <p className="text-slate-600 text-sm mb-4">
-                  Se generaron <span className="font-bold text-emerald-600">{leasingSuccess.schedule_rows_generated}</span> cuotas en el cronograma.
-                </p>
-                <p className="text-xs text-slate-400 mb-6">El vehículo ahora aparece en estado "En Leasing" en el módulo de flota.</p>
-                <button onClick={() => { setShowLeasingModal(false); setLeasingSuccess(null); }}
-                  className="bg-black text-white rounded-xl px-6 py-3 font-semibold hover:bg-slate-800 transition-colors">
-                  Cerrar
-                </button>
-              </div>
-            ) : (
-              <div className="p-6 space-y-4">
-                {/* Resumen */}
-                <div className="bg-slate-50 rounded-xl p-4 grid grid-cols-2 gap-3 text-sm">
-                  <div><span className="text-slate-500 text-xs block">Capital</span><span className="font-bold">{fmtCOP.format(parseFloat(capital) || 0)}</span></div>
-                  <div><span className="text-slate-500 text-xs block">Tasa Mensual</span><span className="font-bold">{monthlyRate}%</span></div>
-                  <div><span className="text-slate-500 text-xs block">Cuota Amortización</span><span className="font-bold">{fmtCOP.format(parseFloat(dailyQuota) || 0)}</span></div>
-                  <div><span className="text-slate-500 text-xs block">Cuota Total Diaria</span><span className="font-bold text-blue-600">{fmtCOP.format(totalDailyPayment)}</span></div>
-                </div>
-
-
-
-                {/* Notas */}
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">Notas (opcional)</label>
-                  <textarea value={leasingModalData.notes}
-                    onChange={(e) => setLeasingModalData((p) => ({ ...p, notes: e.target.value }))}
-                    rows={2} placeholder="Ej: Contrato firmado el 20/07/2026..."
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-black/60 resize-none" />
-                </div>
-
-                {/* Subir Contrato */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <label className="block text-sm font-bold text-slate-700">Contrato Firmado</label>
-                    <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={attachLater}
-                        onChange={(e) => setAttachLater(e.target.checked)}
-                        className="rounded border-slate-300"
-                      />
-                      Adjuntar después
-                    </label>
-                  </div>
-                  
-                  {!attachLater ? (
-                    <div>
-                      <input
-                        type="file"
-                        accept="application/pdf,image/*"
-                        onChange={(e) => setLeasingFile(e.target.files?.[0] || null)}
-                        className="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
-                      />
-                      {leasingFile && <p className="text-xs text-slate-500 mt-2">Archivo: {leasingFile.name}</p>}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-slate-500">
-                      El vehículo quedará con la marca <strong>Pendiente Contrato</strong> en la pantalla de Flota.
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex gap-3 pt-2">
-                  <button onClick={() => setShowLeasingModal(false)}
-                    className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors">
-                    Cancelar
-                  </button>
-                  <button onClick={handleActivateLeasing} disabled={activatingLeasing}
-                    className="flex-1 flex justify-center items-center gap-2 bg-emerald-600 text-white rounded-xl py-3 font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50">
-                    {activatingLeasing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Rocket className="h-5 w-5" />}
-                    Confirmar y Activar
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+      {/* ── MODAL ACTIVAR LEASING (UNIFICADO) ── */}
+      {activeModalContractId !== null && (
+        <LeasingActivationModal
+          contractId={activeModalContractId}
+          authHeader={authHeader}
+          onClose={() => setActiveModalContractId(null)}
+          onSuccess={() => {
+            loadPendingContracts();
+            fetch(`${API}/vehicles?status=all`, { headers: { Authorization: authHeader } })
+              .then((r) => r.json())
+              .then((data) => Array.isArray(data) && setVehicles(data))
+              .catch(() => {});
+          }}
+        />
       )}
 
       {/* ══ MODAL GENERAR CONTRATO OFICIAL ══ */}
@@ -1216,7 +1558,7 @@ export default function AdminAmortization() {
                     <p>No. Pagaré: <strong>{contractResult.numero_pagare}</strong></p>
                     <p className="text-amber-700 font-semibold">⏰ Los links expiran en 30 minutos — descarga los archivos ahora</p>
                   </div>
-                  <div className="flex gap-3">
+                  <div className="flex flex-wrap gap-3">
                     <a href={contractResult.pdf_url} target="_blank" rel="noreferrer"
                       className="flex items-center gap-2 bg-red-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-red-700 transition-colors">
                       <Download className="h-4 w-4" /> Descargar PDF
@@ -1225,6 +1567,17 @@ export default function AdminAmortization() {
                       className="flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
                       <Download className="h-4 w-4" /> Descargar DOCX
                     </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cid = contractResult.contract_id;
+                        setShowContractModal(false);
+                        setActiveModalContractId(cid);
+                      }}
+                      className="flex items-center gap-2 bg-emerald-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                    >
+                      <Rocket className="h-4 w-4" /> Proceder a Activar Contrato
+                    </button>
                   </div>
                 </div>
               )}
@@ -1252,6 +1605,394 @@ export default function AdminAmortization() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MODAL UNIFICADO DE ACTIVACIÓN DE LEASING
+// Carga el contrato pendiente por ID, permite ajustar y confirmar la fecha de inicio,
+// y exige la subida del contrato firmado/autenticado a Cloudflare R2 antes de activar.
+// ══════════════════════════════════════════════════════════════════════════════
+type LeasingActivationModalProps = {
+  contractId: number;
+  authHeader: string;
+  onClose: () => void;
+  onSuccess: () => void;
+};
+
+function LeasingActivationModal({ contractId, authHeader, onClose, onSuccess }: LeasingActivationModalProps) {
+  const [contract, setContract] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [startDate, setStartDate] = useState<string>("");
+  const [startDateConfirmed, setStartDateConfirmed] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [signedDocUrl, setSignedDocUrl] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [activating, setActivating] = useState(false);
+  const [activationResult, setActivationResult] = useState<any>(null);
+
+  const todayStr = getTodayColombia();
+
+  useEffect(() => {
+    async function fetchContract() {
+      setLoading(true);
+      setError(null);
+      try {
+        const rs = await fetch(`${API}/leasing/contracts/${contractId}?expand=1`, {
+          headers: { Authorization: authHeader },
+        });
+        if (!rs.ok) {
+          const errData = await rs.json().catch(() => ({}));
+          throw new Error(errData.error || "Error al cargar información del contrato");
+        }
+        const data = await rs.json();
+        setContract(data);
+        setStartDate(data.start_date || todayStr);
+      } catch (e: any) {
+        setError(e.message || "Error al conectar con el servidor");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchContract();
+  }, [contractId, authHeader, todayStr]);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("folder", "contracts");
+
+      const upRes = await fetch(`${API}/uploads`, {
+        method: "POST",
+        headers: { Authorization: authHeader },
+        body: fd,
+      });
+
+      const upData = await upRes.json();
+      if (!upRes.ok) {
+        throw new Error(upData.error || "Error al subir el archivo");
+      }
+      setSignedDocUrl(upData.url);
+    } catch (err: any) {
+      setUploadError(err.message || "Error al subir documento autenticado");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleActivate = async () => {
+    if (!signedDocUrl) {
+      setError("El documento autenticado en PDF o imagen es obligatorio para activar.");
+      return;
+    }
+    if (!startDateConfirmed) {
+      setError("Debes confirmar que la fecha de inicio coincide con la del contrato firmado.");
+      return;
+    }
+    if (!startDate) {
+      setError("La fecha de inicio es requerida.");
+      return;
+    }
+
+    setActivating(true);
+    setError(null);
+    try {
+      const rs = await fetch(`${API}/leasing/contracts/${contractId}/activate`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify({
+          start_date: startDate,
+          start_date_confirmed: true,
+          signed_contract_url: signedDocUrl,
+        }),
+      });
+
+      const data = await rs.json();
+      if (!rs.ok) {
+        throw new Error(data.error || "Error al activar el contrato");
+      }
+
+      setActivationResult(data);
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message || "Error inesperado al activar el contrato");
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  const isPastDate = !!startDate && startDate < todayStr;
+  const originalDate = contract?.original_start_date || contract?.start_date;
+  const isChangedDate = !!contract && !!startDate && startDate !== originalDate;
+
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-sm animate-in fade-in overflow-y-auto">
+      <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden my-auto" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-2xl bg-emerald-100 flex items-center justify-center shrink-0">
+              <Rocket className="h-5 w-5 text-emerald-600" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-900 text-base sm:text-lg">Activar Contrato de Leasing</h3>
+              <p className="text-xs text-slate-500">
+                Contrato #{contractId} {contract?.plate ? `· Placa: ${contract.plate}` : ""}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-600 rounded-lg p-1 bg-slate-50 hover:bg-slate-100"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Content */}
+        {loading ? (
+          <div className="p-12 text-center text-slate-400">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-slate-400" />
+            <p className="text-sm font-medium">Cargando detalles del contrato #{contractId}...</p>
+          </div>
+        ) : activationResult ? (
+          <div className="p-8 text-center space-y-4">
+            <div className="h-16 w-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-2">
+              <span className="text-3xl">🎉</span>
+            </div>
+            <h4 className="text-xl font-black text-slate-900">¡Contrato Activado con Éxito!</h4>
+            <p className="text-slate-600 text-sm">
+              El contrato #{contractId} para el vehículo <strong className="text-slate-900">{contract?.plate}</strong> está formalmente activo.
+            </p>
+            <div className="rounded-xl bg-slate-50 p-4 text-xs text-slate-600 space-y-1 text-left">
+              <p>Cuotas generadas en el cronograma: <strong className="text-emerald-600 text-sm">{activationResult.schedule_rows}</strong></p>
+              <p>Fecha de inicio formal: <strong className="text-slate-800">{startDate}</strong></p>
+              <p className="text-[11px] text-slate-400 mt-2">El vehículo ha cambiado a estado "En Leasing" y sus cuotas ya pueden recaudarse.</p>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-full bg-black text-white rounded-xl py-3 font-semibold hover:bg-slate-800 transition-colors shadow-sm"
+            >
+              Cerrar y Actualizar
+            </button>
+          </div>
+        ) : !contract ? (
+          <div className="p-8 text-center space-y-4">
+            <AlertTriangle className="h-10 w-10 text-rose-500 mx-auto" />
+            <p className="text-sm text-slate-700 font-semibold">{error || "No se pudo cargar el contrato."}</p>
+            <button
+              onClick={onClose}
+              className="bg-slate-100 text-slate-700 px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-200"
+            >
+              Cerrar
+            </button>
+          </div>
+        ) : (
+          <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+            {/* Info Resumen: Conductor y Vehículo */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs space-y-2.5">
+              <div className="flex justify-between items-start">
+                <div>
+                  <span className="text-slate-400 font-medium block">Vehículo</span>
+                  <span className="font-bold text-sm text-slate-900 font-mono">{contract.plate}</span>
+                  <span className="text-slate-600 ml-2">
+                    {contract.vehicle?.brand} {contract.vehicle?.line} {contract.vehicle?.model_year ? `(${contract.vehicle.model_year})` : ""}
+                  </span>
+                </div>
+                <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
+                  {contract.status}
+                </span>
+              </div>
+
+              <div className="border-t border-slate-200/60 pt-2 flex justify-between items-start">
+                <div>
+                  <span className="text-slate-400 font-medium block">Conductor</span>
+                  <span className="font-bold text-slate-800">{contract.driver?.full_name || `ID #${contract.driver_id}`}</span>
+                  {contract.driver?.document_number && (
+                    <span className="text-slate-500 ml-1.5 font-mono">CC: {contract.driver.document_number}</span>
+                  )}
+                </div>
+                {contract.driver?.phone && (
+                  <a
+                    href={`tel:${contract.driver.phone}`}
+                    className="flex items-center gap-1 text-blue-600 font-semibold hover:underline"
+                  >
+                    <Phone className="h-3 w-3" />
+                    {contract.driver.phone}
+                  </a>
+                )}
+              </div>
+
+              {/* Finanzas */}
+              <div className="border-t border-slate-200/60 pt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                <div>
+                  <span className="text-slate-400 block">Capital Financiado</span>
+                  <span className="font-bold text-slate-800">{fmtCOP.format(Number(contract.financed_capital || contract.purchase_price))}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Tasa Mensual</span>
+                  <span className="font-bold text-slate-800">{contract.monthly_rate_pct}% M.V.</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Cuota Cap.+Int.</span>
+                  <span className="font-bold text-slate-800">{fmtCOP.format(Number(contract.daily_capital_interest))}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Cuota Total Diaria</span>
+                  <span className="font-bold text-blue-700">
+                    {fmtCOP.format(Number(contract.daily_capital_interest) + Number(contract.daily_maintenance || 10000) + Number(contract.daily_admin || 11000))}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Error general si hubo */}
+            {error && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs text-red-700 flex items-start gap-2.5">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-red-500 mt-0.5" />
+                <p>{error}</p>
+              </div>
+            )}
+
+            {/* Fecha de Inicio */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Fecha de Inicio Efectiva
+              </label>
+              <div className="relative">
+                <CalendarIcon className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-sm font-medium outline-none focus:ring-2 focus:ring-black/60 bg-white"
+                />
+              </div>
+
+              {/* Advertencia si la fecha es pasada */}
+              {isPastDate && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2.5 animate-in fade-in">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                  <div>
+                    <strong className="font-bold">Advertencia:</strong> La fecha seleccionada ({startDate}) ya transcurrió. Las cuotas de días previos se generarán en el cronograma como vencidas/pendientes de cobro.
+                  </div>
+                </div>
+              )}
+
+              {/* Aviso si la fecha difiere del borrador original */}
+              {isChangedDate && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 flex items-start gap-2.5 animate-in fade-in">
+                  <Info className="h-4 w-4 shrink-0 text-blue-600 mt-0.5" />
+                  <div>
+                    <strong className="font-bold">Fecha modificada:</strong> La fecha original del borrador era <strong>{originalDate}</strong>. El cronograma y las restricciones de Pico y Placa se recalcularán automáticamente a partir de la nueva fecha.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Checkbox obligatorio de confirmación */}
+            <label className="flex items-start gap-3 p-3.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer">
+              <input
+                type="checkbox"
+                checked={startDateConfirmed}
+                onChange={(e) => setStartDateConfirmed(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <span className="text-xs font-semibold text-slate-700 leading-relaxed">
+                Confirmo que la fecha de inicio coincide exactamente con la indicada en el contrato firmado y autenticado ante notaría.
+              </span>
+            </label>
+
+            {/* Subir Documento Autenticado */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Documento Firmado y Autenticado <span className="text-red-500">* (Obligatorio)</span>
+              </label>
+              <p className="text-[11px] text-slate-500">
+                Sube el archivo escaneado (PDF o imagen) con sellos notariales legibles. Se almacenará de forma segura en Cloudflare R2.
+              </p>
+
+              {signedDocUrl ? (
+                <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">
+                  <div className="flex items-center gap-2">
+                    <FileCheck className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span className="font-medium">Documento cargado correctamente en R2</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <a
+                      href={signedDocUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-emerald-700 underline font-semibold hover:text-emerald-900"
+                    >
+                      Ver archivo
+                    </a>
+                    <label className="text-xs text-slate-500 hover:text-slate-800 underline cursor-pointer">
+                      Reemplazar
+                      <input
+                        type="file"
+                        accept="application/pdf,image/*"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    onChange={handleFileUpload}
+                    disabled={uploading}
+                    className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer disabled:opacity-50"
+                  />
+                  {uploading && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />
+                      <span>Subiendo documento a Cloudflare R2...</span>
+                    </div>
+                  )}
+                  {uploadError && (
+                    <p className="text-xs text-red-600 mt-1">❌ {uploadError}</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Botones de acción */}
+            <div className="flex gap-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={activating}
+                className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleActivate}
+                disabled={activating || uploading || !signedDocUrl || !startDateConfirmed || !startDate}
+                className="flex-1 flex justify-center items-center gap-2 bg-emerald-600 text-white rounded-xl py-3 font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-40 shadow-sm"
+              >
+                {activating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Rocket className="h-5 w-5" />}
+                {activating ? "Activando…" : "Confirmar y Activar"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
