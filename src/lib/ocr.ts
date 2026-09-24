@@ -37,7 +37,63 @@ Responde SOLO con el JSON, sin markdown ni texto adicional.`;
 
 // ── Normalización ─────────────────────────────────────────────────────────────
 function normalizeRef(raw: any): string | null {
-  return raw ? String(raw).trim().toUpperCase() : null;
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (
+    s.toLowerCase() === "null" ||
+    s.toLowerCase() === "undefined" ||
+    s.toLowerCase() === "n/a" ||
+    s.toLowerCase() === "none" ||
+    s === ""
+  ) {
+    return null;
+  }
+  return s.toUpperCase();
+}
+
+export function normalizeOcrDate(raw: any): string | null {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (
+    s.toLowerCase() === "null" ||
+    s.toLowerCase() === "undefined" ||
+    s.toLowerCase() === "n/a" ||
+    s.toLowerCase() === "none" ||
+    s === ""
+  ) {
+    return null;
+  }
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(s + "T00:00:00Z");
+    if (!Number.isNaN(d.getTime())) return s;
+  }
+  // Formato YYYY/MM/DD
+  const slashMatch = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (slashMatch && slashMatch[1] && slashMatch[2] && slashMatch[3]) {
+    const y = slashMatch[1];
+    const m = slashMatch[2].padStart(2, "0");
+    const d = slashMatch[3].padStart(2, "0");
+    const formatted = `${y}-${m}-${d}`;
+    const parsed = new Date(formatted + "T00:00:00Z");
+    if (!Number.isNaN(parsed.getTime())) return formatted;
+  }
+  return null;
+}
+
+function normalizeProvider(raw: any): string | null {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (
+    s.toLowerCase() === "null" ||
+    s.toLowerCase() === "undefined" ||
+    s.toLowerCase() === "n/a" ||
+    s.toLowerCase() === "none" ||
+    s === ""
+  ) {
+    return null;
+  }
+  return s;
 }
 
 function buildResult(data: any, provider: "gemini" | "openai" | "deepseek"): OCRResult {
@@ -55,13 +111,21 @@ function buildResult(data: any, provider: "gemini" | "openai" | "deepseek"): OCR
   }
 
   const rawRef = normalizeRef(data.reference_number);
+  const rawDate = normalizeOcrDate(data.receipt_date);
+  const rawProvider = normalizeProvider(data.provider_name);
+  const rawAmount =
+    typeof data.amount === "number" && !Number.isNaN(data.amount)
+      ? Math.round(data.amount)
+      : data.amount && !Number.isNaN(Number(data.amount))
+      ? Math.round(Number(data.amount))
+      : null;
 
-  if (!rawRef || !data.amount) {
+  if (!rawRef || !rawAmount) {
     return {
       reference_number: rawRef,
-      provider_name: data.provider_name || null,
-      receipt_date: data.receipt_date || null,
-      amount: data.amount || null,
+      provider_name: rawProvider,
+      receipt_date: rawDate,
+      amount: rawAmount,
       status: "suspicious_ocr_failed",
       ocr_provider: provider,
       message: "No se detectó un número de referencia o monto claro en la imagen.",
@@ -70,9 +134,9 @@ function buildResult(data: any, provider: "gemini" | "openai" | "deepseek"): OCR
 
   return {
     reference_number: rawRef,
-    provider_name: data.provider_name || null,
-    receipt_date: data.receipt_date || null,
-    amount: Number(data.amount),
+    provider_name: rawProvider,
+    receipt_date: rawDate,
+    amount: rawAmount,
     status: "verified",
     ocr_provider: provider,
     message: "Comprobante procesado exitosamente.",

@@ -37,9 +37,10 @@ function normalizePlate(v: string): string {
 type FieldIssue = { path: string; issue: string };
 
 function validationError(res: Response, fields: FieldIssue[]) {
+  const issuesList = fields.map(f => `${f.path}: ${f.issue}`).join(", ");
   return res.status(422).json({
     error: "validation_error",
-    message: "Invalid payload.",
+    message: `Campos inválidos o incompletos: ${issuesList}`,
     fields,
   });
 }

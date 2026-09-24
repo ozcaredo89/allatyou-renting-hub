@@ -46,9 +46,10 @@ function normalizeDoc(v: string): string {
 type FieldIssue = { path: string; issue: string };
 
 function validationError(res: Response, fields: FieldIssue[]) {
+  const issuesList = fields.map(f => `${f.path}: ${f.issue}`).join(", ");
   return res.status(422).json({
     error: "validation_error",
-    message: "Invalid payload.",
+    message: `Campos inválidos o incompletos: ${issuesList}`,
     fields,
   });
 }
@@ -118,20 +119,16 @@ r.post("/", async (req: Request, res: Response) => {
     // -----------------------------
     // Validate: Work
     // -----------------------------
-    const hasCommercialExp = workExperience.hasCommercialExp;
-    if (typeof hasCommercialExp !== "boolean") {
-      fields.push({ path: "workExperience.hasCommercialExp", issue: "required_boolean" });
-    }
+    const hasCommercialExp = typeof workExperience.hasCommercialExp === "boolean" ? workExperience.hasCommercialExp : false;
 
     const drivingExpTime = workExperience.drivingExpTime;
-    if (!isNonEmptyString(drivingExpTime) || drivingExpTime.trim().length < 2 || drivingExpTime.trim().length > 80) {
-      fields.push({ path: "workExperience.drivingExpTime", issue: "required_min_2_max_80" });
+    if (!isNonEmptyString(drivingExpTime) || drivingExpTime.trim().length < 1 || drivingExpTime.trim().length > 80) {
+      fields.push({ path: "workExperience.drivingExpTime", issue: "required_min_1_max_80" });
     }
 
-    const similarJobExp = workExperience.similarJobExp;
-    if (!isNonEmptyString(similarJobExp) || similarJobExp.trim().length < 3 || similarJobExp.trim().length > 800) {
-      fields.push({ path: "workExperience.similarJobExp", issue: "required_min_3_max_800" });
-    }
+    const similarJobExp = isNonEmptyString(workExperience.similarJobExp)
+      ? workExperience.similarJobExp.trim()
+      : "Sin experiencia previa especificada";
 
     // -----------------------------
     // Validate: License
@@ -220,11 +217,14 @@ r.post("/", async (req: Request, res: Response) => {
       fields.push({ path: "references", issue: "min_2_required" });
     } else {
       references.slice(0, 10).forEach((ref: any, idx: number) => {
-        if (!isNonEmptyString(ref?.name) || ref.name.trim().length < 3) {
-          fields.push({ path: `references[${idx}].name`, issue: "required_min_3" });
+        const rawName = String(ref?.name || "").trim();
+        const rawPhone = String(ref?.phone || "").trim();
+        if (!rawName || rawName.length < 2) {
+          fields.push({ path: `references[${idx}].name`, issue: "required_min_2" });
         }
-        if (!isNonEmptyString(ref?.phone) || String(ref.phone).trim().length < 7) {
-          fields.push({ path: `references[${idx}].phone`, issue: "required_min_7" });
+        const hasPhone = (rawPhone && rawPhone.length >= 5) || (normalizePhone(rawName).length >= 7);
+        if (!hasPhone) {
+          fields.push({ path: `references[${idx}].phone`, issue: "required_min_5" });
         }
       });
     }
@@ -401,12 +401,23 @@ r.post("/", async (req: Request, res: Response) => {
     // -----------------------------
     // Insert: references
     // -----------------------------
-    const refRows = references.slice(0, 10).map((ref: any, idx: number) => ({
-      driver_application_id: applicationId,
-      position: idx + 1,
-      ref_name: String(ref.name).trim(),
-      ref_phone: normalizePhone(String(ref.phone)),
-    }));
+    const refRows = references.slice(0, 10).map((ref: any, idx: number) => {
+      let refPhone = normalizePhone(String(ref.phone || ""));
+      let refName = String(ref.name || "").trim();
+      if (!refPhone || refPhone.length < 7) {
+        const digitsFromName = normalizePhone(refName);
+        if (digitsFromName && digitsFromName.length >= 7) {
+          refPhone = digitsFromName;
+          refName = refName.replace(/[\d\s\-+()]{7,}/g, "").trim() || refName;
+        }
+      }
+      return {
+        driver_application_id: applicationId,
+        position: idx + 1,
+        ref_name: refName,
+        ref_phone: refPhone || "0000000",
+      };
+    });
 
     const insRefs = await supabase.from("driver_application_references").insert(refRows);
     if (insRefs.error) {

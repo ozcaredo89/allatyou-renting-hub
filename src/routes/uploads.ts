@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { uploadToR2 } from "../lib/r2";
-import { parseReceipt } from "../lib/ocr";
+import { parseReceipt, normalizeOcrDate } from "../lib/ocr";
 import { supabase } from "../lib/supabase";
 import { NO_DRIVER_IMAGE_HASHES } from "../lib/knownReceiptTemplates";
 
@@ -77,15 +77,21 @@ r.post("/", (req: Request, res: Response, next) => {
         
         if (ocrData) {
           // Guardar en la DB de forma segura (Zero-Trust)
+          const safeDate = normalizeOcrDate(ocrData.receipt_date);
+          const safeAmount =
+            typeof ocrData.amount === "number" && !Number.isNaN(ocrData.amount)
+              ? Math.round(ocrData.amount)
+              : null;
+
           const { data: dbRecord, error: dbError } = await supabase
             .from("receipt_uploads")
             .insert([{
               url: publicUrl,
-              reference_number: ocrData.reference_number,
-              provider_name: ocrData.provider_name,
-              receipt_date: ocrData.receipt_date,
-              amount: ocrData.amount,
-              ocr_status: ocrData.status
+              reference_number: ocrData.reference_number || null,
+              provider_name: ocrData.provider_name || null,
+              receipt_date: safeDate,
+              amount: safeAmount,
+              ocr_status: ocrData.status || "unverified"
             }])
             .select("id")
             .single();
