@@ -274,9 +274,10 @@ export default function AdminRecruitment() {
                       <div><dt className="text-slate-500">Fecha Nacimiento</dt><dd className="font-medium">{selected.date_of_birth}</dd></div>
                       <div><dt className="text-slate-500">Dirección</dt><dd className="font-medium">{selected.address}</dd></div>
                       <div><dt className="text-slate-500">Licencia</dt><dd className="font-medium">{selected.has_valid_license ? `Sí (${selected.license_number_cat})` : "No"}</dd></div>
-                      <div className="sm:col-span-2"><dt className="text-slate-500">Experiencia</dt><dd className="font-medium mt-1 p-2 bg-slate-50 rounded-lg">{selected.similar_job_exp || "No especificada"}</dd></div>
+                      <div><dt className="text-slate-500">Años Conduciendo</dt><dd className="font-medium">{selected.driving_exp_time || "No indicado"}</dd></div>
                       <div><dt className="text-slate-500">Compromiso Semanal</dt><dd className="font-medium">{selected.weekly_delivery_commitment ? "✅ Aceptado" : "❌ Rechazado"}</dd></div>
                       <div><dt className="text-slate-500">Test Toxicología</dt><dd className="font-medium">{selected.toxicology_test_consent ? "✅ Aceptado" : "❌ Rechazado"}</dd></div>
+                      <div className="sm:col-span-2"><dt className="text-slate-500">Experiencia previa</dt><dd className="font-medium mt-1 p-2 bg-slate-50 rounded-lg">{selected.similar_job_exp || "No especificada"}</dd></div>
                     </>
                   ) : (
                     <>
@@ -295,6 +296,78 @@ export default function AdminRecruitment() {
                   )}
                 </dl>
               </div>
+
+              {/* Sección Referencias Personales (Solo Conductores) */}
+              {tab === "drivers" && (
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 mb-3 border-b pb-2">Referencias Personales</h3>
+                  {((selected.driver_application_references && selected.driver_application_references.length > 0) || (selected.references && selected.references.length > 0)) ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {(selected.driver_application_references || selected.references || []).map((ref: any, idx: number) => {
+                        const refName = ref.ref_name || ref.name || "Sin nombre";
+                        const refPhone = ref.ref_phone || ref.phone || "";
+                        return (
+                          <div key={ref.id || idx} className="p-4 bg-slate-50 border border-slate-200/70 rounded-2xl space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                Referencia {ref.position || idx + 1}
+                              </span>
+                              {refPhone && (
+                                <WhatsAppBtn 
+                                  value={refPhone} 
+                                  contextMsg={`Hola ${refName}, te contacto de AllAtYou respecto a la postulación de ${selected.full_name}.`} 
+                                />
+                              )}
+                            </div>
+                            <p className="font-bold text-slate-800 text-sm">{refName}</p>
+                            <p className="font-mono text-xs text-slate-600 flex items-center gap-1.5">
+                              <span className="text-slate-400">Tel:</span>
+                              {refPhone ? (
+                                <a href={`tel:${refPhone}`} className="hover:underline font-semibold text-slate-700">
+                                  {refPhone}
+                                </a>
+                              ) : (
+                                <span className="text-slate-400 italic">No registrado</span>
+                              )}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 italic p-3 bg-slate-50 rounded-xl">No hay referencias registradas para esta postulación.</p>
+                  )}
+                </div>
+              )}
+
+              {/* Sección Documentos (Solo Conductores) */}
+              {tab === "drivers" && ((selected.driver_application_documents && selected.driver_application_documents.length > 0) || (selected.documents && selected.documents.length > 0)) && (
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 mb-3 border-b pb-2">Documentos Adjuntos</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {(selected.driver_application_documents || selected.documents || []).map((doc: any, idx: number) => {
+                      const docLabels: Record<string, string> = {
+                        id_document_photo: "Cédula de Ciudadanía",
+                        driver_license_photo: "Licencia de Conducción",
+                        digital_signature: "Firma Digital",
+                      };
+                      const label = docLabels[doc.kind] || doc.kind || `Documento ${idx + 1}`;
+                      return (
+                        <a
+                          key={doc.id || idx}
+                          href={doc.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/70 rounded-2xl hover:bg-slate-100 transition-colors text-xs font-semibold text-slate-700 group"
+                        >
+                          <span className="flex items-center gap-2">📄 {label}</span>
+                          <span className="text-emerald-600 font-bold group-hover:underline">Ver documento ↗</span>
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Acciones de Gestión */}
               <div className="pt-6 border-t border-slate-100">
