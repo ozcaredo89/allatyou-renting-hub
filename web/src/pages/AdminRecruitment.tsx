@@ -10,6 +10,10 @@ export default function AdminRecruitment() {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<any | null>(null);
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectError, setRejectError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -38,26 +42,44 @@ export default function AdminRecruitment() {
   useEffect(() => {
     loadData();
     setSelected(null);
+    setRejecting(false);
+    setRejectReason("");
+    setRejectError(null);
   }, [tab]);
 
-  const changeStatus = async (id: number, newStatus: string) => {
-    if (!confirm(`¿Estás seguro de marcar esto como ${newStatus.toUpperCase()}?`)) return;
+  const changeStatus = async (id: number, newStatus: string, reason?: string) => {
+    if (newStatus !== "rejected" && !confirm(`¿Estás seguro de marcar esto como ${newStatus.toUpperCase()}?`)) return;
     
+    setActionLoading(true);
     const endpoint = tab === "drivers" ? "/driver-applications" : "/vehicle-applications";
     try {
-      await fetch(`${API}${endpoint}/${id}`, {
+      const rs = await fetch(`${API}${endpoint}/${id}`, {
         method: "PATCH",
         headers: { 
           "Content-Type": "application/json",
           Authorization: ensureBasicAuth() 
         },
-        body: JSON.stringify({ status: newStatus })
+        body: JSON.stringify({ 
+          status: newStatus,
+          status_reason: reason || null
+        })
       });
+
+      if (!rs.ok) {
+        const err = await rs.json().catch(() => ({}));
+        alert(err.error || "Error actualizando estado");
+        return;
+      }
       
       setSelected(null);
+      setRejecting(false);
+      setRejectReason("");
+      setRejectError(null);
       loadData();
     } catch (error) {
       alert("Error actualizando estado");
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -156,6 +178,11 @@ export default function AdminRecruitment() {
 
                         <td className="px-6 py-4">
                           <StatusBadge status={item.status} />
+                          {item.status === "rejected" && item.status_reason && (
+                            <div className="text-[11px] text-red-600 font-medium mt-1 max-w-[200px] truncate" title={item.status_reason}>
+                              {item.status_reason}
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-6 py-4 text-right">
@@ -185,14 +212,27 @@ export default function AdminRecruitment() {
             <div className="p-6 border-b border-slate-100 flex justify-between items-start sticky top-0 bg-white z-10">
               <div>
                 <h2 className="text-2xl font-bold text-slate-900">{selected.full_name || selected.owner_name}</h2>
-                <div className="mt-2 flex gap-2">
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   <StatusBadge status={selected.status} />
                   <span className="text-sm text-slate-500 self-center">
                     Registrado el {new Date(selected.created_at).toLocaleDateString()}
                   </span>
                 </div>
+                {selected.status_reason && (
+                  <div className="mt-2.5 px-3 py-1.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                    <span className="font-bold">Motivo:</span> {selected.status_reason}
+                  </div>
+                )}
               </div>
-              <button onClick={() => setSelected(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+              <button 
+                onClick={() => {
+                  setSelected(null);
+                  setRejecting(false);
+                  setRejectReason("");
+                  setRejectError(null);
+                }} 
+                className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+              >
                 ✕
               </button>
             </div>
@@ -259,22 +299,82 @@ export default function AdminRecruitment() {
               {/* Acciones de Gestión */}
               <div className="pt-6 border-t border-slate-100">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Gestionar Estado</h4>
-                <div className="flex gap-4">
-                  <button 
-                    onClick={() => changeStatus(selected.id, "approved")}
-                    className="flex-1 bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all active:scale-95"
-                  >
-                    Aprobar / Contactado
-                  </button>
-                  {selected.status !== "rejected" && (
+                
+                {rejecting ? (
+                  <div className="p-5 bg-red-50/90 border border-red-200 rounded-2xl space-y-3 animate-in fade-in">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-red-900 uppercase tracking-wider">
+                        Motivo del Rechazo * (Obligatorio)
+                      </label>
+                      <span className="text-[11px] text-red-600 font-semibold">Quedará registrado en la postulación</span>
+                    </div>
+                    <textarea
+                      rows={3}
+                      className="w-full rounded-xl border border-red-300 bg-white p-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 shadow-sm"
+                      placeholder="Indica la razón por la cual se rechaza la solicitud (ej. no cumple con el perfil, edad menor a la requerida, documentación inválida, vehículo no apto, etc.)..."
+                      value={rejectReason}
+                      onChange={e => {
+                        setRejectReason(e.target.value);
+                        if (rejectError) setRejectError(null);
+                      }}
+                      autoFocus
+                    />
+                    {rejectError && (
+                      <p className="text-xs font-semibold text-red-600">{rejectError}</p>
+                    )}
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button 
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={() => {
+                          setRejecting(false);
+                          setRejectReason("");
+                          setRejectError(null);
+                        }}
+                        className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-800 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                      <button 
+                        type="button"
+                        disabled={actionLoading || !rejectReason.trim()}
+                        onClick={() => {
+                          if (!rejectReason.trim() || rejectReason.trim().length < 3) {
+                            setRejectError("Por favor ingresa un motivo de rechazo claro (mínimo 3 caracteres).");
+                            return;
+                          }
+                          changeStatus(selected.id, "rejected", rejectReason.trim());
+                        }}
+                        className="px-5 py-2.5 text-xs font-bold text-white bg-red-600 rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-red-200"
+                      >
+                        {actionLoading ? "Guardando..." : "Confirmar Rechazo"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-4">
                     <button 
-                      onClick={() => changeStatus(selected.id, "rejected")}
-                      className="px-6 py-3 border border-red-200 text-red-600 bg-red-50 rounded-xl font-bold hover:bg-red-100 transition-colors active:scale-95"
+                      disabled={actionLoading}
+                      onClick={() => changeStatus(selected.id, "approved")}
+                      className="flex-1 bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all active:scale-95 disabled:opacity-50"
                     >
-                      Rechazar
+                      {actionLoading ? "Procesando..." : "Aprobar / Contactado"}
                     </button>
-                  )}
-                </div>
+                    {selected.status !== "rejected" && (
+                      <button 
+                        disabled={actionLoading}
+                        onClick={() => {
+                          setRejecting(true);
+                          setRejectReason("");
+                          setRejectError(null);
+                        }}
+                        className="px-6 py-3 border border-red-200 text-red-600 bg-red-50 rounded-xl font-bold hover:bg-red-100 transition-colors active:scale-95 disabled:opacity-50"
+                      >
+                        Rechazar
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
             </div>

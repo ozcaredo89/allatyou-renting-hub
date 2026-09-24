@@ -507,6 +507,10 @@ r.patch("/:id", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "status is required" });
   }
 
+  if (status === "rejected" && (!status_reason || !String(status_reason).trim())) {
+    return res.status(400).json({ error: "El motivo del rechazo (status_reason) es obligatorio." });
+  }
+
   // 2. Update
   const { error } = await supabase
     .from("driver_applications")
