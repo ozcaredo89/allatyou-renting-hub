@@ -36,9 +36,13 @@ export type BankMatch = {
 export const ReconciliationBadge = ({
   bankMatch,
   onViewInBankModal,
+  receiptStatus,
+  flagDetails,
 }: {
   bankMatch: BankMatch | null | undefined;
   onViewInBankModal?: (referencia: string) => void;
+  receiptStatus?: string | null;
+  flagDetails?: any | null;
 }) => {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
@@ -67,6 +71,23 @@ export const ReconciliationBadge = ({
   const role = useRole(context, { role: "dialog" });
 
   const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus, click, dismiss, role]);
+
+  if (receiptStatus === "advance_offset") {
+    const advanceId = flagDetails?.advance_id;
+    return (
+      <a
+        href={advanceId ? `/advances?plate=${flagDetails?.plate || ""}` : `/advances`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 transition-colors"
+        title={`Pago cubierto con anticipo${advanceId ? ` #${advanceId}` : ""}. Clic para ver anticipos.`}
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+        <span>Anticipo {advanceId ? `#${advanceId}` : ""}</span>
+        <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+      </a>
+    );
+  }
 
   if (!bankMatch) {
     return (

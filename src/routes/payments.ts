@@ -2,7 +2,7 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
-import { getAmortizationDates } from "../lib/noPay";
+import { getAmortizationDates, nextPayableDate } from "../lib/noPay";
 import { randomUUID } from "crypto";
 import {
   classifyReceipt,
@@ -343,6 +343,87 @@ async function maybeCloseAdvance(advance_id: number) {
   }
 }
 
+// Helper para determinar la tarifa diaria de renta de un vehículo (drivers_vw, leasing o historial)
+async function resolveDailyRentRate(plate: string, queryAmount = 0): Promise<{
+  dailyRate: number;
+  isLeasing: boolean;
+  driverName: string | null;
+  driverVw: any;
+}> {
+  const { data: driverVw } = await supabase
+    .from("drivers_vw")
+    .select("plate, driver_name, has_credit, default_amount, default_installment")
+    .eq("plate", plate)
+    .maybeSingle();
+
+  let dailyRate = driverVw?.default_amount ? Number(driverVw.default_amount) : 0;
+  let isLeasing = false;
+  const leasingContract = await getActiveLeasingContract(plate);
+  if (leasingContract) {
+    isLeasing = true;
+    const { data: nextCuota } = await supabase
+      .from("leasing_schedule")
+      .select("maintenance_expected, admin_expected, interest_expected, principal_expected")
+      .eq("contract_id", leasingContract.id)
+      .neq("status", "paid")
+      .order("installment_no", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (nextCuota) {
+      dailyRate = Math.round(
+        Number(nextCuota.maintenance_expected) +
+        Number(nextCuota.admin_expected) +
+        Number(nextCuota.interest_expected) +
+        Number(nextCuota.principal_expected)
+      );
+    }
+  }
+
+  if (dailyRate === 0 && queryAmount > 0) {
+    dailyRate = queryAmount;
+  }
+
+  if (dailyRate === 0) {
+    const { data: lastPayment } = await supabase
+      .from("payments")
+      .select("amount")
+      .eq("plate", plate)
+      .order("payment_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastPayment?.amount) {
+      dailyRate = Number(lastPayment.amount);
+    }
+  }
+
+  if (dailyRate === 0) {
+    const { data: pendingLc } = await supabase
+      .from("leasing_contracts")
+      .select("daily_maintenance, daily_admin, daily_capital_interest")
+      .eq("plate", plate)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (pendingLc) {
+      dailyRate = Math.round(
+        Number(pendingLc.daily_maintenance || 0) +
+        Number(pendingLc.daily_admin || 0) +
+        Number(pendingLc.daily_capital_interest || 0)
+      );
+    }
+  }
+
+  if (dailyRate === 0) {
+    dailyRate = 70000;
+  }
+
+  return { dailyRate, isLeasing, driverName: driverVw?.driver_name ?? null, driverVw };
+}
+
 // -------------------- GET /payments/batch-preview --------------------
 // Recibe plate, start_date, days_count.
 // Retorna fechas pagables reales, tarifa diaria y desglose por día.
@@ -501,6 +582,238 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
     day_breakdown: dayBreakdown,
     advance: advanceSummary,
     driver_name: driverVw?.driver_name ?? null,
+  });
+});
+
+// -------------------- GET /payments/advance-payment-info --------------------
+// Consulta estado de mora, tarifa diaria y si existe un anticipo activo para pagar con él
+r.get("/advance-payment-info", async (req: Request, res: Response) => {
+  const plate = String(req.query.plate || "").toUpperCase().trim();
+  if (!PLATE_RE.test(plate)) {
+    return res.status(400).json({ error: "plate must be ABC123 format" });
+  }
+
+  // 1. Obtener datos de mora y último pago desde la vista oficial vehicle_last_payment
+  const { data: vLast, error: vLastErr } = await supabase
+    .from("vehicle_last_payment")
+    .select("plate, owner_name, payment_date, days_since, is_overdue")
+    .eq("plate", plate)
+    .maybeSingle();
+
+  if (vLastErr) {
+    return res.status(500).json({ error: vLastErr.message });
+  }
+
+  // 2. Resolver tarifa diaria
+  const { dailyRate, driverName } = await resolveDailyRentRate(plate);
+
+  // 3. Buscar si tiene anticipo activo
+  const { data: activeAdvance, error: advErr } = await supabase
+    .from("operational_advances")
+    .select("id, person_name, person_type, driver_id, plate, amount, daily_installment, installments, current_installment, start_date, status, notes, created_at")
+    .eq("plate", plate)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (advErr) {
+    return res.status(500).json({ error: advErr.message });
+  }
+
+  const daysOverdue = vLast?.days_since ?? 0;
+  const isOverdue = vLast?.is_overdue ?? false;
+  const ownerName = driverName || vLast?.owner_name || activeAdvance?.person_name || null;
+
+  const advanceAmount = activeAdvance ? Number(activeAdvance.amount) : 0;
+  const maxCoveredDays = dailyRate > 0 && advanceAmount > 0 ? Math.floor(advanceAmount / dailyRate) : 0;
+  const recommendedDays = Math.max(1, Math.min(daysOverdue > 0 ? daysOverdue : 1, maxCoveredDays > 0 ? maxCoveredDays : 1));
+
+  return res.json({
+    plate,
+    owner_name: ownerName,
+    days_overdue: daysOverdue,
+    is_overdue: isOverdue,
+    daily_rate: dailyRate,
+    last_payment_date: vLast?.payment_date ?? null,
+    has_active_advance: !!activeAdvance,
+    active_advance: activeAdvance ?? null,
+    max_covered_days: maxCoveredDays,
+    recommended_days: recommendedDays,
+  });
+});
+
+// -------------------- POST /payments/pay-with-advance --------------------
+// Permite saldar días de mora cruzándolos contra un anticipo activo
+r.post("/pay-with-advance", async (req: Request, res: Response) => {
+  const {
+    plate,
+    advance_id,
+    days_count,
+    notes,
+  } = req.body || {};
+
+  const upperPlate = String(plate || "").toUpperCase().trim();
+  if (!PLATE_RE.test(upperPlate)) {
+    return res.status(400).json({ error: "plate must be ABC123 format" });
+  }
+
+  const days = parseInt(String(days_count || ""), 10);
+  if (!Number.isInteger(days) || days < 1 || days > 31) {
+    return res.status(400).json({ error: "days_count must be an integer between 1 and 31" });
+  }
+
+  const advId = Number(advance_id);
+  if (!advId || advId <= 0) {
+    return res.status(400).json({ error: "advance_id is required" });
+  }
+
+  // 1. Verificar anticipo activo
+  const { data: advance, error: advErr } = await supabase
+    .from("operational_advances")
+    .select("*")
+    .eq("id", advId)
+    .eq("plate", upperPlate)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (advErr) {
+    return res.status(500).json({ error: advErr.message });
+  }
+  if (!advance) {
+    return res.status(400).json({ error: `No se encontró un anticipo activo (#${advId}) para la placa ${upperPlate}.` });
+  }
+
+  // 2. Calcular tarifa diaria y monto total
+  const { dailyRate, isLeasing, driverName } = await resolveDailyRentRate(upperPlate);
+  const totalAmount = dailyRate * days;
+
+  // Validación requerida: que el anticipo cubra el monto total
+  if (totalAmount > advance.amount) {
+    return res.status(400).json({
+      error: `El total a cubrir ($${totalAmount.toLocaleString("es-CO")}) excede el valor del anticipo ($${advance.amount.toLocaleString("es-CO")}).`,
+    });
+  }
+
+  // 3. Obtener último pago o fecha de referencia para arrancar
+  const { data: lastPayment } = await supabase
+    .from("payments")
+    .select("payment_date")
+    .eq("plate", upperPlate)
+    .order("payment_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: vehicle } = await supabase
+    .from("vehicles")
+    .select("created_at, current_driver_id, owner_name")
+    .eq("plate", upperPlate)
+    .maybeSingle();
+
+  const refDate = lastPayment?.payment_date || vehicle?.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+
+  // 4. Calcular próximas fechas pagables
+  let payableDates: string[] = [];
+  try {
+    const { nextDate } = await nextPayableDate(upperPlate, refDate, false);
+    const { dates } = await getAmortizationDates(upperPlate, nextDate, days);
+    payableDates = dates;
+  } catch (e: any) {
+    return res.status(500).json({ error: `Error calculando fechas pagables: ${e.message}` });
+  }
+
+  if (payableDates.length === 0) {
+    return res.status(400).json({ error: "No se pudieron generar fechas de pago hábiles." });
+  }
+
+  // 5. Preparar filas para inserción atómica con create_payment_batch
+  const batchId = randomUUID();
+  const payerName = advance.person_name || driverName || vehicle?.owner_name || "Conductor";
+  const driverId = advance.driver_id || vehicle?.current_driver_id || null;
+  const split = computeInstallmentSplit(dailyRate);
+
+  const paymentsToInsert = payableDates.map((pDate, idx) => ({
+    payer_name: payerName,
+    plate: upperPlate,
+    driver_id: driverId ? String(driverId) : "",
+    payment_date: pDate,
+    amount: dailyRate,
+    installment_number: "", // No es cuota de amortización de préstamo sino renta
+    proof_url: "",
+    status: "confirmed",
+    insurance_amount: split.insurance,
+    maintenance_amount: split.maintenance,
+    delivery_amount: split.delivery,
+    credit_installment_amount: split.credit,
+    installment_status: "paid",
+    installment_shortfall: 0,
+    reference_number: `ANTICIPO-${advance.id}-${pDate}`,
+    provider_name: "Anticipo",
+    receipt_date: pDate,
+    receipt_status: "advance_offset",
+    flag_details: {
+      advance_id: advance.id,
+      advance_amount: advance.amount,
+      payment_type: "advance_offset",
+      notes: notes || `Pago de mora cubierto con anticipo #${advance.id}`,
+    },
+    batch_id: batchId,
+    batch_index: idx,
+    batch_total_days: payableDates.length,
+  }));
+
+  // 6. Inserción atómica en base de datos
+  const { error: rpcErr } = await supabase.rpc("create_payment_batch", {
+    p_batch_id: batchId,
+    p_payments: paymentsToInsert,
+    p_advance_updates: [],
+  });
+
+  if (rpcErr) {
+    return res.status(500).json({ error: `Error creando lote de pagos: ${rpcErr.message}` });
+  }
+
+  // 7. Si es leasing, aplicar cascada
+  if (isLeasing) {
+    const leasingContract = await getActiveLeasingContract(upperPlate);
+    if (leasingContract) {
+      try {
+        const { data: insertedRows } = await supabase
+          .from("payments")
+          .select("id, amount")
+          .eq("batch_id", batchId)
+          .order("batch_index", { ascending: true });
+
+        for (const row of insertedRows || []) {
+          await applyLeasingPayment(row.id, Number(row.amount), leasingContract.id);
+        }
+      } catch (err: any) {
+        console.error("[pay-with-advance] Error aplicando leasing:", err.message);
+      }
+    }
+  }
+
+  // 8. Log de auditoría
+  await logInconsistency({
+    plate: upperPlate,
+    payment_date: payableDates[payableDates.length - 1] ?? null,
+    issue_code: "ADVANCE_PAYMENT_OFFSET",
+    message: `Pago de ${payableDates.length} día(s) con anticipo #${advance.id} por un total de $${totalAmount.toLocaleString("es-CO")}`,
+    metadata: {
+      advance_id: advance.id,
+      days_count: payableDates.length,
+      total_amount: totalAmount,
+      batch_id: batchId,
+      payable_dates: payableDates,
+    },
+  });
+
+  return res.status(201).json({
+    success: true,
+    batch_id: batchId,
+    days_count: payableDates.length,
+    total_amount: totalAmount,
+    advance_id: advance.id,
+    payable_dates: payableDates,
   });
 });
 

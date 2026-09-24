@@ -63,11 +63,14 @@ const badgeTone = (k: string) => {
    ========================= */
 function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const initialPlate = useMemo(() => {
+    return new URLSearchParams(window.location.search).get("plate")?.toUpperCase().trim() || "";
+  }, []);
   const [f, setF] = useState({
     person_name: "",
     person_type: "driver" as "driver" | "collaborator",
     driver_id: "",
-    plate: "",
+    plate: initialPlate,
     amountStr: fmtCOP.format(300000),
     rate_percent: "15",
     installments: "21",

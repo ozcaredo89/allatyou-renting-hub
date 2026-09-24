@@ -255,6 +255,8 @@ r.get("/last-payments", async (req: Request, res: Response) => {
         match_context: buildMatchContext(audit?.flag_details),
         payment_id: audit?.payment_id ?? null,
         bank_match: audit?.bank_transaction_id ? bankMatchResolver.get(audit.bank_transaction_id) ?? null : null,
+        receipt_status: audit?.receipt_status ?? null,
+        flag_details: audit?.flag_details ?? null,
       };
     });
   }
@@ -281,6 +283,7 @@ r.post("/reconcile-bank", async (_req: Request, res: Response) => {
       .select("id, payment_date, amount")
       .is("bank_transaction_id", null)
       .neq("status", "rejected")
+      .neq("receipt_status", "advance_offset")
       .not("payment_date", "is", null)
       .not("amount", "is", null)
       .gte("payment_date", twoYearsAgoStr)

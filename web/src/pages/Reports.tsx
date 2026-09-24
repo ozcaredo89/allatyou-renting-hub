@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Landmark,
   CheckCircle2,
+  CreditCard,
 } from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { useSortableData } from "../hooks/useSortableData";
@@ -27,6 +28,7 @@ import {
 } from "../components/ReceiptBadge";
 import { BankReconciliationModal } from "../components/BankReconciliationModal";
 import { ReconciliationBadge, type BankMatch } from "../components/ReconciliationBadge";
+import { AdvancePaymentModal } from "../components/AdvancePaymentModal";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -51,6 +53,8 @@ type Row = {
   amount_mismatch?: AmountMismatchDetails | null;
   payment_id?: number | null;
   bank_match?: BankMatch | null;
+  receipt_status?: string | null;
+  flag_details?: any | null;
 };
 
 function formatRegistrationTime(isoStr?: string | null): string | null {
@@ -107,6 +111,7 @@ export default function Reports() {
   const [offset, setOffset] = useState(0);
   const [showBankModal, setShowBankModal] = useState(false);
   const [bankModalQuery, setBankModalQuery] = useState<string | null>(null);
+  const [advanceModalRow, setAdvanceModalRow] = useState<Row | null>(null);
   const [reconciling, setReconciling] = useState(false);
   const limit = 20;
 
@@ -445,6 +450,17 @@ export default function Reports() {
           initialQuery={bankModalQuery}
         />
 
+        <AdvancePaymentModal
+          isOpen={!!advanceModalRow}
+          onClose={() => setAdvanceModalRow(null)}
+          plate={advanceModalRow?.plate ?? null}
+          ownerName={advanceModalRow?.owner_name}
+          onSuccess={() => {
+            setAdvanceModalRow(null);
+            load(offset);
+          }}
+        />
+
         {/* Barra principal de búsqueda y filtros interactivos */}
         <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-xs">
           <div className="flex flex-col lg:flex-row lg:items-center gap-3">
@@ -673,7 +689,12 @@ export default function Reports() {
                           }}
                         />
                         {r.payment_date && r.amount != null && (
-                          <ReconciliationBadge bankMatch={r.bank_match} onViewInBankModal={openBankModalFor} />
+                          <ReconciliationBadge
+                            bankMatch={r.bank_match}
+                            onViewInBankModal={openBankModalFor}
+                            receiptStatus={r.receipt_status}
+                            flagDetails={r.flag_details}
+                          />
                         )}
                       </div>
                     </td>
@@ -681,15 +702,28 @@ export default function Reports() {
                       {r.installment_number != null ? `#${r.installment_number}` : "—"}
                     </td>
                     <td className="px-4 py-3">
-                      {overdue ? (
-                        <span className="rounded-full bg-red-100 text-red-700 px-3 py-1 text-xs">
-                          En mora ({r.days_since} días)
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-gray-100 text-gray-700 px-3 py-1 text-xs">
-                          Al día
-                        </span>
-                      )}
+                      <div className="flex flex-col items-start gap-1.5">
+                        {overdue ? (
+                          <>
+                            <span className="rounded-full bg-red-100 text-red-700 px-3 py-1 text-xs font-semibold">
+                              En mora ({r.days_since} días)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setAdvanceModalRow(r)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all cursor-pointer whitespace-nowrap"
+                              title={`Pagar mora con anticipo para la placa ${r.plate}`}
+                            >
+                              <CreditCard className="w-3.5 h-3.5" />
+                              <span>Pagar con anticipo</span>
+                            </button>
+                          </>
+                        ) : (
+                          <span className="rounded-full bg-gray-100 text-gray-700 px-3 py-1 text-xs">
+                            Al día
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right">
                       {r.payment_date && (
