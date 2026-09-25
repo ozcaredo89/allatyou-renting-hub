@@ -230,7 +230,7 @@ r.post("/", async (req: Request, res: Response) => {
     }
 
     // -----------------------------
-    // Validate: Documents (requeridos)
+    // Validate: Documents (opcionales pero si vienen se validan)
     // -----------------------------
     const kinds = new Set<string>();
     documents.forEach((d: any, idx: number) => {
@@ -238,10 +238,15 @@ r.post("/", async (req: Request, res: Response) => {
       const url = d?.url;
       const metadata = d?.metadata;
 
+      // Ignorar entradas vacías o placeholders
+      if (!isNonEmptyString(url) || url.includes("placeholder")) {
+        return;
+      }
+
       if (!isNonEmptyString(kind)) fields.push({ path: `documents[${idx}].kind`, issue: "required" });
       else kinds.add(kind.trim());
 
-      if (!isNonEmptyString(url) || !url.trim().startsWith("https://")) {
+      if (!url.trim().startsWith("https://")) {
         fields.push({ path: `documents[${idx}].url`, issue: "required_https_url" });
       }
 
@@ -259,17 +264,6 @@ r.post("/", async (req: Request, res: Response) => {
         }
       }
     });
-
-    // Requeridos por negocio
-    if (!kinds.has("id_document_photo")) {
-      fields.push({ path: "documents", issue: "missing_id_document_photo" });
-    }
-    if (hasValidLicense === true && !kinds.has("driver_license_photo")) {
-      fields.push({ path: "documents", issue: "missing_driver_license_photo" });
-    }
-    if (!kinds.has("digital_signature")) {
-      fields.push({ path: "documents", issue: "missing_digital_signature" });
-    }
 
     // -----------------------------
     // Validate: Referral / Client
@@ -427,16 +421,21 @@ r.post("/", async (req: Request, res: Response) => {
     // -----------------------------
     // Insert: documents
     // -----------------------------
-    const docRows = documents.slice(0, 20).map((d: any) => ({
-      driver_application_id: applicationId,
-      kind: String(d.kind).trim(),
-      url: String(d.url).trim(),
-      metadata: d.metadata ?? {},
-    }));
+    const docRows = documents
+      .filter((d: any) => isNonEmptyString(d?.url) && d.url.trim().startsWith("https://") && !d.url.includes("placeholder"))
+      .slice(0, 20)
+      .map((d: any) => ({
+        driver_application_id: applicationId,
+        kind: String(d.kind).trim(),
+        url: String(d.url).trim(),
+        metadata: d.metadata ?? {},
+      }));
 
-    const insDocs = await supabase.from("driver_application_documents").insert(docRows);
-    if (insDocs.error) {
-      return res.status(500).json({ error: insDocs.error.message });
+    if (docRows.length > 0) {
+      const insDocs = await supabase.from("driver_application_documents").insert(docRows);
+      if (insDocs.error) {
+        return res.status(500).json({ error: insDocs.error.message });
+      }
     }
 
     // -----------------------------
@@ -526,6 +525,45 @@ r.patch("/:id", async (req: Request, res: Response) => {
   }
 
   return res.json({ ok: true });
+});
+
+// POST /driver-applications/:id/documents (Admin attach / update document)
+r.post("/:id/documents", async (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { id } = req.params;
+  const { kind, url, metadata } = req.body;
+
+  if (!kind || !url) {
+    return res.status(400).json({ error: "kind and url are required" });
+  }
+
+  // Delete existing document of this kind for this application if any
+  await supabase
+    .from("driver_application_documents")
+    .delete()
+    .eq("driver_application_id", id)
+    .eq("kind", kind);
+
+  const { data, error } = await supabase
+    .from("driver_application_documents")
+    .insert([{
+      driver_application_id: Number(id),
+      kind,
+      url,
+      metadata: metadata || {}
+    }])
+    .select()
+    .single();
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  return res.json({ ok: true, document: data });
 });
 
 export default r;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -24,13 +24,112 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
       { name: "", phone: "" },
       { name: "", phone: "" }
     ],
-    documents: [
-      { kind: "id_document_photo", url: "https://allatyou.storage/id_placeholder.jpg" }, 
-      { kind: "driver_license_photo", url: "https://allatyou.storage/license_placeholder.jpg" },
-      { kind: "digital_signature", url: "https://allatyou.storage/sig_placeholder.jpg" }
-    ],
+    documents: [] as Array<{ kind: string; url: string }>,
     referral: { referralCodeUsed: referralCode || "" }
   });
+
+  const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
+
+  const handleDocumentUpload = async (kind: string, file: File) => {
+    setUploadingDoc(kind);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("folder", "documents");
+      const res = await fetch(`${API}/uploads`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Error al subir el archivo");
+      }
+      const data = await res.json();
+      setFormData(prev => {
+        const filtered = prev.documents.filter(d => d.kind !== kind);
+        return {
+          ...prev,
+          documents: [...filtered, { kind, url: data.url }]
+        };
+      });
+    } catch (err: any) {
+      setError(`Error subiendo documento: ${err.message}`);
+    } finally {
+      setUploadingDoc(null);
+    }
+  };
+
+  // Canvas para firma digital
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [hasDrawnSignature, setHasDrawnSignature] = useState(false);
+
+  const getCanvasCoords = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top
+    };
+  };
+
+  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    setIsDrawing(true);
+    const { x, y } = getCanvasCoords(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+
+  const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isDrawing) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const { x, y } = getCanvasCoords(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#10b981"; // emerald-500
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+    setHasDrawnSignature(true);
+  };
+
+  const stopDrawing = () => {
+    setIsDrawing(false);
+  };
+
+  const clearSignature = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHasDrawnSignature(false);
+    setFormData(prev => ({
+      ...prev,
+      documents: prev.documents.filter(d => d.kind !== "digital_signature")
+    }));
+  };
+
+  const saveDrawnSignature = async () => {
+    const canvas = canvasRef.current;
+    if (!canvas || !hasDrawnSignature) return;
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      const file = new File([blob], `signature_${Date.now()}.png`, { type: "image/png" });
+      await handleDocumentUpload("digital_signature", file);
+    }, "image/png");
+  };
 
   const validateStep = (currentStep: number): boolean => {
     setError(null);
@@ -116,7 +215,10 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
     return true;
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
+    if (step === 3 && hasDrawnSignature && !formData.documents.some(d => d.kind === "digital_signature")) {
+      await saveDrawnSignature();
+    }
     if (validateStep(step)) setStep(prev => prev + 1);
   };
   
@@ -269,6 +371,48 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
             />
           </div>
 
+          {/* Foto Cédula */}
+          <div className="pt-2 border-t border-white/10">
+            <label className="block text-xs font-semibold text-slate-300 mb-1">
+              Foto de Cédula de Ciudadanía (Opcional)
+            </label>
+            {formData.documents.some(d => d.kind === "id_document_photo") ? (
+              <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs">
+                <span className="font-semibold flex items-center gap-2">✓ Cédula adjuntada con éxito</span>
+                <label className="cursor-pointer underline font-bold hover:text-emerald-300">
+                  Cambiar
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    className="hidden"
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      if (f) handleDocumentUpload("id_document_photo", f);
+                    }}
+                  />
+                </label>
+              </div>
+            ) : (
+              <label className="flex flex-col items-center justify-center p-4 border border-dashed border-white/20 rounded-xl bg-slate-950/60 hover:bg-slate-950 cursor-pointer transition-colors group">
+                <span className="text-xl mb-1 group-hover:scale-110 transition-transform">🪪</span>
+                <span className="text-xs text-slate-300 font-semibold">
+                  {uploadingDoc === "id_document_photo" ? "Subiendo cédula..." : "Toca para subir foto de tu cédula"}
+                </span>
+                <span className="text-[11px] text-slate-500 mt-0.5">JPG, PNG o PDF</span>
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  className="hidden"
+                  disabled={uploadingDoc === "id_document_photo"}
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (f) handleDocumentUpload("id_document_photo", f);
+                  }}
+                />
+              </label>
+            )}
+          </div>
+
           <button onClick={handleNext} className="w-full mt-2 rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400">
             Siguiente
           </button>
@@ -289,12 +433,56 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
               <span className="text-sm text-slate-300">Tengo licencia de conducción vigente</span>
             </label>
             {formData.license.hasValidLicense && (
-              <input
-                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white"
-                placeholder="Categoría de licencia (Ej. C1, C2, B1)"
-                value={formData.license.licenseNumberCat}
-                onChange={e => setFormData({...formData, license: {...formData.license, licenseNumberCat: e.target.value}})}
-              />
+              <div className="space-y-3 mt-1">
+                <input
+                  className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white"
+                  placeholder="Categoría de licencia (Ej. C1, C2, B1)"
+                  value={formData.license.licenseNumberCat}
+                  onChange={e => setFormData({...formData, license: {...formData.license, licenseNumberCat: e.target.value}})}
+                />
+
+                {/* Foto Licencia */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Foto de Licencia de Conducción (Opcional)
+                  </label>
+                  {formData.documents.some(d => d.kind === "driver_license_photo") ? (
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs">
+                      <span className="font-semibold flex items-center gap-2">✓ Licencia adjuntada con éxito</span>
+                      <label className="cursor-pointer underline font-bold hover:text-emerald-300">
+                        Cambiar
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          className="hidden"
+                          onChange={e => {
+                            const f = e.target.files?.[0];
+                            if (f) handleDocumentUpload("driver_license_photo", f);
+                          }}
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center p-4 border border-dashed border-white/20 rounded-xl bg-slate-950/60 hover:bg-slate-950 cursor-pointer transition-colors group">
+                      <span className="text-xl mb-1 group-hover:scale-110 transition-transform">🚗</span>
+                      <span className="text-xs text-slate-300 font-semibold">
+                        {uploadingDoc === "driver_license_photo" ? "Subiendo licencia..." : "Toca para subir foto de tu licencia"}
+                      </span>
+                      <span className="text-[11px] text-slate-500 mt-0.5">JPG, PNG o PDF</span>
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        className="hidden"
+                        disabled={uploadingDoc === "driver_license_photo"}
+                        onChange={e => {
+                          const f = e.target.files?.[0];
+                          if (f) handleDocumentUpload("driver_license_photo", f);
+                        }}
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
             )}
           </div>
 
@@ -381,6 +569,85 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
               />
               Certifico que toda la información ingresada en esta postulación es verídica *
             </label>
+          </div>
+
+          {/* Firma Digital */}
+          <div className="rounded-xl bg-slate-950 p-4 border border-white/5 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                <span>✍️</span> Firma Digital (Opcional)
+              </label>
+              {formData.documents.some(d => d.kind === "digital_signature") && (
+                <span className="text-[11px] font-bold text-emerald-400">✓ Firma registrada</span>
+              )}
+            </div>
+
+            {formData.documents.some(d => d.kind === "digital_signature") ? (
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center justify-between">
+                <span className="text-xs text-emerald-300 font-medium">Firma digital guardada correctamente</span>
+                <button
+                  type="button"
+                  onClick={clearSignature}
+                  className="text-xs text-red-400 hover:text-red-300 underline font-semibold"
+                >
+                  Borrar y volver a firmar
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-[11px] text-slate-400">
+                  Dibuja tu firma en el recuadro con tu dedo o mouse, o sube una foto de tu firma:
+                </p>
+                <div className="border border-white/20 rounded-xl overflow-hidden bg-slate-900 touch-none">
+                  <canvas
+                    ref={canvasRef}
+                    width={340}
+                    height={120}
+                    className="w-full h-28 cursor-crosshair block"
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={stopDrawing}
+                    onMouseLeave={stopDrawing}
+                    onTouchStart={startDrawing}
+                    onTouchMove={draw}
+                    onTouchEnd={stopDrawing}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={clearSignature}
+                      className="px-3 py-1.5 text-xs text-slate-400 hover:text-white rounded-lg border border-white/10 hover:bg-white/5 transition-colors"
+                    >
+                      Limpiar
+                    </button>
+                    {hasDrawnSignature && (
+                      <button
+                        type="button"
+                        onClick={saveDrawnSignature}
+                        disabled={uploadingDoc === "digital_signature"}
+                        className="px-3 py-1.5 text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-lg transition-colors"
+                      >
+                        {uploadingDoc === "digital_signature" ? "Guardando..." : "Confirmar trazo"}
+                      </button>
+                    )}
+                  </div>
+                  <label className="text-[11px] text-slate-400 hover:text-white underline cursor-pointer">
+                    O subir foto de tu firma
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={e => {
+                        const f = e.target.files?.[0];
+                        if (f) handleDocumentUpload("digital_signature", f);
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-3 pt-2">

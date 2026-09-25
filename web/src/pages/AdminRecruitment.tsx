@@ -83,6 +83,48 @@ export default function AdminRecruitment() {
     }
   };
 
+  const [uploadingDocKind, setUploadingDocKind] = useState<string | null>(null);
+
+  const handleAdminDocUpload = async (appId: number, kind: string, file: File) => {
+    setUploadingDocKind(kind);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("folder", "documents");
+      const upRs = await fetch(`${API}/uploads`, {
+        method: "POST",
+        body: fd
+      });
+      if (!upRs.ok) throw new Error("Error al subir archivo");
+      const { url } = await upRs.json();
+
+      const docRs = await fetch(`${API}/driver-applications/${appId}/documents`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: ensureBasicAuth()
+        },
+        body: JSON.stringify({ kind, url })
+      });
+      if (!docRs.ok) throw new Error("Error asociando documento a la postulación");
+      const docData = await docRs.json();
+
+      setSelected((prev: any) => {
+        if (!prev) return null;
+        const currentDocs = (prev.driver_application_documents || []).filter((d: any) => d.kind !== kind);
+        return {
+          ...prev,
+          driver_application_documents: [...currentDocs, docData.document]
+        };
+      });
+      loadData();
+    } catch (err: any) {
+      alert(err.message || "Error cargando documento");
+    } finally {
+      setUploadingDocKind(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto max-w-7xl">
@@ -341,28 +383,103 @@ export default function AdminRecruitment() {
               )}
 
               {/* Sección Documentos (Solo Conductores) */}
-              {tab === "drivers" && ((selected.driver_application_documents && selected.driver_application_documents.length > 0) || (selected.documents && selected.documents.length > 0)) && (
+              {tab === "drivers" && (
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900 mb-3 border-b pb-2">Documentos Adjuntos</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {(selected.driver_application_documents || selected.documents || []).map((doc: any, idx: number) => {
-                      const docLabels: Record<string, string> = {
-                        id_document_photo: "Cédula de Ciudadanía",
-                        driver_license_photo: "Licencia de Conducción",
-                        digital_signature: "Firma Digital",
-                      };
-                      const label = docLabels[doc.kind] || doc.kind || `Documento ${idx + 1}`;
+                  <div className="flex items-center justify-between mb-3 border-b pb-2">
+                    <h3 className="text-lg font-bold text-slate-900">Documentos y Firma Digital</h3>
+                    <span className="text-xs text-slate-500 font-medium">Cédula, Licencia y Firma</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {[
+                      { kind: "id_document_photo", label: "Cédula de Ciudadanía", icon: "🪪" },
+                      { kind: "driver_license_photo", label: "Licencia de Conducción", icon: "🚗" },
+                      { kind: "digital_signature", label: "Firma Digital", icon: "✍️" },
+                    ].map(slot => {
+                      const allDocs = (selected.driver_application_documents || selected.documents || []);
+                      const doc = allDocs.find((d: any) => d.kind === slot.kind && d.url && !d.url.includes("placeholder"));
+                      const isUploading = uploadingDocKind === slot.kind;
+
                       return (
-                        <a
-                          key={doc.id || idx}
-                          href={doc.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/70 rounded-2xl hover:bg-slate-100 transition-colors text-xs font-semibold text-slate-700 group"
-                        >
-                          <span className="flex items-center gap-2">📄 {label}</span>
-                          <span className="text-emerald-600 font-bold group-hover:underline">Ver documento ↗</span>
-                        </a>
+                        <div key={slot.kind} className="p-4 bg-slate-50/80 border border-slate-200/80 rounded-2xl flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center justify-between gap-1 mb-2">
+                              <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                <span>{slot.icon}</span> {slot.label}
+                              </span>
+                              {doc ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                  ✓ Adjuntado
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                                  ⚠️ Pendiente
+                                </span>
+                              )}
+                            </div>
+
+                            {doc ? (
+                              <div className="my-2">
+                                <a 
+                                  href={doc.url} 
+                                  target="_blank" 
+                                  rel="noreferrer" 
+                                  className="block relative group overflow-hidden rounded-xl border border-slate-200 bg-white"
+                                >
+                                  {doc.url.toLowerCase().match(/\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i) || !doc.url.toLowerCase().includes(".pdf") ? (
+                                    <img 
+                                      src={doc.url} 
+                                      alt={slot.label} 
+                                      className="w-full h-28 object-contain bg-slate-900/5 group-hover:scale-105 transition-transform duration-200" 
+                                    />
+                                  ) : (
+                                    <div className="w-full h-28 flex flex-col items-center justify-center bg-slate-100 text-slate-600 gap-1">
+                                      <span className="text-2xl">📄</span>
+                                      <span className="text-[11px] font-semibold">Documento PDF</span>
+                                    </div>
+                                  )}
+                                  <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-1">
+                                    <span>Ver original ↗</span>
+                                  </div>
+                                </a>
+                              </div>
+                            ) : (
+                              <div className="my-2 h-28 rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center p-3 text-center bg-white/50">
+                                <span className="text-xl text-slate-300 mb-1">{slot.icon}</span>
+                                <span className="text-[11px] text-slate-400">Sin documento registrado</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between gap-2">
+                            {doc && (
+                              <a
+                                href={doc.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[11px] font-bold text-emerald-600 hover:underline inline-flex items-center gap-0.5"
+                              >
+                                Abrir ↗
+                              </a>
+                            )}
+                            <label className={`text-[11px] font-bold px-3 py-1.5 rounded-xl cursor-pointer transition-colors shadow-sm ${
+                              doc 
+                                ? "bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 ml-auto" 
+                                : "w-full text-center bg-emerald-600 text-white hover:bg-emerald-700"
+                            } ${isUploading ? "opacity-50 pointer-events-none" : ""}`}>
+                              {isUploading ? "Subiendo..." : doc ? "Cambiar" : "📷 Adjuntar"}
+                              <input
+                                type="file"
+                                accept="image/*,application/pdf"
+                                className="hidden"
+                                disabled={isUploading}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) handleAdminDocUpload(selected.id, slot.kind, file);
+                                }}
+                              />
+                            </label>
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
