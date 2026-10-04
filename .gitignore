@@ -1,4 +1,4 @@
-﻿# Root
+# Root
 node_modules/
 dist/
 .env
@@ -16,3 +16,4 @@ bank-sync/
 
 # Misc
 .DS_Store
+supabase/.temp/

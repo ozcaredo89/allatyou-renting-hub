@@ -392,9 +392,9 @@ export default function App() {
                 ? fmtCOP.format(d.default_amount)
                 : prev.amountStr,
             installment_number:
-              d.has_credit && d.default_installment
+              (!leasingInfo?.has_leasing && d.has_credit && d.default_installment)
                 ? String(d.default_installment)
-                : prev.installment_number,
+                : (leasingInfo?.has_leasing ? "" : prev.installment_number),
           }));
         }
       } catch {
@@ -510,6 +510,13 @@ export default function App() {
     }
   }
 
+  // Si el vehículo tiene leasing activo, limpiar cuota para evitar asignación a anticipos operativos
+  useEffect(() => {
+    if (leasingInfo?.has_leasing) {
+      setF((prev) => (prev.installment_number ? { ...prev, installment_number: "" } : prev));
+    }
+  }, [leasingInfo]);
+
   // --- Batch Preview: días según modalidad ---
   // 1 semana = 6 días pagables (hay 1 día de pico y placa)
   // 1 mes = 26 días pagables aprox. (30 días - 4 pico y placa)
@@ -621,8 +628,8 @@ export default function App() {
           changed = true;
         }
 
-        // Aplicar cuota sugerida si el campo está vacío
-        if (!prev.installment_number && lastSuggestion.last_installment_number != null) {
+        // Aplicar cuota sugerida si el campo está vacío (solo si no es leasing)
+        if (!prev.installment_number && lastSuggestion.last_installment_number != null && !leasingInfo?.has_leasing) {
           const nextInstallment = lastSuggestion.last_installment_number + 1;
           if (nextInstallment > 0) {
             next.installment_number = String(nextInstallment);
@@ -797,7 +804,7 @@ export default function App() {
         plate: f.plate.trim().toUpperCase(),
         payment_date: f.payment_date,
         amount: amountN,
-        installment_number: f.installment_number ? Number(f.installment_number) : null,
+        installment_number: leasingInfo?.has_leasing ? null : (f.installment_number ? Number(f.installment_number) : null),
         proof_url,
         upload_id,
         status: f.status as Payment["status"],
@@ -1078,31 +1085,42 @@ export default function App() {
             <div>
               <label className="mb-1 block text-sm font-medium">Cuota #</label>
               <input
-                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
+                className={`w-full rounded-xl border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-black/60 ${
+                  leasingInfo?.has_leasing ? "bg-gray-100 text-gray-500 cursor-not-allowed" : "bg-white"
+                }`}
                 type="number"
                 inputMode="numeric"
                 step="1"
                 min="1"
-                placeholder="1"
-                value={f.installment_number}
+                placeholder={leasingInfo?.has_leasing ? "No aplica (Leasing)" : "1"}
+                value={leasingInfo?.has_leasing ? "" : f.installment_number}
+                disabled={Boolean(leasingInfo?.has_leasing)}
                 onChange={(e) => setF({ ...f, installment_number: e.target.value })}
               />
-              {lastSuggestion?.last_installment_number != null && (
-                <div className="mt-1 text-xs text-gray-500">
-                  Último pago: cuota {lastSuggestion.last_installment_number}. Sugerida ahora: cuota{" "}
-                  {lastSuggestion.last_installment_number + 1} (puedes editarla).
+              {leasingInfo?.has_leasing ? (
+                <div className="mt-1 text-xs font-medium text-indigo-700">
+                  🏢 Vehículo en Leasing: la cuota se concilia contra el cronograma contractual automáticamente.
                 </div>
-              )}
-              {installmentAutoInfo && (
-                <div className="mt-1 text-xs text-gray-500">
-                  Estado esperado:{" "}
-                  <span className="font-medium">
-                    {INSTALLMENT_STATUS_LABEL[installmentAutoInfo.installmentStatus] ?? installmentAutoInfo.installmentStatus}
-                  </span>
-                  {installmentAutoInfo.shortfall > 0 ? (
-                    <> · Diferencia: ${fmtCOP.format(installmentAutoInfo.shortfall)}</>
-                  ) : null}
-                </div>
+              ) : (
+                <>
+                  {lastSuggestion?.last_installment_number != null && (
+                    <div className="mt-1 text-xs text-gray-500">
+                      Último pago: cuota {lastSuggestion.last_installment_number}. Sugerida ahora: cuota{" "}
+                      {lastSuggestion.last_installment_number + 1} (puedes editarla).
+                    </div>
+                  )}
+                  {installmentAutoInfo && (
+                    <div className="mt-1 text-xs text-gray-500">
+                      Estado esperado:{" "}
+                      <span className="font-medium">
+                        {INSTALLMENT_STATUS_LABEL[installmentAutoInfo.installmentStatus] ?? installmentAutoInfo.installmentStatus}
+                      </span>
+                      {installmentAutoInfo.shortfall > 0 ? (
+                        <> · Diferencia: ${fmtCOP.format(installmentAutoInfo.shortfall)}</>
+                      ) : null}
+                    </div>
+                  )}
+                </>
               )}
             </div>
 

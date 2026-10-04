@@ -257,8 +257,320 @@ r.get("/contracts/:id", async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// GET /leasing/active-summary
+// Resumen consolidado de todos los contratos activos vía leasing_contracts_summary_vw.
+// Incluye datos enriquecidos de conductor y vehículo.
+// ============================================================================
+r.get("/active-summary", async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase
+      .from("leasing_contracts_summary_vw")
+      .select("*")
+      .order("contract_id", { ascending: true });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    const rows = data || [];
+    const driverIds = rows.map((r: any) => r.driver_id).filter(Boolean);
+    const plates = rows.map((r: any) => r.plate).filter(Boolean);
+
+    let driversMap = new Map<number, any>();
+    if (driverIds.length > 0) {
+      const { data: drivers } = await supabase
+        .from("drivers")
+        .select("id, full_name, phone, document_number")
+        .in("id", driverIds);
+      for (const d of drivers || []) driversMap.set(d.id, d);
+    }
+
+    let vehiclesMap = new Map<string, any>();
+    if (plates.length > 0) {
+      const { data: vehicles } = await supabase
+        .from("vehicles")
+        .select("plate, brand, line, model_year")
+        .in("plate", plates);
+      for (const v of vehicles || []) vehiclesMap.set(v.plate, v);
+    }
+
+    const items = rows.map((row: any) => ({
+      ...row,
+      driver: row.driver_id ? driversMap.get(row.driver_id) || null : null,
+      vehicle: vehiclesMap.get(row.plate) || null,
+    }));
+
+    return res.json({ items, total: items.length });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "internal error" });
+  }
+});
+
+// ============================================================================
+// GET /leasing/unreconciled
+// Lista de pagos de placas con contratos de leasing activos que aún no han sido
+// distribuidos a ninguna cuota (sin registros en payment_distributions),
+// dentro del período de vigencia del contrato (payment_date >= start_date).
+// ============================================================================
+r.get("/unreconciled", async (req: Request, res: Response) => {
+  try {
+    const { include_pending } = req.query as Record<string, string>;
+
+    // 1. Obtener contratos activos de leasing
+    let cQuery = supabase
+      .from("leasing_contracts")
+      .select("id, plate, driver_id, start_date, start_date_pending_confirmation, daily_capital_interest, daily_maintenance, daily_admin")
+      .eq("status", "active");
+
+    if (include_pending !== "true") {
+      cQuery = cQuery.eq("start_date_pending_confirmation", false);
+    }
+
+    const { data: activeContracts, error: cErr } = await cQuery;
+
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!activeContracts || activeContracts.length === 0) {
+      return res.json({ items: [], total: 0 });
+    }
+
+    const contractByPlate = new Map(activeContracts.map((c: any) => [c.plate, c]));
+
+    // 2. Obtener pagos de cada contrato a partir de su start_date
+    let allPayments: any[] = [];
+    for (const contract of activeContracts) {
+      const { data: payments, error: pErr } = await supabase
+        .from("payments")
+        .select("id, plate, payment_date, amount, insurance_amount, credit_installment_amount, delivery_amount, reference_number, proof_url, status, notes, created_at")
+        .eq("plate", contract.plate)
+        .gte("payment_date", contract.start_date)
+        .gt("amount", 1)
+        .order("payment_date", { ascending: false });
+
+      if (!pErr && payments) {
+        allPayments.push(...payments);
+      }
+    }
+
+    if (allPayments.length === 0) {
+      return res.json({ items: [], total: 0 });
+    }
+
+    // 3. Consultar qué pagos ya tienen distribuciones
+    const paymentIds = allPayments.map((p: any) => p.id);
+    const { data: distributions, error: dErr } = await supabase
+      .from("payment_distributions")
+      .select("payment_id")
+      .in("payment_id", paymentIds);
+
+    if (dErr) return res.status(500).json({ error: dErr.message });
+    const distributedIds = new Set((distributions || []).map((d: any) => d.payment_id));
+
+    // Filtrar los que no tienen distribuciones
+    const unreconciledPayments = allPayments.filter((p: any) => !distributedIds.has(p.id));
+    if (unreconciledPayments.length === 0) {
+      return res.json({ items: [], total: 0 });
+    }
+
+    const unreconciledIds = unreconciledPayments.map((p: any) => p.id);
+
+    // 4. Obtener inconsistencias registradas
+    const { data: inconsistencies } = await supabase
+      .from("payment_inconsistencies")
+      .select("*")
+      .in("payment_id", unreconciledIds);
+
+    const incMap = new Map();
+    for (const inc of inconsistencies || []) {
+      incMap.set(inc.payment_id, inc);
+    }
+
+    // 5. Buscar si existe cuota de leasing con due_date = payment_date
+    const contractIds = activeContracts.map((c: any) => c.id);
+    const paymentDates = [...new Set(unreconciledPayments.map((p: any) => p.payment_date))];
+
+    const { data: matchingCuotas } = await supabase
+      .from("leasing_schedule")
+      .select("id, contract_id, installment_no, due_date, status, maintenance_expected, maintenance_paid, admin_expected, admin_paid, interest_expected, interest_paid, principal_expected, principal_paid, total_expected")
+      .in("contract_id", contractIds)
+      .in("due_date", paymentDates);
+
+    const cuotaMap = new Map<string, any>();
+    for (const cuota of matchingCuotas || []) {
+      cuotaMap.set(`${cuota.contract_id}_${cuota.due_date}`, cuota);
+    }
+
+    // 6. Obtener nombres de conductores
+    const driverIds = activeContracts.map((c: any) => c.driver_id).filter(Boolean);
+    let driversMap = new Map<number, string>();
+    if (driverIds.length > 0) {
+      const { data: drivers } = await supabase
+        .from("drivers")
+        .select("id, full_name")
+        .in("id", driverIds);
+      for (const d of drivers || []) driversMap.set(d.id, d.full_name);
+    }
+
+    const items = unreconciledPayments.map((p: any) => {
+      const contract = contractByPlate.get(p.plate);
+      const suggestedCuota = contract ? cuotaMap.get(`${contract.id}_${p.payment_date}`) || null : null;
+      const inc = incMap.get(p.id) || null;
+      const netFree = Number(p.amount);
+
+      return {
+        payment_id: p.id,
+        plate: p.plate,
+        driver_name: contract?.driver_id ? driversMap.get(contract.driver_id) || null : null,
+        contract_id: contract?.id || null,
+        payment_date: p.payment_date,
+        amount: Number(p.amount),
+        net_free: netFree,
+        reference_number: p.reference_number,
+        proof_url: p.proof_url,
+        status: p.status,
+        inconsistency: inc ? {
+          issue_code: inc.issue_code,
+          message: inc.message,
+          metadata: inc.metadata,
+        } : null,
+        suggested_schedule: suggestedCuota,
+      };
+    });
+
+    return res.json({ items, total: items.length });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "internal error" });
+  }
+});
+
+// ============================================================================
+// PATCH /leasing/schedule/:id/match-payment
+// Empareja manualmente un pago con una cuota de leasing usando la RPC atómica.
+// Si no se envían rubros detallados, calcula la distribución faltante automáticamente.
+// ============================================================================
+r.patch("/schedule/:id/match-payment", async (req: Request, res: Response) => {
+  const scheduleId = Number(req.params.id);
+  const {
+    payment_id,
+    maint_applied,
+    admin_applied,
+    int_applied,
+    prin_applied,
+    notes = "Match manual",
+  } = req.body || {};
+
+  if (!payment_id) {
+    return res.status(400).json({ error: "payment_id es requerido" });
+  }
+
+  try {
+    let finalMaint = maint_applied != null ? Number(maint_applied) : null;
+    let finalAdmin = admin_applied != null ? Number(admin_applied) : null;
+    let finalInt = int_applied != null ? Number(int_applied) : null;
+    let finalPrin = prin_applied != null ? Number(prin_applied) : null;
+
+    // Si alguno no fue enviado, auto-calcular la cascada para la cuota
+    if (finalMaint === null || finalAdmin === null || finalInt === null || finalPrin === null) {
+      const { data: schedule, error: sErr } = await supabase
+        .from("leasing_schedule")
+        .select("*")
+        .eq("id", scheduleId)
+        .single();
+      if (sErr || !schedule) return res.status(404).json({ error: "Cuota no encontrada" });
+
+      const { data: payment, error: pErr } = await supabase
+        .from("payments")
+        .select("*")
+        .eq("id", Number(payment_id))
+        .single();
+      if (pErr || !payment) return res.status(404).json({ error: "Pago no encontrado" });
+
+      // Ya distribuido de este pago
+      const { data: existingDists } = await supabase
+        .from("payment_distributions")
+        .select("amount_applied")
+        .eq("payment_id", Number(payment_id));
+      const alreadyApplied = (existingDists || []).reduce((s: number, d: any) => s + Number(d.amount_applied), 0);
+
+      const netFree = Number(payment.amount) - alreadyApplied;
+
+      if (netFree <= 0) {
+        return res.status(400).json({ error: "El pago no tiene saldo libre disponible para aplicar" });
+      }
+
+      let remaining = netFree;
+      const faltaMaint = Math.max(0, Number(schedule.maintenance_expected) - Number(schedule.maintenance_paid));
+      const faltaAdmin = Math.max(0, Number(schedule.admin_expected) - Number(schedule.admin_paid));
+      const faltaInt = Math.max(0, Number(schedule.interest_expected) - Number(schedule.interest_paid));
+      const faltaPrin = Math.max(0, Number(schedule.principal_expected) - Number(schedule.principal_paid));
+
+      const calcMaint = Math.min(remaining, faltaMaint);
+      remaining -= calcMaint;
+
+      const calcAdmin = Math.min(remaining, faltaAdmin);
+      remaining -= calcAdmin;
+
+      const calcInt = Math.min(remaining, faltaInt);
+      remaining -= calcInt;
+
+      const calcPrin = Math.min(remaining, faltaPrin);
+      remaining -= calcPrin;
+
+      finalMaint = finalMaint ?? calcMaint;
+      finalAdmin = finalAdmin ?? calcAdmin;
+      finalInt = finalInt ?? calcInt;
+      finalPrin = finalPrin ?? calcPrin;
+    }
+
+    // Ejecutar la RPC atómica en Postgres
+    const { data, error } = await supabase.rpc("match_leasing_payment", {
+      p_schedule_id: scheduleId,
+      p_payment_id: Number(payment_id),
+      p_maint_applied: finalMaint,
+      p_admin_applied: finalAdmin,
+      p_int_applied: finalInt,
+      p_prin_applied: finalPrin,
+      p_notes: notes ? String(notes) : null,
+    });
+
+    if (error) {
+      console.error("RPC match_leasing_payment error:", error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "internal error" });
+  }
+});
+
+// ============================================================================
+// DELETE /leasing/schedule/:id/match/:paymentId
+// Revierte atómicamente el match de un pago contra una cuota de leasing.
+// ============================================================================
+r.delete("/schedule/:id/match/:paymentId", async (req: Request, res: Response) => {
+  const scheduleId = Number(req.params.id);
+  const paymentId = Number(req.params.paymentId);
+
+  try {
+    const { data, error } = await supabase.rpc("unmatch_leasing_payment", {
+      p_schedule_id: scheduleId,
+      p_payment_id: paymentId,
+    });
+
+    if (error) {
+      console.error("RPC unmatch_leasing_payment error:", error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "internal error" });
+  }
+});
+
+// ============================================================================
 // GET /leasing/contracts/:id/schedule
-// Cronograma de cuotas de un contrato, con resumen de estado.
+// Cronograma de cuotas de un contrato, con resumen de estado y datos de conciliación.
 // ============================================================================
 r.get("/contracts/:id/schedule", async (req: Request, res: Response) => {
   const { id } = req.params;
@@ -268,7 +580,8 @@ r.get("/contracts/:id/schedule", async (req: Request, res: Response) => {
     .from("leasing_schedule")
     .select("*")
     .eq("contract_id", Number(id))
-    .order("installment_no", { ascending: true });
+    .order("installment_no", { ascending: true })
+    .limit(2500);
 
   if (status) q = q.eq("status", status);
 
@@ -276,18 +589,60 @@ r.get("/contracts/:id/schedule", async (req: Request, res: Response) => {
   if (error) return res.status(500).json({ error: error.message });
 
   const rows = data ?? [];
+  const scheduleIds = rows.map((r: any) => r.id);
+
+  // Vincular payment_id y excess_amount si hay distribuciones
+  let schedPaymentMap = new Map<number, { payment_id: number; excess_amount: number | null }>();
+  if (scheduleIds.length > 0) {
+    const { data: dists } = await supabase
+      .from("payment_distributions")
+      .select("schedule_id, payment_id")
+      .in("schedule_id", scheduleIds);
+
+    const paymentIds = [...new Set((dists || []).map((d: any) => d.payment_id))];
+    let incMap = new Map<number, number>();
+    if (paymentIds.length > 0) {
+      const { data: incs } = await supabase
+        .from("payment_inconsistencies")
+        .select("payment_id, metadata")
+        .eq("issue_code", "LEASING_EXCESS_PAYMENT")
+        .in("payment_id", paymentIds);
+
+      for (const inc of incs || []) {
+        incMap.set(inc.payment_id, Number(inc.metadata?.excess_amount || 0));
+      }
+    }
+
+    for (const d of dists || []) {
+      const excess = incMap.get(d.payment_id) ?? null;
+      schedPaymentMap.set(d.schedule_id, {
+        payment_id: d.payment_id,
+        excess_amount: excess,
+      });
+    }
+  }
+
+  const enrichedRows = rows.map((r: any) => {
+    const matchInfo = schedPaymentMap.get(r.id);
+    return {
+      ...r,
+      payment_id: matchInfo?.payment_id ?? null,
+      excess_amount: matchInfo?.excess_amount ?? null,
+    };
+  });
+
   const summary = {
-    total_installments: rows.length,
-    paid:               rows.filter((r: any) => r.status === "paid").length,
-    partially_paid:     rows.filter((r: any) => r.status === "partially_paid").length,
-    pending:            rows.filter((r: any) => r.status === "pending").length,
-    total_expected:     rows.reduce((s: number, r: any) => s + Number(r.total_expected ?? 0), 0),
-    total_collected:    rows.reduce((s: number, r: any) =>
+    total_installments: enrichedRows.length,
+    paid:               enrichedRows.filter((r: any) => r.status === "paid").length,
+    partially_paid:     enrichedRows.filter((r: any) => r.status === "partially_paid").length,
+    pending:            enrichedRows.filter((r: any) => r.status === "pending").length,
+    total_expected:     enrichedRows.reduce((s: number, r: any) => s + Number(r.total_expected ?? 0), 0),
+    total_collected:    enrichedRows.reduce((s: number, r: any) =>
       s + Number(r.maintenance_paid ?? 0) + Number(r.admin_paid ?? 0) +
           Number(r.interest_paid ?? 0)    + Number(r.principal_paid ?? 0), 0),
   };
 
-  return res.json({ summary, items: rows });
+  return res.json({ summary, items: enrichedRows });
 });
 
 // ============================================================================

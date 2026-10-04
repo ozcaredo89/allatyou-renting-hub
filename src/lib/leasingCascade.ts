@@ -21,6 +21,7 @@ export type LeasingContract = {
   daily_admin: number;
   start_date: string;
   status: "active" | "closed" | "default";
+  start_date_pending_confirmation?: boolean;
 };
 
 type ScheduleRow = {
@@ -86,6 +87,7 @@ export async function getActiveLeasingContract(
     daily_admin: toNum(data.daily_admin),
     start_date: data.start_date,
     status: data.status,
+    start_date_pending_confirmation: !!data.start_date_pending_confirmation,
   };
 }
 
@@ -94,140 +96,186 @@ export async function getActiveLeasingContract(
 // Distribuye `amount` sobre las cuotas del contrato en orden estricto de
 // prelación: Mantenimiento → Admin → Interés → Capital
 // --------------------------------------------------------------------------
+// --------------------------------------------------------------------------
+// CASCADA DE PAGOS — función principal
+// Aplica el pago a la cuota que coincide en fecha (due_date = payment_date).
+// Si net_amount >= cuota, cubre la cuota al 100% y etiqueta cualquier sobrante como LEASING_EXCESS_PAYMENT.
+// Si no coincide en fecha o monto es insuficiente, no aplica y registra alerta en payment_inconsistencies.
+// --------------------------------------------------------------------------
 export async function applyLeasingPayment(
   paymentId: number,
   amount: number,
   contractId: number
 ): Promise<CascadeResult> {
-  let remaining = Math.round(amount);
-  let distributionsInserted = 0;
-  let cuotasTouched = 0;
+  // 1. Obtener detalles del pago
+  const { data: payment, error: pErr } = await supabase
+    .from("payments")
+    .select("id, plate, payment_date, amount, status")
+    .eq("id", paymentId)
+    .single();
 
-  if (remaining <= 0) {
-    return { ok: false, applied: 0, remaining: 0, distributionsInserted: 0, cuotasTouched: 0, error: "amount must be > 0" };
+  if (pErr || !payment) {
+    return { ok: false, applied: 0, remaining: amount, distributionsInserted: 0, cuotasTouched: 0, error: `Pago #${paymentId} no encontrado` };
   }
 
-  // 1. Obtener cuotas pendientes o parcialmente pagadas, ordenadas por fecha
-  const { data: rows, error: fetchErr } = await supabase
+  // 2. Verificar si el contrato tiene fecha pendiente de confirmación
+  const { data: contract } = await supabase
+    .from("leasing_contracts")
+    .select("id, start_date_pending_confirmation")
+    .eq("id", contractId)
+    .single();
+
+  if (contract?.start_date_pending_confirmation) {
+    return {
+      ok: false,
+      applied: 0,
+      remaining: Number(payment.amount),
+      distributionsInserted: 0,
+      cuotasTouched: 0,
+      error: "CONTRACT_START_DATE_PENDING_CONFIRMATION",
+    };
+  }
+
+  // 3. Monto total del pago
+  const totalAmount = Number(payment.amount);
+
+  // Si monto <= 1 -> día de mantenimiento / taller
+  if (totalAmount <= 1) {
+    return { ok: true, applied: 0, remaining: 0, distributionsInserted: 0, cuotasTouched: 0 };
+  }
+
+  // 4. Chequeo de duplicados confirmados en la misma fecha para la misma placa
+  const { data: dups } = await supabase
+    .from("payments")
+    .select("id")
+    .eq("plate", payment.plate)
+    .eq("payment_date", payment.payment_date)
+    .eq("status", "confirmed")
+    .neq("id", paymentId)
+    .limit(1);
+
+  if (dups && dups.length > 0) {
+    await supabase.from("payment_inconsistencies").insert([{
+      payment_id: paymentId,
+      plate: payment.plate,
+      payment_date: payment.payment_date,
+      issue_code: "LEASING_DUPLICATE_PAYMENT",
+      message: "Ya existe otro pago confirmado registrado para esta placa en la misma fecha",
+      metadata: { amount: totalAmount, duplicate_id: dups[0]?.id }
+    }]);
+    return { ok: false, applied: 0, remaining: totalAmount, distributionsInserted: 0, cuotasTouched: 0, error: "LEASING_DUPLICATE_PAYMENT" };
+  }
+
+  // 5. Buscar cuota en cronograma con due_date = payment_date
+  const { data: cuota, error: cErr } = await supabase
     .from("leasing_schedule")
     .select("*")
     .eq("contract_id", contractId)
-    .in("status", ["pending", "partially_paid"])
-    .order("due_date", { ascending: true })
-    .order("installment_no", { ascending: true });
+    .eq("due_date", payment.payment_date)
+    .maybeSingle();
 
-  if (fetchErr) {
-    return {
-      ok: false, applied: 0, remaining, distributionsInserted: 0, cuotasTouched: 0,
-      error: `Error cargando cronograma: ${fetchErr.message}`,
-    };
+  if (cErr || !cuota) {
+    await supabase.from("payment_inconsistencies").insert([{
+      payment_id: paymentId,
+      plate: payment.plate,
+      payment_date: payment.payment_date,
+      issue_code: "LEASING_DATE_MISMATCH",
+      message: "No existe cuota en el cronograma para esta fecha (festivo o día no hábil)",
+      metadata: { amount: totalAmount }
+    }]);
+    return { ok: false, applied: 0, remaining: totalAmount, distributionsInserted: 0, cuotasTouched: 0, error: "LEASING_DATE_MISMATCH" };
   }
 
-  const schedule = (rows ?? []) as ScheduleRow[];
-
-  if (schedule.length === 0) {
-    return { ok: true, applied: 0, remaining, distributionsInserted: 0, cuotasTouched: 0 };
+  // 6. Verificar si la cuota ya está pagada
+  if (cuota.status === "paid") {
+    await supabase.from("payment_inconsistencies").insert([{
+      payment_id: paymentId,
+      plate: payment.plate,
+      payment_date: payment.payment_date,
+      issue_code: "LEASING_INSTALLMENT_ALREADY_PAID",
+      message: "La cuota correspondiente a esta fecha ya fue pagada previamente",
+      metadata: { amount: totalAmount, installment_no: cuota.installment_no, cuota_id: cuota.id }
+    }]);
+    return { ok: false, applied: 0, remaining: totalAmount, distributionsInserted: 0, cuotasTouched: 0, error: "LEASING_INSTALLMENT_ALREADY_PAID" };
   }
 
-  const totalApplied = amount - remaining; // se calculará al final
+  // 7. Calcular saldo libre disponible del pago
+  const { data: existingDists } = await supabase
+    .from("payment_distributions")
+    .select("amount_applied")
+    .eq("payment_id", paymentId);
+  const alreadyApplied = (existingDists || []).reduce((s: number, d: any) => s + Number(d.amount_applied), 0);
+  const availableAmount = totalAmount - alreadyApplied;
 
-  // 2. Iterar cuota por cuota, aplicando la cascada
-  for (const cuota of schedule) {
-    if (remaining <= 0) break;
-    cuotasTouched++;
-
-    // Calcular faltante por rubro
-    const faltaMant  = Math.max(0, toNum(cuota.maintenance_expected) - toNum(cuota.maintenance_paid));
-    const faltaAdmin = Math.max(0, toNum(cuota.admin_expected)       - toNum(cuota.admin_paid));
-    const faltaInt   = Math.max(0, toNum(cuota.interest_expected)    - toNum(cuota.interest_paid));
-    const faltaCap   = Math.max(0, toNum(cuota.principal_expected)   - toNum(cuota.principal_paid));
-
-    // Calcular abonos según orden de prelación
-    const abonoMant  = Math.min(faltaMant,  remaining); remaining -= abonoMant;
-    const abonoAdmin = Math.min(faltaAdmin, remaining); remaining -= abonoAdmin;
-    const abonoInt   = Math.min(faltaInt,   remaining); remaining -= abonoInt;
-    const abonoCap   = Math.min(faltaCap,   remaining); remaining -= abonoCap;
-
-    // Construir distribuciones (solo las que tienen monto > 0)
-    const distribuciones: Array<{ payment_id: number; schedule_id: number; bucket: string; amount_applied: number }> = [];
-    if (abonoMant  > 0) distribuciones.push({ payment_id: paymentId, schedule_id: cuota.id, bucket: "maintenance", amount_applied: abonoMant });
-    if (abonoAdmin > 0) distribuciones.push({ payment_id: paymentId, schedule_id: cuota.id, bucket: "admin",       amount_applied: abonoAdmin });
-    if (abonoInt   > 0) distribuciones.push({ payment_id: paymentId, schedule_id: cuota.id, bucket: "interest",    amount_applied: abonoInt });
-    if (abonoCap   > 0) distribuciones.push({ payment_id: paymentId, schedule_id: cuota.id, bucket: "principal",   amount_applied: abonoCap });
-
-    if (distribuciones.length === 0) continue;
-
-    // 2a. Insertar distribuciones en payment_distributions
-    const { error: distErr } = await supabase
-      .from("payment_distributions")
-      .insert(distribuciones);
-
-    if (distErr) {
-      return {
-        ok: false, applied: amount - remaining, remaining, distributionsInserted, cuotasTouched,
-        error: `Error insertando distribución cuota #${cuota.installment_no}: ${distErr.message}`,
-      };
-    }
-    distributionsInserted += distribuciones.length;
-
-    // 2b. Calcular nuevos acumulados de la cuota
-    const newMaintPaid  = toNum(cuota.maintenance_paid) + abonoMant;
-    const newAdminPaid  = toNum(cuota.admin_paid)       + abonoAdmin;
-    const newIntPaid    = toNum(cuota.interest_paid)    + abonoInt;
-    const newCapPaid    = toNum(cuota.principal_paid)   + abonoCap;
-
-    // Determinar nuevo estado
-    const totalExpected = toNum(cuota.maintenance_expected) + toNum(cuota.admin_expected) +
-                          toNum(cuota.interest_expected)    + toNum(cuota.principal_expected);
-    const totalPaid     = newMaintPaid + newAdminPaid + newIntPaid + newCapPaid;
-
-    // La cuota solo es 'paid' si los 4 rubros están cubiertos al 100%
-    const allCovered =
-      newMaintPaid  >= toNum(cuota.maintenance_expected) &&
-      newAdminPaid  >= toNum(cuota.admin_expected)       &&
-      newIntPaid    >= toNum(cuota.interest_expected)    &&
-      newCapPaid    >= toNum(cuota.principal_expected);
-
-    const newStatus: "paid" | "partially_paid" = allCovered ? "paid" : "partially_paid";
-
-    // 2c. Actualizar la cuota
-    const patchData: Record<string, any> = {
-      maintenance_paid: newMaintPaid,
-      admin_paid:       newAdminPaid,
-      interest_paid:    newIntPaid,
-      principal_paid:   newCapPaid,
-      status:           newStatus,
-    };
-    if (newStatus === "paid") {
-      patchData.paid_at = new Date().toISOString();
-    }
-
-    const { error: updateErr } = await supabase
-      .from("leasing_schedule")
-      .update(patchData)
-      .eq("id", cuota.id);
-
-    if (updateErr) {
-      return {
-        ok: false, applied: amount - remaining, remaining, distributionsInserted, cuotasTouched,
-        error: `Error actualizando cuota #${cuota.installment_no}: ${updateErr.message}`,
-      };
-    }
-
-    // Si esta cuota quedó 'paid', chequear si el contrato se completó
-    if (newStatus === "paid") {
-      await maybeCloseContract(contractId);
-    }
+  if (availableAmount <= 0) {
+    return { ok: false, applied: 0, remaining: 0, distributionsInserted: 0, cuotasTouched: 0, error: "PAYMENT_ALREADY_DISTRIBUTED" };
   }
+
+  // 8. Comparar faltante vs disponible
+  const faltaMant  = Math.max(0, toNum(cuota.maintenance_expected) - toNum(cuota.maintenance_paid));
+  const faltaAdmin = Math.max(0, toNum(cuota.admin_expected)       - toNum(cuota.admin_paid));
+  const faltaInt   = Math.max(0, toNum(cuota.interest_expected)    - toNum(cuota.interest_paid));
+  const faltaCap   = Math.max(0, toNum(cuota.principal_expected)   - toNum(cuota.principal_paid));
+  const faltaTotal = faltaMant + faltaAdmin + faltaInt + faltaCap;
+
+  if (availableAmount < faltaTotal - 1.0) {
+    // Monto insuficiente
+    await supabase.from("payment_inconsistencies").insert([{
+      payment_id: paymentId,
+      plate: payment.plate,
+      payment_date: payment.payment_date,
+      issue_code: "LEASING_AMOUNT_MISMATCH",
+      message: "Monto neto insuficiente para cubrir la cuota del día",
+      metadata: { amount: availableAmount, falta: faltaTotal, installment_no: cuota.installment_no }
+    }]);
+    return { ok: false, applied: 0, remaining: availableAmount, distributionsInserted: 0, cuotasTouched: 0, error: "LEASING_AMOUNT_MISMATCH" };
+  }
+
+  // 9. Ejecutar match atómico via RPC
+  const { error: rpcErr } = await supabase.rpc("match_leasing_payment", {
+    p_schedule_id: cuota.id,
+    p_payment_id: paymentId,
+    p_maint_applied: faltaMant,
+    p_admin_applied: faltaAdmin,
+    p_int_applied: faltaInt,
+    p_prin_applied: faltaCap,
+    p_notes: "Cascada automática",
+  });
+
+  if (rpcErr) {
+    return { ok: false, applied: 0, remaining: availableAmount, distributionsInserted: 0, cuotasTouched: 0, error: rpcErr.message };
+  }
+
+  // 10. Si hubo excedente, etiquetar LEASING_EXCESS_PAYMENT
+  if (availableAmount > faltaTotal + 1.0) {
+    const excess = availableAmount - faltaTotal;
+    await supabase.from("payment_inconsistencies").insert([{
+      payment_id: paymentId,
+      plate: payment.plate,
+      payment_date: payment.payment_date,
+      issue_code: "LEASING_EXCESS_PAYMENT",
+      message: `Pago excedente de $${Math.round(excess).toLocaleString("es-CO")} COP`,
+      metadata: {
+        excess_amount: Math.round(excess),
+        cuota_id: cuota.id,
+        installment_no: cuota.installment_no,
+        amount_paid: availableAmount,
+        quota_expected: faltaTotal,
+      }
+    }]);
+  }
+
+  const distributionsCount = (faltaMant > 0 ? 1 : 0) + (faltaAdmin > 0 ? 1 : 0) + (faltaInt > 0 ? 1 : 0) + (faltaCap > 0 ? 1 : 0);
 
   return {
     ok: true,
-    applied: amount - remaining,
-    remaining,
-    distributionsInserted,
-    cuotasTouched,
+    applied: faltaTotal,
+    remaining: availableAmount - faltaTotal,
+    distributionsInserted: distributionsCount,
+    cuotasTouched: 1,
   };
 }
+
 
 // --------------------------------------------------------------------------
 // Cierre automático de contrato si todas las cuotas están pagadas
@@ -277,32 +325,25 @@ export function generateLeasingSchedule(
   validPaymentDates: Set<string>  // fechas pagables (sin P&P), puede ser vacío
 ): Array<Record<string, any>> {
   const dailyRate = (monthlyRatePct * 12) / 365 / 100;
-  let balance = financedCapital;
+  let currentBalance = financedCapital;
   let installmentNo = 0;
-  let accumulatedInterest = 0;
   const schedule: Array<Record<string, any>> = [];
 
   let current = new Date(startDate + "T00:00:00Z");
-  const MAX_DAYS = 365 * 10; // 10 años max de seguridad
+  const MAX_DAYS = 365 * 15; // 15 años max de seguridad (igual al simulador)
   let dayCount = 0;
 
-  while (balance > 0.5 && dayCount < MAX_DAYS) {
+  while (currentBalance > 0.01 && dayCount < MAX_DAYS) {
     const iso = current.toISOString().slice(0, 10);
+    const dailyInterest = currentBalance * dailyRate;
     const isPayDay = validPaymentDates.size === 0 || validPaymentDates.has(iso);
-
-    const dailyInterest = balance * dailyRate;
-    accumulatedInterest += dailyInterest;
 
     if (isPayDay) {
       installmentNo++;
-      // La cuota de capital+interés fue definida en la simulación.
-      // Si el balance es menor que lo que abonaría a capital, la cuota es menor para cerrar en $0 exacto.
-      const interestToPay = accumulatedInterest;
-      
-      let principalPayment = dailyCapitalInterest - interestToPay;
-      if (balance - principalPayment < 0) {
-        principalPayment = balance; // Ajuste (reconciliación) para que quede en 0
-      }
+      // Igual que el simulador: paymentToApply cubre capital + interés
+      const paymentToApply = Math.min(dailyCapitalInterest, currentBalance + dailyInterest);
+      const principalPaid = paymentToApply - dailyInterest;
+      currentBalance -= principalPaid;
 
       schedule.push({
         contract_id:          contractId,
@@ -310,14 +351,14 @@ export function generateLeasingSchedule(
         due_date:             iso,
         maintenance_expected: Math.round(dailyMaintenance * 100) / 100,
         admin_expected:       Math.round(dailyAdmin * 100) / 100,
-        interest_expected:    Math.round(interestToPay * 100) / 100,
-        principal_expected:   Math.round(principalPayment * 100) / 100,
-        balance_expected:     Math.round((balance - principalPayment) * 100) / 100,
+        interest_expected:    Math.round(dailyInterest * 100) / 100,
+        principal_expected:   Math.round(principalPaid * 100) / 100,
+        balance_expected:     Math.round((currentBalance > 0 ? currentBalance : 0) * 100) / 100,
         status:               "pending",
       });
-
-      balance -= principalPayment;
-      accumulatedInterest = 0; // Se pagó todo el interés acumulado
+    } else {
+      // En días no hábiles (P&P, festivo, descanso), el interés se capitaliza en el saldo de deuda
+      currentBalance += dailyInterest;
     }
 
     current.setUTCDate(current.getUTCDate() + 1);

@@ -775,7 +775,7 @@ r.post("/pay-with-advance", async (req: Request, res: Response) => {
   // 7. Si es leasing, aplicar cascada
   if (isLeasing) {
     const leasingContract = await getActiveLeasingContract(upperPlate);
-    if (leasingContract) {
+    if (leasingContract && !leasingContract.start_date_pending_confirmation) {
       try {
         const { data: insertedRows } = await supabase
           .from("payments")
@@ -1028,11 +1028,15 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
     }
   }
 
-  // Obtener cuotas de anticipo operativo a avanzar (SOLO si instNo != null y safeStatus != rejected)
-  let advanceUpdates: any[] = [];
-  let startingInstallmentNo: number | null = instNo;
+  // Si el vehículo tiene contrato de leasing activo, no aplica anticipo operativo
+  const leasingContract = await getActiveLeasingContract(upperPlate);
+  const isLeasing = leasingContract != null;
 
-  if (instNo != null && safeStatus !== "rejected") {
+  // Obtener cuotas de anticipo operativo a avanzar (SOLO si no es leasing, instNo != null y safeStatus != rejected)
+  let advanceUpdates: any[] = [];
+  let startingInstallmentNo: number | null = !isLeasing ? instNo : null;
+
+  if (!isLeasing && instNo != null && safeStatus !== "rejected") {
     const advRes = await getActiveAdvanceByPlateOrError(upperPlate, batchStartDate, null);
     if (advRes.kind === "multiple") {
       res.status(400).json({
@@ -1171,40 +1175,61 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
     }
   }
 
-  // Paso 2: Cascada de Leasing (solo si es status confirmed, sin cuota, y hay contrato)
+  // Paso 2: Cascada de Leasing (solo si es status confirmed, hay contrato y no está pendiente de confirmación)
   let leasingInfo: any = undefined;
-  if (safeStatus === "confirmed" && instNo == null && primaryPaymentId) {
-    const leasingContract = await getActiveLeasingContract(upperPlate);
-    if (leasingContract) {
-      const totalBatchAmount = amt * payableDates.length;
-      const cascadeResult = await applyLeasingPayment(primaryPaymentId, totalBatchAmount, leasingContract.id);
-      if (!cascadeResult.ok) {
-        // Compensación: si la cascada falla, borrar todo el lote
-        await supabase.from("payments").delete().eq("batch_id", batchId);
-        if (upload_id) {
-          await supabase
-            .from("receipt_uploads")
-            .update({ linked_payment_id: null })
-            .eq("id", upload_id);
-        }
-        await logInconsistency({
-          payment_id: primaryPaymentId,
-          plate: upperPlate,
-          payment_date: batchStartDate,
-          issue_code: "LEASING_CASCADE_ERROR_BATCH_ROLLBACK",
-          message: cascadeResult.error ?? "applyLeasingPayment falló en lote — lote revertido",
-          metadata: { batch_id: batchId, contract_id: leasingContract.id },
-        });
-        res.status(500).json({ error: "Error al aplicar la cascada de leasing. El lote fue revertido." }); return;
+  if (safeStatus === "confirmed" && isLeasing && leasingContract && !leasingContract.start_date_pending_confirmation && primaryPaymentId) {
+    const { data: batchPayments } = await supabase
+      .from("payments")
+      .select("id, amount, payment_date")
+      .eq("batch_id", batchId)
+      .order("payment_date", { ascending: true });
+
+    let totalApplied = 0;
+    let totalRemaining = 0;
+    let cuotasTouched = 0;
+    let cascadeFailed = false;
+    let lastCascadeErr: string | undefined = undefined;
+
+    for (const row of batchPayments || []) {
+      const rowAmt = Number(row.amount);
+      const cascadeRes = await applyLeasingPayment(row.id, rowAmt, leasingContract.id);
+      if (!cascadeRes.ok) {
+        cascadeFailed = true;
+        lastCascadeErr = cascadeRes.error;
+        break;
       }
-      leasingInfo = {
-        contract_id: leasingContract.id,
-        applied: cascadeResult.applied,
-        remaining: cascadeResult.remaining,
-        cuotas_touched: cascadeResult.cuotasTouched,
-        ok: cascadeResult.ok,
-      };
+      totalApplied += cascadeRes.applied;
+      totalRemaining += cascadeRes.remaining;
+      cuotasTouched += cascadeRes.cuotasTouched;
     }
+
+    if (cascadeFailed) {
+      // Compensación: si la cascada falla, borrar todo el lote
+      await supabase.from("payments").delete().eq("batch_id", batchId);
+      if (upload_id) {
+        await supabase
+          .from("receipt_uploads")
+          .update({ linked_payment_id: null })
+          .eq("id", upload_id);
+      }
+      await logInconsistency({
+        payment_id: primaryPaymentId,
+        plate: upperPlate,
+        payment_date: batchStartDate,
+        issue_code: "LEASING_CASCADE_ERROR_BATCH_ROLLBACK",
+        message: lastCascadeErr ?? "applyLeasingPayment falló en lote — lote revertido",
+        metadata: { batch_id: batchId, contract_id: leasingContract.id },
+      });
+      res.status(500).json({ error: "Error al aplicar la cascada de leasing. El lote fue revertido." }); return;
+    }
+
+    leasingInfo = {
+      contract_id: leasingContract.id,
+      applied: totalApplied,
+      remaining: totalRemaining,
+      cuotas_touched: cuotasTouched,
+      ok: true,
+    };
   }
 
   res.status(201).json({
@@ -1662,12 +1687,12 @@ r.post("/", async (req: Request, res: Response) => {
   }
 
   // ========= ROUTER / STRATEGY: Leasing vs. Renting Legacy =========
-  // Si el vehículo tiene un contrato activo de leasing Y NO ES UN PAGO DE ANTICIPO,
-  // se desvía la lógica de distribución al nuevo módulo. El flujo legacy queda 100% intacto.
+  // Si el vehículo tiene un contrato activo de leasing (sin start_date_pending_confirmation),
+  // se desvía la lógica de distribución al módulo de Leasing.
   // amt > 0 garantiza que registros en $0 (vehículo sin conductor) no toquen la cascada de leasing.
-  if (safeStatus === "confirmed" && instNo == null && amt > 0) {
+  if (safeStatus === "confirmed" && amt > 0) {
     const leasingContract = await getActiveLeasingContract(upperPlate);
-    if (leasingContract) {
+    if (leasingContract && !leasingContract.start_date_pending_confirmation) {
       const cascadeResult = await applyLeasingPayment(payment.id, amt, leasingContract.id);
       if (!cascadeResult.ok) {
         // Loguear el error pero no revertir el payment (ya está registrado)
@@ -2103,6 +2128,32 @@ r.delete("/last/:plate", async (req: Request, res: Response) => {
         .eq("linked_payment_id", firstRow.id);
     }
 
+    // Revertir distribuciones de leasing asociadas a los pagos del lote
+    const { data: batchDists } = await supabase
+      .from("payment_distributions")
+      .select("schedule_id, payment_id")
+      .in("payment_id", deletedIds);
+
+    if (batchDists && batchDists.length > 0) {
+      const seen = new Set<string>();
+      for (const d of batchDists) {
+        const key = `${d.schedule_id}_${d.payment_id}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          await supabase.rpc("unmatch_leasing_payment", {
+            p_schedule_id: d.schedule_id,
+            p_payment_id: d.payment_id,
+          });
+        }
+      }
+    }
+
+    // Limpiar inconsistencias asociadas al lote
+    await supabase
+      .from("payment_inconsistencies")
+      .delete()
+      .in("payment_id", deletedIds);
+
     // Borrar todas las filas del lote
     const { error: delBatchErr } = await supabase
       .from("payments")
@@ -2128,6 +2179,32 @@ r.delete("/last/:plate", async (req: Request, res: Response) => {
   // ============================================================
   // 2B. Pago individual (flujo legacy sin cambios)
   // ============================================================
+  // Revertir distribuciones de leasing asociadas a este pago
+  const { data: singleDists } = await supabase
+    .from("payment_distributions")
+    .select("schedule_id, payment_id")
+    .eq("payment_id", payment_id);
+
+  if (singleDists && singleDists.length > 0) {
+    const seen = new Set<string>();
+    for (const d of singleDists) {
+      const key = `${d.schedule_id}_${d.payment_id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        await supabase.rpc("unmatch_leasing_payment", {
+          p_schedule_id: d.schedule_id,
+          p_payment_id: d.payment_id,
+        });
+      }
+    }
+  }
+
+  // Limpiar inconsistencias asociadas al pago
+  await supabase
+    .from("payment_inconsistencies")
+    .delete()
+    .eq("payment_id", payment_id);
+
   // Si tiene cuota asociada, hacer rollback del schedule
   if (installment_number != null) {
     // Buscar el préstamo más reciente de esta placa

@@ -4,7 +4,9 @@ import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import {
   Calculator, Save, X, Calendar as CalendarIcon, Loader2, Info,
   ChevronDown, ChevronUp, Download, Rocket, Trash2, ClipboardList,
-  AlertTriangle, CheckCircle2, FileCheck, Phone, Search, RefreshCw
+  AlertTriangle, CheckCircle2, FileCheck, Phone, Search, RefreshCw,
+  Check, ExternalLink, Layers, Tag, Undo2, ArrowRight,
+  Coins, Wrench
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -82,6 +84,97 @@ type PendingContract = {
   [key: string]: any;
 };
 
+export type ActiveLeasingContract = {
+  contract_id: number;
+  plate: string;
+  driver_id: number | null;
+  contract_status: string;
+  start_date: string;
+  financed_capital: number;
+  monthly_rate_pct: number;
+  daily_maintenance: number;
+  daily_admin: number;
+  daily_capital_interest: number;
+  daily_quota: number;
+  start_date_pending_confirmation: boolean;
+  total_installments: number;
+  paid_installments: number;
+  pending_installments: number;
+  maintenance_fund_accumulated: number;
+  total_principal_paid: number;
+  remaining_capital: number;
+  total_collected: number;
+  next_due_date: string | null;
+  estimated_end_date: string | null;
+  driver?: {
+    id: number;
+    full_name: string;
+    phone?: string;
+    document_number?: string;
+  } | null;
+  vehicle?: {
+    plate: string;
+    brand?: string;
+    line?: string;
+    model_year?: number;
+  } | null;
+};
+
+export type UnreconciledPayment = {
+  payment_id: number;
+  plate: string;
+  driver_name: string | null;
+  contract_id: number | null;
+  payment_date: string;
+  amount: number;
+  net_free: number;
+  reference_number?: string | null;
+  proof_url?: string | null;
+  status?: string | null;
+  inconsistency?: {
+    issue_code: string;
+    message: string;
+    metadata?: any;
+  } | null;
+  suggested_schedule?: {
+    id: number;
+    contract_id: number;
+    installment_no: number;
+    due_date: string;
+    status: string;
+    maintenance_expected: number;
+    maintenance_paid: number;
+    admin_expected: number;
+    admin_paid: number;
+    interest_expected: number;
+    interest_paid: number;
+    principal_expected: number;
+    principal_paid: number;
+    total_expected: number;
+  } | null;
+};
+
+export type ScheduleRowItem = {
+  id: number;
+  contract_id: number;
+  installment_no: number;
+  due_date: string;
+  status: "paid" | "partially_paid" | "pending";
+  maintenance_expected: number;
+  maintenance_paid: number;
+  admin_expected: number;
+  admin_paid: number;
+  interest_expected: number;
+  interest_paid: number;
+  principal_expected: number;
+  principal_paid: number;
+  total_expected: number;
+  paid_at?: string | null;
+  notes?: string | null;
+  payment_id?: number | null;
+  excess_amount?: number | null;
+};
+
 const fmtCOP = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
@@ -128,11 +221,38 @@ export default function AdminAmortization() {
   const [authHeader, setAuthHeader] = useState("");
 
   // Tabs navigation
-  const [activeTab, setActiveTab] = useState<"simulation" | "pending">("simulation");
+  const [activeTab, setActiveTab] = useState<"simulation" | "pending" | "active" | "unreconciled">("simulation");
   const [pendingFilterPlate, setPendingFilterPlate] = useState<string>("");
   const [pendingContracts, setPendingContracts] = useState<PendingContract[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
   const [pendingTotal, setPendingTotal] = useState(0);
+
+  // Active Contracts State
+  const [activeContracts, setActiveContracts] = useState<ActiveLeasingContract[]>([]);
+  const [loadingActive, setLoadingActive] = useState(false);
+  const [activeFilterPlate, setActiveFilterPlate] = useState<string>("");
+
+  // Unreconciled Payments State
+  const [unreconciledPayments, setUnreconciledPayments] = useState<UnreconciledPayment[]>([]);
+  const [loadingUnreconciled, setLoadingUnreconciled] = useState(false);
+  const [unreconciledFilterPlate, setUnreconciledFilterPlate] = useState<string>("");
+
+  // Schedule Drawer/Modal State
+  const [selectedContractForSchedule, setSelectedContractForSchedule] = useState<ActiveLeasingContract | null>(null);
+  const [contractScheduleRows, setContractScheduleRows] = useState<ScheduleRowItem[]>([]);
+  const [loadingScheduleRows, setLoadingScheduleRows] = useState(false);
+  const [scheduleFilter, setScheduleFilter] = useState<"all" | "pending" | "paid">("all");
+  const [schedulePage, setSchedulePage] = useState<number>(1);
+
+  // Manual Match / Reconciliation Modal State
+  const [matchModalOpen, setMatchModalOpen] = useState(false);
+  const [matchTargetCuota, setMatchTargetCuota] = useState<ScheduleRowItem | null>(null);
+  const [matchTargetPayment, setMatchTargetPayment] = useState<UnreconciledPayment | null>(null);
+  const [manualPaymentId, setManualPaymentId] = useState<string>("");
+  const [manualNotes, setManualNotes] = useState<string>("");
+  const [matchingLoading, setMatchingLoading] = useState(false);
+  const [matchingError, setMatchingError] = useState<string | null>(null);
+  const [unmatchingId, setUnmatchingId] = useState<number | null>(null);
 
   // Active modal for activation (unified)
   const [activeModalContractId, setActiveModalContractId] = useState<number | null>(null);
@@ -146,6 +266,26 @@ export default function AdminAmortization() {
       (c.driver?.document_number && c.driver.document_number.includes(q))
     );
   }, [pendingContracts, pendingFilterPlate]);
+
+  const filteredActive = useMemo(() => {
+    if (!activeFilterPlate.trim()) return activeContracts;
+    const q = activeFilterPlate.trim().toUpperCase();
+    return activeContracts.filter((c) =>
+      c.plate.toUpperCase().includes(q) ||
+      (c.driver?.full_name && c.driver.full_name.toUpperCase().includes(q)) ||
+      (c.driver?.document_number && c.driver.document_number.includes(q))
+    );
+  }, [activeContracts, activeFilterPlate]);
+
+  const filteredUnreconciled = useMemo(() => {
+    if (!unreconciledFilterPlate.trim()) return unreconciledPayments;
+    const q = unreconciledFilterPlate.trim().toUpperCase();
+    return unreconciledPayments.filter((p) =>
+      p.plate.toUpperCase().includes(q) ||
+      (p.driver_name && p.driver_name.toUpperCase().includes(q)) ||
+      (p.reference_number && p.reference_number.includes(q))
+    );
+  }, [unreconciledPayments, unreconciledFilterPlate]);
 
   // Simulation inputs
   const [selectedPlate, setSelectedPlate] = useState<string>("");
@@ -205,12 +345,18 @@ export default function AdminAmortization() {
     const tabParam = searchParams.get("tab");
     if (tabParam === "pending") {
       setActiveTab("pending");
+    } else if (tabParam === "active") {
+      setActiveTab("active");
+    } else if (tabParam === "unreconciled") {
+      setActiveTab("unreconciled");
     } else if (tabParam === "simulation") {
       setActiveTab("simulation");
     }
     const plateParam = searchParams.get("plate");
     if (plateParam) {
       setPendingFilterPlate(plateParam.toUpperCase());
+      setActiveFilterPlate(plateParam.toUpperCase());
+      setUnreconciledFilterPlate(plateParam.toUpperCase());
     }
   }, [searchParams]);
 
@@ -241,6 +387,8 @@ export default function AdminAmortization() {
     loadVehicles();
     loadSimulations(auth);
     loadPendingContracts(auth);
+    loadActiveContracts(auth);
+    loadUnreconciledPayments(auth);
   }, []);
 
   async function loadPendingContracts(auth?: string) {
@@ -258,6 +406,120 @@ export default function AdminAmortization() {
       console.error("Error loading pending contracts:", err);
     } finally {
       setLoadingPending(false);
+    }
+  }
+
+  async function loadActiveContracts(auth?: string) {
+    const hdr = auth || authHeader;
+    setLoadingActive(true);
+    try {
+      const rs = await fetch(`${API}/leasing/active-summary`, {
+        headers: { Authorization: hdr },
+      });
+      if (!rs.ok) return;
+      const data = await rs.json();
+      setActiveContracts(data.items || []);
+    } catch (err) {
+      console.error("Error loading active contracts:", err);
+    } finally {
+      setLoadingActive(false);
+    }
+  }
+
+  async function loadUnreconciledPayments(auth?: string) {
+    const hdr = auth || authHeader;
+    setLoadingUnreconciled(true);
+    try {
+      const rs = await fetch(`${API}/leasing/unreconciled`, {
+        headers: { Authorization: hdr },
+      });
+      if (!rs.ok) return;
+      const data = await rs.json();
+      setUnreconciledPayments(data.items || []);
+    } catch (err) {
+      console.error("Error loading unreconciled payments:", err);
+    } finally {
+      setLoadingUnreconciled(false);
+    }
+  }
+
+  async function loadContractSchedule(contractId: number, auth?: string) {
+    const hdr = auth || authHeader;
+    setLoadingScheduleRows(true);
+    try {
+      const rs = await fetch(`${API}/leasing/contracts/${contractId}/schedule`, {
+        headers: { Authorization: hdr },
+      });
+      if (!rs.ok) return;
+      const data = await rs.json();
+      setContractScheduleRows(data.items || []);
+      setSchedulePage(1);
+    } catch (err) {
+      console.error("Error loading contract schedule:", err);
+    } finally {
+      setLoadingScheduleRows(false);
+    }
+  }
+
+  async function handleMatchPayment(scheduleId: number, paymentId: number, notes?: string) {
+    setMatchingLoading(true);
+    setMatchingError(null);
+    try {
+      const rs = await fetch(`${API}/leasing/schedule/${scheduleId}/match-payment`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify({
+          payment_id: paymentId,
+          notes: notes || "Match manual",
+        }),
+      });
+      const res = await rs.json();
+      if (!rs.ok) {
+        throw new Error(res.error || "Error al asociar el pago a la cuota");
+      }
+      setMatchModalOpen(false);
+      setMatchTargetCuota(null);
+      setMatchTargetPayment(null);
+      setManualPaymentId("");
+      setManualNotes("");
+      await loadActiveContracts();
+      await loadUnreconciledPayments();
+      if (selectedContractForSchedule) {
+        await loadContractSchedule(selectedContractForSchedule.contract_id);
+      }
+    } catch (err: any) {
+      setMatchingError(err.message || "Error al asociar el pago");
+    } finally {
+      setMatchingLoading(false);
+    }
+  }
+
+  async function handleUnmatchPayment(scheduleId: number, paymentId: number) {
+    if (!confirm(`¿Estás seguro de desvincular el pago #${paymentId} de esta cuota? La cuota volverá a estar pendiente y sus saldos se revertirán automáticamente.`)) {
+      return;
+    }
+    setUnmatchingId(scheduleId);
+    try {
+      const rs = await fetch(`${API}/leasing/schedule/${scheduleId}/match/${paymentId}`, {
+        method: "DELETE",
+        headers: { Authorization: authHeader },
+      });
+      const res = await rs.json();
+      if (!rs.ok) {
+        throw new Error(res.error || "Error al desvincular el pago");
+      }
+      await loadActiveContracts();
+      await loadUnreconciledPayments();
+      if (selectedContractForSchedule) {
+        await loadContractSchedule(selectedContractForSchedule.contract_id);
+      }
+    } catch (err: any) {
+      alert(err.message || "Error al desvincular el pago");
+    } finally {
+      setUnmatchingId(null);
     }
   }
 
@@ -879,7 +1141,7 @@ export default function AdminAmortization() {
 
         {/* TABS NAVEGACIÓN */}
         <div className="mt-8 border-b border-slate-200">
-          <div className="flex space-x-8">
+          <div className="flex space-x-6 sm:space-x-8 overflow-x-auto">
             <button
               onClick={() => {
                 setActiveTab("simulation");
@@ -889,7 +1151,7 @@ export default function AdminAmortization() {
                   return n;
                 });
               }}
-              className={`pb-4 px-1 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+              className={`pb-4 px-1 text-sm font-bold flex items-center gap-2 border-b-2 whitespace-nowrap transition-all ${
                 activeTab === "simulation"
                   ? "border-black text-slate-900"
                   : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
@@ -913,7 +1175,7 @@ export default function AdminAmortization() {
                   return n;
                 });
               }}
-              className={`pb-4 px-1 text-sm font-bold flex items-center gap-2 border-b-2 transition-all relative ${
+              className={`pb-4 px-1 text-sm font-bold flex items-center gap-2 border-b-2 whitespace-nowrap transition-all relative ${
                 activeTab === "pending"
                   ? "border-black text-slate-900"
                   : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
@@ -924,6 +1186,56 @@ export default function AdminAmortization() {
               {pendingTotal > 0 && (
                 <span className="ml-1.5 rounded-full bg-amber-100 text-amber-800 px-2.5 py-0.5 text-xs font-bold">
                   {pendingTotal}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveTab("active");
+                setSearchParams((prev) => {
+                  const n = new URLSearchParams(prev);
+                  n.set("tab", "active");
+                  return n;
+                });
+              }}
+              className={`pb-4 px-1 text-sm font-bold flex items-center gap-2 border-b-2 whitespace-nowrap transition-all relative ${
+                activeTab === "active"
+                  ? "border-emerald-600 text-emerald-900"
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              Contratos Activos
+              <span className="ml-1.5 rounded-full bg-emerald-100 text-emerald-800 px-2.5 py-0.5 text-xs font-bold">
+                {activeContracts.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveTab("unreconciled");
+                setSearchParams((prev) => {
+                  const n = new URLSearchParams(prev);
+                  n.set("tab", "unreconciled");
+                  return n;
+                });
+              }}
+              className={`pb-4 px-1 text-sm font-bold flex items-center gap-2 border-b-2 whitespace-nowrap transition-all relative ${
+                activeTab === "unreconciled"
+                  ? "border-indigo-600 text-indigo-900"
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <RefreshCw className={`h-4 w-4 ${unreconciledPayments.length > 0 ? "text-amber-600" : "text-slate-400"}`} />
+              Por Conciliar
+              {unreconciledPayments.length > 0 ? (
+                <span className="ml-1.5 rounded-full bg-amber-100 text-amber-800 px-2.5 py-0.5 text-xs font-bold">
+                  {unreconciledPayments.length}
+                </span>
+              ) : (
+                <span className="ml-1.5 rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-xs font-semibold">
+                  0
                 </span>
               )}
             </button>
@@ -1300,6 +1612,479 @@ export default function AdminAmortization() {
             )}
           </div>
         )}
+
+        {/* TAB 3: CONTRATOS ACTIVOS */}
+        {activeTab === "active" && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 mt-6 space-y-6">
+            {/* KPI Cards */}
+            <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Contratos Activos</span>
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                </div>
+                <p className="text-2xl sm:text-3xl font-black text-slate-900">{activeContracts.length}</p>
+                <p className="text-xs text-slate-500 mt-1">Vehículos en marcha</p>
+              </div>
+
+              <div className="bg-white border border-emerald-200/80 bg-emerald-50/20 rounded-2xl p-4 sm:p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Fondo Mtto Total</span>
+                  <Wrench className="h-4 w-4 text-emerald-600" />
+                </div>
+                <p className="text-2xl sm:text-3xl font-black text-emerald-700">
+                  {fmtCOP.format(activeContracts.reduce((s, c) => s + (Number(c.maintenance_fund_accumulated) || 0), 0))}
+                </p>
+                <p className="text-xs text-emerald-600 font-medium mt-1">Acumulado en cuentas</p>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Capital Recaudado</span>
+                  <Coins className="h-4 w-4 text-blue-600" />
+                </div>
+                <p className="text-2xl sm:text-3xl font-black text-blue-700">
+                  {fmtCOP.format(activeContracts.reduce((s, c) => s + (Number(c.total_principal_paid) || 0), 0))}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">Abonado a capital</p>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Cuotas Pagadas</span>
+                  <Layers className="h-4 w-4 text-purple-600" />
+                </div>
+                <p className="text-2xl sm:text-3xl font-black text-slate-900">
+                  {activeContracts.reduce((s, c) => s + (c.paid_installments || 0), 0)}
+                  <span className="text-sm font-normal text-slate-400 ml-1">
+                    / {activeContracts.reduce((s, c) => s + (c.total_installments || 0), 0)}
+                  </span>
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {((activeContracts.reduce((s, c) => s + (c.paid_installments || 0), 0) /
+                    (activeContracts.reduce((s, c) => s + (c.total_installments || 0), 0) || 1)) * 100).toFixed(1)}% de amortización
+                </p>
+              </div>
+            </div>
+
+            {/* Banner de advertencia DBC859 si aplica */}
+            {activeContracts.some((c) => c.start_date_pending_confirmation) && (
+              <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs sm:text-sm text-amber-900 flex items-start gap-3 shadow-sm">
+                <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" />
+                <div>
+                  <strong className="font-bold">Contrato con fecha de inicio por confirmar:</strong> El vehículo{" "}
+                  <strong>DBC859</strong> está activo en leasing pero su fecha de inicio contractual oficial está pendiente de confirmación. La conciliación histórica automática ha omitido este contrato para proteger la integridad de los datos.
+                </div>
+              </div>
+            )}
+
+            {/* Barra de Búsqueda y Actualización */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-md">
+                <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={activeFilterPlate}
+                  onChange={(e) => setActiveFilterPlate(e.target.value)}
+                  placeholder="Filtrar por placa, conductor o cédula..."
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm outline-none focus:ring-2 focus:ring-black/60 shadow-sm"
+                />
+                {activeFilterPlate && (
+                  <button
+                    onClick={() => setActiveFilterPlate("")}
+                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3 justify-between sm:justify-end">
+                <span className="text-xs text-slate-500 font-medium">
+                  {filteredActive.length} {filteredActive.length === 1 ? "contrato activo" : "contratos activos"}
+                </span>
+                <button
+                  onClick={() => loadActiveContracts()}
+                  disabled={loadingActive}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loadingActive ? "animate-spin" : ""}`} />
+                  Actualizar
+                </button>
+              </div>
+            </div>
+
+            {/* Listado / Tabla */}
+            {loadingActive ? (
+              <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-slate-400" />
+                <p className="text-sm font-medium">Cargando contratos activos...</p>
+              </div>
+            ) : filteredActive.length === 0 ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center shadow-sm">
+                <Info className="h-10 w-10 text-slate-400 mx-auto mb-3" />
+                <h3 className="text-base font-bold text-slate-800">
+                  {activeFilterPlate ? "No se encontraron contratos para el filtro aplicado" : "No hay contratos de leasing activos"}
+                </h3>
+              </div>
+            ) : (
+              <>
+                {/* ── Vista Escritorio: Tabla completa (>= md) ── */}
+                <div className="hidden md:block overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                      <tr>
+                        <th className="px-5 py-3.5">Vehículo</th>
+                        <th className="px-5 py-3.5">Conductor</th>
+                        <th className="px-5 py-3.5">Fondo Mtto</th>
+                        <th className="px-5 py-3.5">Progreso Cuotas</th>
+                        <th className="px-5 py-3.5">Capital Financiado</th>
+                        <th className="px-5 py-3.5">Próxima Cuota</th>
+                        <th className="px-5 py-3.5 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredActive.map((c) => {
+                        const pct = Math.min(100, (c.paid_installments / (c.total_installments || 1)) * 100);
+                        return (
+                          <tr key={c.contract_id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="px-5 py-4">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-black text-sm text-slate-900 px-2 py-0.5 bg-slate-100 rounded border border-slate-200">
+                                  {c.plate}
+                                </span>
+                                {c.start_date_pending_confirmation && (
+                                  <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full" title="Fecha por confirmar">
+                                    ⚠️ Por confirmar
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-500 mt-1">
+                                {c.vehicle?.brand} {c.vehicle?.line} {c.vehicle?.model_year ? `(${c.vehicle.model_year})` : ""}
+                              </p>
+                            </td>
+
+                            <td className="px-5 py-4">
+                              <p className="font-semibold text-slate-800">
+                                {c.driver?.full_name || (c.driver_id ? `ID #${c.driver_id}` : "Sin conductor")}
+                              </p>
+                              {c.driver?.phone && (
+                                <a
+                                  href={`tel:${c.driver.phone}`}
+                                  className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-0.5"
+                                >
+                                  <Phone className="h-3 w-3" /> {c.driver.phone}
+                                </a>
+                              )}
+                            </td>
+
+                            <td className="px-5 py-4">
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <Wrench className="h-3 w-3" />
+                                {fmtCOP.format(c.maintenance_fund_accumulated)}
+                              </span>
+                            </td>
+
+                            <td className="px-5 py-4">
+                              <div className="w-36">
+                                <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+                                  <span>{c.paid_installments} / {c.total_installments}</span>
+                                  <span className="text-slate-400">{pct.toFixed(0)}%</span>
+                                </div>
+                                <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                                  <div
+                                    className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+
+                            <td className="px-5 py-4 text-xs space-y-0.5">
+                              <p className="text-slate-500">
+                                Pagado: <strong className="text-slate-800">{fmtCOP.format(c.total_principal_paid)}</strong>
+                              </p>
+                              <p className="text-slate-400">
+                                Restante: {fmtCOP.format(c.remaining_capital)}
+                              </p>
+                            </td>
+
+                            <td className="px-5 py-4 text-xs space-y-0.5">
+                              <p className="font-bold text-slate-800">
+                                {c.next_due_date || "Al día"}
+                              </p>
+                              <p className="text-slate-500">
+                                Cuota: {fmtCOP.format(c.daily_quota)}/día
+                              </p>
+                            </td>
+
+                            <td className="px-5 py-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedContractForSchedule(c);
+                                  loadContractSchedule(c.contract_id);
+                                }}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-bold shadow-sm transition-all"
+                              >
+                                <CalendarIcon className="h-3.5 w-3.5" />
+                                Ver Cronograma
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* ── Vista Móvil: Tarjetas (< md) ── */}
+                <div className="block md:hidden space-y-3">
+                  {filteredActive.map((c) => {
+                    const pct = Math.min(100, (c.paid_installments / (c.total_installments || 1)) * 100);
+                    return (
+                      <div key={c.contract_id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-black text-sm text-slate-900 px-2 py-0.5 bg-slate-100 rounded border border-slate-200">
+                              {c.plate}
+                            </span>
+                            {c.start_date_pending_confirmation && (
+                              <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                                ⚠️ Por confirmar
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                            Activo
+                          </span>
+                        </div>
+
+                        <div className="text-xs space-y-0.5">
+                          <p className="font-semibold text-slate-800">
+                            {c.driver?.full_name || (c.driver_id ? `ID #${c.driver_id}` : "Sin conductor")}
+                          </p>
+                          <p className="text-slate-500">
+                            {c.vehicle?.brand} {c.vehicle?.line} {c.vehicle?.model_year ? `(${c.vehicle.model_year})` : ""}
+                          </p>
+                        </div>
+
+                        {/* Grid 2x2 Finanzas */}
+                        <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-xl text-xs border border-slate-100">
+                          <div>
+                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Fondo Mtto</span>
+                            <span className="font-black text-emerald-700 text-sm">{fmtCOP.format(c.maintenance_fund_accumulated)}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Cuotas Pagadas</span>
+                            <span className="font-bold text-slate-800 text-sm">{c.paid_installments} / {c.total_installments}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Capital Restante</span>
+                            <span className="font-bold text-slate-700">{fmtCOP.format(c.remaining_capital)}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Próxima Cuota</span>
+                            <span className="font-bold text-blue-700">{c.next_due_date || "Al día"}</span>
+                          </div>
+                        </div>
+
+                        {/* Barra de progreso */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[11px] font-semibold text-slate-500">
+                            <span>Progreso de pago</span>
+                            <span>{pct.toFixed(0)}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                            <div className="bg-emerald-500 h-2 rounded-full" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedContractForSchedule(c);
+                            loadContractSchedule(c.contract_id);
+                          }}
+                          className="w-full h-11 bg-slate-900 hover:bg-black text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-sm transition-colors text-sm"
+                        >
+                          <CalendarIcon className="h-4 w-4" />
+                          Ver Cronograma
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* TAB 4: POR CONCILIAR */}
+        {activeTab === "unreconciled" && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 mt-6 space-y-6">
+            {/* Banner explicativo */}
+            <div className="bg-indigo-50/50 border border-indigo-200/80 rounded-2xl p-4 sm:p-5 text-xs sm:text-sm text-indigo-950 flex items-start gap-3 shadow-sm">
+              <Info className="h-5 w-5 shrink-0 text-indigo-600 mt-0.5" />
+              <div>
+                <strong className="font-bold text-indigo-900">Control de Conciliación Estricta:</strong> Estos pagos provienen de vehículos con contratos de leasing activos pero no fueron distribuidos automáticamente porque su fecha era un día festivo/sin cuota, o su valor requería confirmación. Puedes asociarlos manualmente a la cuota que corresponda con registro atómico y notas.
+              </div>
+            </div>
+
+            {/* Filtros */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-md">
+                <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={unreconciledFilterPlate}
+                  onChange={(e) => setUnreconciledFilterPlate(e.target.value)}
+                  placeholder="Filtrar por placa, conductor o referencia..."
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm outline-none focus:ring-2 focus:ring-black/60 shadow-sm"
+                />
+                {unreconciledFilterPlate && (
+                  <button
+                    onClick={() => setUnreconciledFilterPlate("")}
+                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3 justify-between sm:justify-end">
+                <span className="text-xs text-slate-500 font-medium">
+                  {filteredUnreconciled.length} {filteredUnreconciled.length === 1 ? "pago por conciliar" : "pagos por conciliar"}
+                </span>
+                <button
+                  onClick={() => loadUnreconciledPayments()}
+                  disabled={loadingUnreconciled}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loadingUnreconciled ? "animate-spin" : ""}`} />
+                  Actualizar
+                </button>
+              </div>
+            </div>
+
+            {/* Listado */}
+            {loadingUnreconciled ? (
+              <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-slate-400" />
+                <p className="text-sm font-medium">Cargando pagos por conciliar...</p>
+              </div>
+            ) : filteredUnreconciled.length === 0 ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-12 text-center shadow-sm">
+                <CheckCircle2 className="h-10 w-10 text-emerald-600 mx-auto mb-3" />
+                <h3 className="text-base font-bold text-slate-800">
+                  ¡Todos los pagos de leasing están conciliados!
+                </h3>
+                <p className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">
+                  No hay inconsistencias pendientes ni pagos libres sin distribuir en contratos activos.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {filteredUnreconciled.map((p) => {
+                  return (
+                    <div
+                      key={p.payment_id}
+                      className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-black text-sm text-slate-900 px-2 py-0.5 bg-slate-100 rounded border border-slate-200">
+                            {p.plate}
+                          </span>
+                          <span className="text-xs text-slate-400 font-mono">Pago #{p.payment_id}</span>
+                        </div>
+                        <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                          {p.payment_date}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-baseline">
+                        <div>
+                          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Monto Pagado</span>
+                          <span className="text-xl font-black text-slate-900">{fmtCOP.format(p.amount)}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Saldo Disponible</span>
+                          <span className="text-base font-bold text-emerald-700">{fmtCOP.format(p.net_free)}</span>
+                        </div>
+                      </div>
+
+                      {/* Motivo de Inconsistencia */}
+                      {p.inconsistency ? (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
+                          <div className="flex items-center gap-1.5 font-bold">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                            <span>
+                              {p.inconsistency.issue_code === "LEASING_DATE_MISMATCH"
+                                ? "Fecha sin cuota (ej. festivo)"
+                                : p.inconsistency.issue_code === "LEASING_AMOUNT_MISMATCH"
+                                ? "Monto no coincide con la cuota"
+                                : p.inconsistency.issue_code}
+                            </span>
+                          </div>
+                          <p className="text-slate-600 pl-5">{p.inconsistency.message}</p>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                          🔍 Sin distribuciones registradas. Requiere validación manual.
+                        </div>
+                      )}
+
+                      {/* Cuota sugerida si coincide la fecha */}
+                      {p.suggested_schedule && (
+                        <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-3 text-xs text-blue-900 space-y-1">
+                          <div className="flex items-center gap-1.5 font-bold text-blue-800">
+                            <Info className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                            <span>Cuota de esa fecha encontrada</span>
+                          </div>
+                          <p className="text-blue-700 pl-5">
+                            Cuota #{p.suggested_schedule.installment_no} ({p.suggested_schedule.due_date}) · Esperado: {fmtCOP.format(p.suggested_schedule.total_expected)} · Estado: {p.suggested_schedule.status}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Referencia y comprobante */}
+                      <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
+                        <span>Ref: {p.reference_number || "—"}</span>
+                        {p.proof_url && (
+                          <a
+                            href={p.proof_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-blue-600 font-semibold hover:underline flex items-center gap-1"
+                          >
+                            <ExternalLink className="h-3 w-3" /> Ver comprobante
+                          </a>
+                        )}
+                      </div>
+
+                      {/* Botón Acción Match */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMatchTargetPayment(p);
+                          setMatchTargetCuota(p.suggested_schedule as any || null);
+                          setManualPaymentId(String(p.payment_id));
+                          setManualNotes(p.inconsistency?.message ? `Match manual: ${p.inconsistency.message}` : "Match manual conciliación");
+                          setMatchModalOpen(true);
+                        }}
+                        className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-sm transition-colors text-sm"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        Conciliar Manualmente
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── MODAL PRECIO VENTA ── */}
@@ -1601,6 +2386,420 @@ export default function AdminAmortization() {
                   {generatingContract ? "Generando…" : "Generar Contrato"}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL CRONOGRAMA DE CONTRATO ACTIVO ── */}
+      {selectedContractForSchedule && (
+        <div
+          className="fixed inset-0 z-[160] flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedContractForSchedule(null);
+          }}
+        >
+          <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <span className="font-mono font-black text-lg sm:text-xl text-slate-900 px-2.5 py-1 bg-white rounded-xl border border-slate-200 shadow-sm">
+                  {selectedContractForSchedule.plate}
+                </span>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base leading-tight">
+                    Cronograma de Cuotas de Leasing
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {selectedContractForSchedule.driver?.full_name || "Conductor"} · Contrato #{selectedContractForSchedule.contract_id}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedContractForSchedule(null)}
+                className="text-slate-400 hover:text-slate-600 rounded-lg p-1.5 bg-white border border-slate-200 hover:bg-slate-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Quick Metrics Bar */}
+            <div className="px-6 py-3 bg-white border-b border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div>
+                <span className="text-[10px] text-slate-400 block uppercase font-semibold">Fondo Mtto Acumulado</span>
+                <span className="font-black text-emerald-700 text-sm">
+                  {fmtCOP.format(selectedContractForSchedule.maintenance_fund_accumulated)}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block uppercase font-semibold">Progreso Cuotas</span>
+                <span className="font-bold text-slate-800 text-sm">
+                  {selectedContractForSchedule.paid_installments} / {selectedContractForSchedule.total_installments}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block uppercase font-semibold">Capital Pendiente</span>
+                <span className="font-bold text-slate-700 text-sm">
+                  {fmtCOP.format(selectedContractForSchedule.remaining_capital)}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block uppercase font-semibold">Próximo Vencimiento</span>
+                <span className="font-bold text-blue-700 text-sm">
+                  {selectedContractForSchedule.next_due_date || "Al día"}
+                </span>
+              </div>
+            </div>
+
+            {/* Controls Bar */}
+            <div className="px-6 py-3 bg-slate-50/80 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+              {/* Segmented Filter */}
+              <div className="flex bg-slate-200/80 p-0.5 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => { setScheduleFilter("all"); setSchedulePage(1); }}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    scheduleFilter === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Todas ({contractScheduleRows.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setScheduleFilter("pending"); setSchedulePage(1); }}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    scheduleFilter === "pending" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Pendientes ({contractScheduleRows.filter((r) => r.status !== "paid").length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setScheduleFilter("paid"); setSchedulePage(1); }}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    scheduleFilter === "paid" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Pagadas ({contractScheduleRows.filter((r) => r.status === "paid").length})
+                </button>
+              </div>
+
+              {/* Botón Saltar a Próxima Cuota Pendiente */}
+              <button
+                type="button"
+                onClick={() => {
+                  const firstPendingIdx = contractScheduleRows.findIndex((r) => r.status !== "paid");
+                  if (firstPendingIdx !== -1) {
+                    setScheduleFilter("all");
+                    setSchedulePage(Math.floor(firstPendingIdx / 50) + 1);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100 font-bold transition-colors"
+              >
+                <ArrowRight className="h-3.5 w-3.5 text-amber-600" />
+                ⚡ Saltar a próxima cuota pendiente
+              </button>
+            </div>
+
+            {/* Quotas List / Table */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+              {loadingScheduleRows ? (
+                <div className="p-12 text-center text-slate-400">
+                  <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3" />
+                  <p className="text-sm font-medium">Cargando cronograma...</p>
+                </div>
+              ) : (() => {
+                const filteredRows = contractScheduleRows.filter((r) => {
+                  if (scheduleFilter === "paid") return r.status === "paid";
+                  if (scheduleFilter === "pending") return r.status !== "paid";
+                  return true;
+                });
+
+                if (filteredRows.length === 0) {
+                  return (
+                    <div className="p-12 text-center text-slate-400 bg-slate-50 rounded-2xl">
+                      <p className="text-sm">No hay cuotas para el filtro seleccionado.</p>
+                    </div>
+                  );
+                }
+
+                const pageSize = 50;
+                const totalPages = Math.ceil(filteredRows.length / pageSize);
+                const currentPage = Math.min(schedulePage, totalPages);
+                const startIndex = (currentPage - 1) * pageSize;
+                const pageRows = filteredRows.slice(startIndex, startIndex + pageSize);
+
+                return (
+                  <div className="space-y-4">
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
+                          <tr>
+                            <th className="px-4 py-3">#</th>
+                            <th className="px-4 py-3">Vencimiento</th>
+                            <th className="px-4 py-3">Estado</th>
+                            <th className="px-4 py-3">Cuota Esperada</th>
+                            <th className="px-4 py-3">Pagado</th>
+                            <th className="px-4 py-3">Observaciones / Excedente</th>
+                            <th className="px-4 py-3 text-right">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {pageRows.map((r) => {
+                            const isPaid = r.status === "paid";
+                            const isPartial = r.status === "partially_paid";
+                            const totalPaid = Number(r.maintenance_paid || 0) + Number(r.admin_paid || 0) + Number(r.interest_paid || 0) + Number(r.principal_paid || 0);
+                            return (
+                              <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="px-4 py-3 font-mono font-bold text-slate-700">
+                                  #{r.installment_no}
+                                </td>
+                                <td className="px-4 py-3 font-semibold text-slate-800">
+                                  {r.due_date}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${
+                                    isPaid
+                                      ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                                      : isPartial
+                                      ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                      : "bg-slate-100 text-slate-600 border border-slate-200"
+                                  }`}>
+                                    {isPaid ? "Pagada" : isPartial ? "Parcial" : "Pendiente"}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <span className="font-bold text-slate-900">{fmtCOP.format(r.total_expected)}</span>
+                                  <span className="block text-[10px] text-slate-400">
+                                    Mtto: {fmtCOP.format(r.maintenance_expected)} · Adm: {fmtCOP.format(r.admin_expected)}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 font-bold text-emerald-700">
+                                  {fmtCOP.format(totalPaid)}
+                                </td>
+                                <td className="px-4 py-3 space-y-1">
+                                  {r.excess_amount != null && Number(r.excess_amount) > 0 && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                      <Tag className="h-3 w-3" />
+                                      Pago excedente: +{fmtCOP.format(Number(r.excess_amount))}
+                                    </span>
+                                  )}
+                                  {r.notes && (
+                                    <p className="text-[11px] text-slate-600 italic">
+                                      📝 {r.notes}
+                                    </p>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  {isPaid && r.payment_id ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUnmatchPayment(r.id, r.payment_id!)}
+                                      disabled={unmatchingId === r.id}
+                                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-rose-800 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200 hover:bg-rose-100 transition-colors disabled:opacity-50"
+                                    >
+                                      {unmatchingId === r.id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <Undo2 className="h-3 w-3" />
+                                      )}
+                                      Desvincular
+                                    </button>
+                                  ) : !isPaid ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setMatchTargetCuota(r);
+                                        setMatchTargetPayment(null);
+                                        setManualPaymentId("");
+                                        setManualNotes(`Match manual Cuota #${r.installment_no}`);
+                                        setMatchModalOpen(true);
+                                      }}
+                                      className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 hover:bg-indigo-100 transition-colors"
+                                    >
+                                      ✏️ Match Manual
+                                    </button>
+                                  ) : null}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pagination */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-between text-xs text-slate-600 pt-2">
+                        <span>
+                          Mostrando {startIndex + 1} - {Math.min(startIndex + pageSize, filteredRows.length)} de {filteredRows.length} cuotas
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSchedulePage((p) => Math.max(1, p - 1))}
+                            disabled={currentPage <= 1}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 font-semibold"
+                          >
+                            Anterior
+                          </button>
+                          <span className="font-bold text-slate-800">
+                            Página {currentPage} de {totalPages}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setSchedulePage((p) => Math.min(totalPages, p + 1))}
+                            disabled={currentPage >= totalPages}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 font-semibold"
+                          >
+                            Siguiente
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL MATCH MANUAL / CONCILIACIÓN ATÓMICA ── */}
+      {matchModalOpen && (
+        <div
+          className="fixed inset-0 z-[170] flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-sm animate-in fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setMatchModalOpen(false);
+          }}
+        >
+          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-2xl bg-indigo-100 flex items-center justify-center shrink-0">
+                  <RefreshCw className="h-5 w-5 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base sm:text-lg">Match Manual de Leasing</h3>
+                  <p className="text-xs text-slate-500">Conciliación atómica con validación estricta</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setMatchModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 rounded-lg p-1 bg-slate-50 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Info Cuota */}
+              {matchTargetCuota ? (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs space-y-1">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Cuota Destino</span>
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-slate-900 text-sm">
+                      Cuota #{matchTargetCuota.installment_no} · Vence: {matchTargetCuota.due_date}
+                    </span>
+                    <span className="font-black text-slate-800">
+                      {fmtCOP.format(matchTargetCuota.total_expected)}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  ⚠️ No se ha seleccionado una cuota. Abre el cronograma de la placa para elegir la cuota a la que deseas abonar este pago.
+                </div>
+              )}
+
+              {/* Info Pago */}
+              {matchTargetPayment ? (
+                <div className="bg-indigo-50/50 border border-indigo-200 rounded-2xl p-4 text-xs space-y-1">
+                  <span className="text-[10px] text-indigo-400 uppercase font-bold block">Pago Seleccionado</span>
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-indigo-950 text-sm">
+                      Pago #{matchTargetPayment.payment_id} · {matchTargetPayment.plate} ({matchTargetPayment.payment_date})
+                    </span>
+                    <span className="font-black text-emerald-700">
+                      {fmtCOP.format(matchTargetPayment.net_free)}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    ID del Pago (payment_id) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={manualPaymentId}
+                    onChange={(e) => setManualPaymentId(e.target.value)}
+                    placeholder="Ej: 5510"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-black"
+                  />
+                </div>
+              )}
+
+              {/* Aviso si la fecha del pago difiere de la cuota */}
+              {matchTargetPayment && matchTargetCuota && matchTargetPayment.payment_date !== matchTargetCuota.due_date && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                  <div>
+                    <strong className="font-bold">Desfase de fechas:</strong> La fecha del pago ({matchTargetPayment.payment_date}) no coincide con la fecha de vencimiento de la cuota ({matchTargetCuota.due_date}). Es obligatorio registrar el motivo en las notas.
+                  </div>
+                </div>
+              )}
+
+              {/* Error si hubo */}
+              {matchingError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-red-500 mt-0.5" />
+                  <p>{matchingError}</p>
+                </div>
+              )}
+
+              {/* Notas / Observación */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Notas / Observación del Match <span className="text-slate-400 font-normal">(Recomendado)</span>
+                </label>
+                <textarea
+                  value={manualNotes}
+                  onChange={(e) => setManualNotes(e.target.value)}
+                  rows={3}
+                  placeholder="Explica el motivo del match manual (ej: abono autorizado por gerencia, desfase por día festivo)..."
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-xs outline-none focus:ring-2 focus:ring-black"
+                />
+              </div>
+
+              {/* Botones de acción */}
+              <div className="flex gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setMatchModalOpen(false)}
+                  disabled={matchingLoading}
+                  className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const pId = matchTargetPayment?.payment_id || Number(manualPaymentId);
+                    if (!pId || !matchTargetCuota) {
+                      setMatchingError("Debes especificar el pago y la cuota destino.");
+                      return;
+                    }
+                    handleMatchPayment(matchTargetCuota.id, pId, manualNotes);
+                  }}
+                  disabled={matchingLoading || !matchTargetCuota || (!matchTargetPayment && !manualPaymentId)}
+                  className="flex-1 flex justify-center items-center gap-2 bg-indigo-600 text-white rounded-xl py-3 font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-40 shadow-sm"
+                >
+                  {matchingLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
+                  {matchingLoading ? "Aplicando..." : "Confirmar Match"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
