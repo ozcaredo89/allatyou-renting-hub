@@ -847,73 +847,41 @@ r.get("/summary", async (req: Request, res: Response) => {
 
   const upperPlate = String(plate).toUpperCase();
 
-  // 1. Buscar contrato activo
-  const { data: contract, error: cErr } = await supabase
-    .from("leasing_contracts")
+  // 1. Consultar vista agregada oficial de Postgres
+  const { data: summary, error: sErr } = await supabase
+    .from("leasing_contracts_summary_vw")
     .select("*")
     .eq("plate", upperPlate)
-    .eq("status", "active")
     .maybeSingle();
 
-  if (cErr) return res.status(500).json({ error: cErr.message });
-  if (!contract) return res.json({ has_leasing: false });
-
-  // 2. Estadísticas del cronograma
-  const { data: rows, error: sErr } = await supabase
-    .from("leasing_schedule")
-    .select("status, maintenance_expected, maintenance_paid, admin_expected, admin_paid, interest_expected, interest_paid, principal_expected, principal_paid, due_date")
-    .eq("contract_id", contract.id)
-    .order("due_date", { ascending: false });
-
   if (sErr) return res.status(500).json({ error: sErr.message });
+  if (!summary) return res.json({ has_leasing: false });
 
-  const schedule = rows ?? [];
-  const totalInstallments = schedule.length;
-  const paidInstallments = schedule.filter((r: any) => r.status === "paid").length;
-  const pendingInstallments = totalInstallments - paidInstallments;
-
-  const totalExpected = schedule.reduce((s: number, r: any) =>
-    s + Number(r.maintenance_expected) + Number(r.admin_expected) + Number(r.interest_expected) + Number(r.principal_expected), 0);
-
-  const totalCollected = schedule.reduce((s: number, r: any) =>
-    s + Number(r.maintenance_paid) + Number(r.admin_paid) + Number(r.interest_paid) + Number(r.principal_paid), 0);
-
-  const maintenanceFundAccumulated = schedule.reduce((s: number, r: any) =>
-    s + Number(r.maintenance_paid), 0);
-
-  const pendingBalance = totalExpected - totalCollected;
-
-  // Fecha de la última cuota pendiente = fecha estimada de finalización
-  const lastPending = [...schedule].reverse().find((r: any) => r.status !== "paid");
-  const estimatedEndDate = lastPending?.due_date ?? null;
-
-  // Cuota diaria contractual obtenida del cronograma de leasing
-  const firstPending = [...schedule].reverse().find((r: any) => r.status !== "paid") || schedule[0];
-  const dailyRate = firstPending
-    ? Math.round(
-        Number(firstPending.maintenance_expected) +
-        Number(firstPending.admin_expected) +
-        Number(firstPending.interest_expected) +
-        Number(firstPending.principal_expected)
-      )
-    : null;
+  // 2. Obtener purchase_price desde leasing_contracts
+  const { data: contract } = await supabase
+    .from("leasing_contracts")
+    .select("purchase_price")
+    .eq("id", summary.contract_id)
+    .single();
 
   return res.json({
     has_leasing: true,
-    contract_id: contract.id,
-    plate: upperPlate,
-    purchase_price: Number(contract.purchase_price),
-    financed_capital: Number(contract.financed_capital),
-    start_date: contract.start_date,
-    status: contract.status,
-    daily_rate: dailyRate,
-    total_installments: totalInstallments,
-    paid_installments: paidInstallments,
-    pending_installments: pendingInstallments,
-    total_collected: Math.round(totalCollected),
-    pending_balance: Math.round(pendingBalance),
-    maintenance_fund_accumulated: Math.round(maintenanceFundAccumulated),
-    estimated_end_date: estimatedEndDate,
+    contract_id: summary.contract_id,
+    plate: summary.plate,
+    purchase_price: Number(contract?.purchase_price ?? summary.financed_capital),
+    financed_capital: Number(summary.financed_capital),
+    start_date: summary.start_date,
+    status: summary.contract_status,
+    daily_rate: Number(summary.daily_quota),
+    total_installments: Number(summary.total_installments),
+    paid_installments: Number(summary.paid_installments),
+    pending_installments: Number(summary.pending_installments),
+    total_collected: Math.round(Number(summary.total_collected)),
+    pending_balance: Math.round(Number(summary.remaining_capital)),
+    remaining_capital: Math.round(Number(summary.remaining_capital)),
+    maintenance_fund_accumulated: Math.round(Number(summary.maintenance_fund_accumulated)),
+    estimated_end_date: summary.estimated_end_date,
+    next_due_date: summary.next_due_date,
   });
 });
 
