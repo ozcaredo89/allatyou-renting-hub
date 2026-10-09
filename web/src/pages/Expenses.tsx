@@ -4,11 +4,13 @@ import { Pencil, X, ChevronDown, AlertCircle, CheckCircle2, Download, Search, Ro
 import { ImageViewer } from "../components/ImageViewer";
 import { requestWithBasicAuth } from "../lib/auth";
 import { resolveSubmission, normalizePlate, parseServerError, type FleetVehicle } from "../lib/resolveSubmission";
+import { generateDebitNotePDF } from "../utils/debitNotePdf";
 
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
+const getTodayBogota = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date());
 
 const SUPPORT_WA_NUMBER = "573113738912";
 
@@ -33,6 +35,14 @@ type ExpenseRow = {
   attachment_url: string | null;
   expense_attachments?: { kind: "evidence" | "invoice"; url: string }[];
   expense_vehicles: { plate: string; share_amount: number }[];
+  leasing_debit_note?: {
+    id: number;
+    contract_id: number;
+    amount_deducted: number;
+    excess_amount: number;
+    excess_payment_method: string;
+    advance_id: number | null;
+  } | null;
 };
 
 export default function Expenses() {
@@ -151,7 +161,7 @@ export default function Expenses() {
   }, [selectedIds, recent]);
 
   // --- FORMULARIO CREAR ---
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(getTodayBogota());
   const [description, setDescription] = useState("");
   const [plates, setPlates] = useState<string[]>([]);
   const [plateInput, setPlateInput] = useState("");
@@ -292,6 +302,74 @@ export default function Expenses() {
     showToast(`✓ ${p} agregado al gasto`);
   }
 
+  // --- INTEGRACIÓN LEASING Y NOTA DÉBITO ---
+  const [leasingSummary, setLeasingSummary] = useState<any>(null);
+  const [applyToLeasing, setApplyToLeasing] = useState(false);
+  const [excessMethod, setExcessMethod] = useState<"cash" | "advance">("cash");
+  const [advanceInstallments, setAdvanceInstallments] = useState(10);
+  const [advanceStartDate, setAdvanceStartDate] = useState(getTodayBogota());
+  const [createdDebitNote, setCreatedDebitNote] = useState<any>(null);
+  const [debitNoteError, setDebitNoteError] = useState<string | null>(null);
+
+  // Efecto para detectar si la placa seleccionada tiene contrato de Leasing activo
+  useEffect(() => {
+    const effectivePlate = plates.length === 1 ? plates[0] : (plates.length === 0 && plateFormatValid ? normalizedPlate : null);
+    if (effectivePlate) {
+      requestWithBasicAuth(`${API}/leasing/summary?plate=${effectivePlate}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          if (data && data.has_leasing) {
+            setLeasingSummary(data);
+            setApplyToLeasing(true);
+          } else {
+            setLeasingSummary(null);
+            setApplyToLeasing(false);
+          }
+        })
+        .catch(() => {
+          setLeasingSummary(null);
+          setApplyToLeasing(false);
+        });
+    } else {
+      setLeasingSummary(null);
+      setApplyToLeasing(false);
+    }
+  }, [plates, plateInput, plateFormatValid, normalizedPlate]);
+
+  const handleDownloadDebitNote = async (expense: ExpenseRow) => {
+    if (!expense.leasing_debit_note) return;
+    const deb = expense.leasing_debit_note;
+    try {
+      const res = await requestWithBasicAuth(`${API}/leasing/debit-notes/${deb.id}`);
+      if (!res.ok) throw new Error("Error cargando nota débito");
+      const json = await res.json();
+      const fullNote = json.debit_note;
+      generateDebitNotePDF({
+        id: fullNote.id,
+        contract_id: fullNote.contract_id,
+        plate: fullNote.plate,
+        driver_name: fullNote.drivers?.full_name ?? null,
+        driver_document: fullNote.drivers?.document_number ?? null,
+        driver_phone: fullNote.drivers?.phone ?? null,
+        date: fullNote.expenses?.date ?? fullNote.created_at?.slice(0, 10),
+        created_at: fullNote.created_at,
+        expense_item: fullNote.expenses?.item ?? expense.item,
+        expense_category: fullNote.expenses?.category ?? expense.category,
+        total_expense_amount: Number(fullNote.total_expense_amount),
+        amount_deducted: Number(fullNote.amount_deducted),
+        balance_before: Number(fullNote.balance_before),
+        balance_after: Number(fullNote.balance_after),
+        excess_amount: Number(fullNote.excess_amount),
+        excess_payment_method: fullNote.excess_payment_method,
+        advance_id: fullNote.advance_id,
+        notes: fullNote.notes,
+      });
+    } catch (err) {
+      console.error("Error al descargar nota débito:", err);
+      alert("No se pudo descargar la nota débito.");
+    }
+  };
+
   async function uploadMany(files: File[]): Promise<string[]> {
     const urls: string[] = [];
     for (const f of files) {
@@ -351,13 +429,33 @@ export default function Expenses() {
 
       const finalTotal = finalCart.reduce((sum, c) => sum + c.amount, 0);
       // description: cadena vacía en lugar de null para respetar el NOT NULL constraint de la DB
-      const body = { date, description: description || "", items: finalCart, plates: finalPlates, attachments };
+      const shouldApplyLeasing = Boolean(applyToLeasing && leasingSummary?.has_leasing && finalPlates.length === 1);
+      const body = {
+        date,
+        description: description || "",
+        items: finalCart,
+        plates: finalPlates,
+        attachments,
+        apply_to_leasing: shouldApplyLeasing,
+        leasing_excess_method: excessMethod,
+        leasing_advance_installments: advanceInstallments,
+        leasing_advance_start_date: advanceStartDate,
+      };
       const rs = await requestWithBasicAuth(`${API}/expenses`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       if (!rs.ok) {
         const detail = await rs.text();
         throw new Error(detail);
+      }
+
+      const resData = await rs.json().catch(() => null);
+      if (resData?.debit_note) {
+        setCreatedDebitNote(resData.debit_note);
+        setDebitNoteError(null);
+      } else {
+        setCreatedDebitNote(null);
+        setDebitNoteError(resData?.debit_note_error || null);
       }
 
       const firstItemName = finalCart.length === 1 ? finalCart[0].item : `Factura Varia (${finalCart.length} items)`;
@@ -367,6 +465,7 @@ export default function Expenses() {
 
       // Reset form
       setCart([]); setItem(""); setCategory("Mantenimiento"); setDescription(""); setAmountStr(""); setPlates([]); setPlateInput(""); setEvidenceFiles([]); setInvoiceFiles([]);
+      setApplyToLeasing(false); setLeasingSummary(null); setExcessMethod("cash");
       setSubmitError(null); setFieldErrors({});
 
     } catch (err) {
@@ -900,6 +999,162 @@ export default function Expenses() {
             )}
           </div>
 
+          {/* SECCIÓN INTERACTIVA LEASING: CRUCE CONTRA FONDO DE MANTENIMIENTO */}
+          {leasingSummary && leasingSummary.has_leasing && (
+            <div className="md:col-span-4 rounded-2xl border-2 border-amber-300 bg-amber-50/80 p-5 shadow-xs transition-all">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-amber-200">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500 text-white shadow-xs text-xl">
+                    🚗
+                  </span>
+                  <div>
+                    <h4 className="font-bold text-amber-950 text-base flex items-center gap-2">
+                      Vehículo en Contrato de Leasing ({leasingSummary.plate})
+                      <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 border border-amber-300">
+                        Activo
+                      </span>
+                    </h4>
+                    <p className="text-xs text-amber-800">
+                      {leasingSummary.driver_name ? `Conductor: ${leasingSummary.driver_name}` : "Contrato de leasing activo"}
+                      {leasingSummary.driver_document && ` · C.C. ${leasingSummary.driver_document}`}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-white px-4 py-2 rounded-xl border border-amber-200 shadow-xs text-right">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Fondo Mtto. Disponible</p>
+                  <p className="text-lg font-black text-amber-700">
+                    ${fmtCOP.format(Number(leasingSummary.maintenance_fund_available ?? leasingSummary.maintenance_fund_accumulated ?? 0))}
+                  </p>
+                </div>
+              </div>
+
+              {/* Checkbox para autorizar deducción del fondo */}
+              <div className="mt-4 flex items-start gap-3 bg-white/70 p-3.5 rounded-xl border border-amber-200">
+                <input
+                  type="checkbox"
+                  id="applyToLeasing"
+                  checked={applyToLeasing}
+                  onChange={e => setApplyToLeasing(e.target.checked)}
+                  className="mt-1 h-5 w-5 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                />
+                <label htmlFor="applyToLeasing" className="text-sm font-bold text-slate-800 cursor-pointer flex-1">
+                  Descontar este gasto del Fondo de Mantenimiento y emitir Nota Débito
+                  <span className="block text-xs font-normal text-slate-600 mt-0.5">
+                    Se deducirá del ahorro acumulado de cuotas y quedará constancia en el comprobante oficial.
+                  </span>
+                </label>
+              </div>
+
+              {/* Desglose contable cuando está marcado */}
+              {applyToLeasing && (
+                <div className="mt-4 pt-4 border-t border-amber-200 space-y-3">
+                  {(() => {
+                    const effectiveTotal = total > 0 ? total : (Number(amountStr.replace(/[^\d]/g, "")) || 0);
+                    const avail = Number(leasingSummary.maintenance_fund_available ?? leasingSummary.maintenance_fund_accumulated ?? 0);
+                    const covered = Math.min(effectiveTotal, avail);
+                    const excess = Math.max(0, effectiveTotal - avail);
+
+                    return (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                          <div className="bg-white p-3 rounded-xl border border-emerald-200 flex justify-between items-center">
+                            <span className="text-slate-600 font-medium">Cubierto por el Fondo (Débito):</span>
+                            <span className="font-black text-emerald-700 text-sm">${fmtCOP.format(covered)}</span>
+                          </div>
+
+                          <div className={`p-3 rounded-xl border flex justify-between items-center ${excess > 0 ? "bg-red-50 border-red-200" : "bg-white border-amber-200"}`}>
+                            <span className={`${excess > 0 ? "text-red-700 font-bold" : "text-slate-600 font-medium"}`}>
+                              {excess > 0 ? "⚠️ Excedente no cubierto:" : "Excedente a cubrir:"}
+                            </span>
+                            <span className={`font-black text-sm ${excess > 0 ? "text-red-700" : "text-slate-700"}`}>
+                              ${fmtCOP.format(excess)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Opciones cuando el fondo no alcanza */}
+                        {excess > 0 && (
+                          <div className="bg-white p-4 rounded-xl border border-red-200 mt-3 space-y-3">
+                            <p className="text-xs font-bold text-red-900 uppercase tracking-wide flex items-center gap-1.5">
+                              <span>⚠️</span> El fondo disponible no alcanza. Selecciona cómo se cubrirá el excedente de ${fmtCOP.format(excess)}:
+                            </p>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${excessMethod === "cash" ? "border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-400" : "border-slate-200 hover:bg-slate-50"}`}>
+                                <input
+                                  type="radio"
+                                  name="excessMethod"
+                                  value="cash"
+                                  checked={excessMethod === "cash"}
+                                  onChange={() => setExcessMethod("cash")}
+                                  className="mt-0.5 text-emerald-600"
+                                />
+                                <div>
+                                  <p className="text-xs font-bold text-slate-800">1. Pago en Efectivo</p>
+                                  <p className="text-[11px] text-slate-500 mt-0.5">El conductor paga la diferencia de contado en caja o taller.</p>
+                                </div>
+                              </label>
+
+                              <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${excessMethod === "advance" ? "border-blue-500 bg-blue-50/60 ring-2 ring-blue-400" : "border-slate-200 hover:bg-slate-50"}`}>
+                                <input
+                                  type="radio"
+                                  name="excessMethod"
+                                  value="advance"
+                                  checked={excessMethod === "advance"}
+                                  onChange={() => setExcessMethod("advance")}
+                                  className="mt-0.5 text-blue-600"
+                                />
+                                <div>
+                                  <p className="text-xs font-bold text-slate-800">2. Abrir Anticipo Operativo</p>
+                                  <p className="text-[11px] text-slate-500 mt-0.5">La empresa financia el saldo restante como un préstamo diferido a cuotas.</p>
+                                </div>
+                              </label>
+                            </div>
+
+                            {/* Configuración del Anticipo si se selecciona opción 2 */}
+                            {excessMethod === "advance" && (
+                              <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-3 bg-blue-50/60 p-3 rounded-xl border border-blue-200">
+                                <div>
+                                  <label className="block text-[11px] font-bold text-slate-700 mb-1"># Cuotas Diarias</label>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="60"
+                                    value={advanceInstallments}
+                                    onChange={e => setAdvanceInstallments(Math.max(1, parseInt(e.target.value) || 1))}
+                                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Fecha Primer Cobro</label>
+                                  <input
+                                    type="date"
+                                    value={advanceStartDate}
+                                    onChange={e => setAdvanceStartDate(e.target.value)}
+                                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-800"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Cuota Diaria Estimada</label>
+                                  <div className="bg-white border border-blue-200 rounded-lg px-2.5 py-1.5 text-xs font-black text-blue-700">
+                                    ${fmtCOP.format(Math.round(excess / advanceInstallments))}/día
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="md:col-span-4 pt-4 border-t border-slate-100 mt-2">
             {/* Error inline (en lugar de alert()) */}
             {submitError && (
@@ -1180,6 +1435,21 @@ export default function Expenses() {
                         {plates.map(p => <span key={p} className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">{p}</span>)}
                       </div>
 
+                      {/* Nota Débito Leasing */}
+                      {e.leasing_debit_note && (
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadDebitNote(e)}
+                          className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-0.5 rounded-full border border-emerald-300 transition-colors cursor-pointer shadow-xs"
+                          title="Descargar comprobante oficial de Nota Débito"
+                        >
+                          <span>📄 Nota Débito #ND-{String(e.leasing_debit_note.id).padStart(5, "0")}</span>
+                          <span className="text-[10px] text-emerald-600 font-semibold">
+                            (${fmtCOP.format(Number(e.leasing_debit_note.amount_deducted))})
+                          </span>
+                        </button>
+                      )}
+
                       {/* Alertas de Faltantes */}
                       {!hasEvidence && (
                         <span className="flex items-center gap-1 text-[10px] font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-100">
@@ -1259,17 +1529,95 @@ export default function Expenses() {
       {/* --- MODALES --- */}
       <BillGeneratorModal isOpen={showBillModal} onClose={() => setShowBillModal(false)} selectedExpenses={recent.filter(r => selectedIds.includes(r.id))} />
 
-      {/* MODAL NOTIFICACIÓN WHATSAPP */}
+      {/* MODAL NOTIFICACIÓN / NOTA DÉBITO / WHATSAPP */}
       {showModal && saved && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
-            <div className="mx-auto w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4 text-green-600"><CheckCircle2 className="w-8 h-8" /></div>
-            <h2 className="text-xl font-bold text-center mb-1">¡Gasto Guardado!</h2>
-            <p className="text-slate-500 text-center text-sm mb-6">¿Deseas enviar el reporte al grupo de WhatsApp?</p>
+            <div className="mx-auto w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4 text-green-600">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-bold text-center mb-1">
+              {createdDebitNote ? "¡Gasto Guardado y Nota Débito Generada!" : "¡Gasto Guardado!"}
+            </h2>
+            <p className="text-slate-500 text-center text-sm mb-4">
+              {createdDebitNote
+                ? `Se cruzó el gasto contra el fondo de mantenimiento de la placa ${saved.plates.join(", ")}.`
+                : "¿Deseas enviar el reporte al grupo de WhatsApp?"}
+            </p>
+
+            {/* Aviso si falló la Nota Débito pero se guardó el gasto */}
+            {debitNoteError && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4 text-xs text-amber-900 flex items-start gap-2.5 text-left">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">Aviso sobre el fondo de leasing</p>
+                  <p className="mt-0.5 text-amber-800">{debitNoteError}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Tarjeta resumen de la Nota Débito */}
+            {createdDebitNote && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-4 text-xs space-y-2">
+                <div className="flex justify-between items-center font-bold text-emerald-950 pb-2 border-b border-emerald-200">
+                  <span>Nota Débito #ND-{String(createdDebitNote.debit_note_id || createdDebitNote.id).padStart(5, "0")}</span>
+                  <span className="text-[10px] bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full uppercase">Registrada</span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Fondo disponible antes:</span>
+                  <span className="font-semibold">${fmtCOP.format(Number(createdDebitNote.balance_before))}</span>
+                </div>
+                <div className="flex justify-between text-emerald-800 font-bold">
+                  <span>Deducido del fondo de mtto:</span>
+                  <span>-${fmtCOP.format(Number(createdDebitNote.amount_deducted))}</span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Fondo disponible restante:</span>
+                  <span className="font-bold">${fmtCOP.format(Number(createdDebitNote.balance_after))}</span>
+                </div>
+
+                {Number(createdDebitNote.excess_amount) > 0 && (
+                  <div className="pt-2 border-t border-emerald-200/80 text-amber-900 flex justify-between items-center font-bold">
+                    <span>Excedente ({createdDebitNote.excess_payment_method === "advance" ? "Anticipo Operativo" : "Efectivo"}):</span>
+                    <span>${fmtCOP.format(Number(createdDebitNote.excess_amount))}</span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    generateDebitNotePDF({
+                      id: Number(createdDebitNote.debit_note_id || createdDebitNote.id),
+                      contract_id: Number(createdDebitNote.contract_id),
+                      plate: String(createdDebitNote.plate || saved.plates[0]),
+                      driver_name: leasingSummary?.driver_name,
+                      driver_document: leasingSummary?.driver_document,
+                      driver_phone: leasingSummary?.driver_phone,
+                      date: saved.date,
+                      expense_item: saved.item,
+                      expense_category: saved.category,
+                      total_expense_amount: Number(createdDebitNote.total_expense_amount || saved.total),
+                      amount_deducted: Number(createdDebitNote.amount_deducted),
+                      balance_before: Number(createdDebitNote.balance_before),
+                      balance_after: Number(createdDebitNote.balance_after),
+                      excess_amount: Number(createdDebitNote.excess_amount || 0),
+                      excess_payment_method: createdDebitNote.excess_payment_method,
+                      advance_id: createdDebitNote.advance_id,
+                      notes: `Gasto: ${saved.item}`
+                    });
+                  }}
+                  className="w-full mt-2 flex items-center justify-center gap-2 bg-slate-900 hover:bg-black text-white py-2.5 px-3 rounded-lg font-bold text-xs shadow-sm transition-all cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Descargar Comprobante Nota Débito (PDF)</span>
+                </button>
+              </div>
+            )}
+
             <div className="flex gap-2">
-              <button onClick={() => setShowModal(false)} className="flex-1 rounded-xl border px-4 py-3 font-medium hover:bg-slate-50">Cerrar</button>
-              <button onClick={copyMessage} className="flex-1 rounded-xl border px-4 py-3 font-medium hover:bg-slate-50">Copiar Texto</button>
-              <button onClick={sendWhatsapp} className="flex-1 rounded-xl bg-green-600 text-white px-4 py-3 font-bold hover:bg-green-700 shadow-lg shadow-green-200">WhatsApp</button>
+              <button onClick={() => setShowModal(false)} className="flex-1 rounded-xl border px-4 py-3 font-medium hover:bg-slate-50 cursor-pointer">Cerrar</button>
+              <button onClick={copyMessage} className="flex-1 rounded-xl border px-4 py-3 font-medium hover:bg-slate-50 cursor-pointer">Copiar Texto</button>
+              <button onClick={sendWhatsapp} className="flex-1 rounded-xl bg-green-600 text-white px-4 py-3 font-bold hover:bg-green-700 shadow-lg shadow-green-200 cursor-pointer">WhatsApp</button>
             </div>
           </div>
         </div>

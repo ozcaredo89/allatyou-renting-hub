@@ -8,6 +8,7 @@ import { TopDwellLocations } from "../components/TopDwellLocations";
 import FleetMap from "../components/FleetMap";
 import { GlobalOilReport } from "../components/GlobalOilReport";
 import GlobalMileageReport from "../components/GlobalMileageReport";
+import { generateDebitNotePDF } from "../utils/debitNotePdf";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -254,6 +255,8 @@ export default function AdminVehicles() {
   // --- ESTADOS LEASING DRAWER ---
   const [leasingDrawer, setLeasingDrawer] = useState<{ plate: string; contractId?: number } | null>(null);
   const [leasingSchedule, setLeasingSchedule] = useState<any[]>([]);
+  const [leasingDebitNotes, setLeasingDebitNotes] = useState<any[]>([]);
+  const [leasingTab, setLeasingTab] = useState<'schedule' | 'debitNotes'>('schedule');
   const [leasingSummary, setLeasingSummary] = useState<any>(null);
   const [loadingLeasingSchedule, setLoadingLeasingSchedule] = useState(false);
 
@@ -280,6 +283,8 @@ export default function AdminVehicles() {
     setLeasingDrawer({ plate });
     setLoadingLeasingSchedule(true);
     setLeasingSchedule([]);
+    setLeasingDebitNotes([]);
+    setLeasingTab('schedule');
     setLeasingSummary(null);
     try {
       const auth = ensureBasicAuth();
@@ -297,6 +302,12 @@ export default function AdminVehicles() {
           if (rsSch.ok) {
             const schData = await rsSch.json();
             setLeasingSchedule(schData.items || []);
+          }
+          // Get debit notes
+          const rsDeb = await fetch(`${API}/leasing/contracts/${sum.contract_id}/debit-notes`, { headers });
+          if (rsDeb.ok) {
+            const debData = await rsDeb.json();
+            setLeasingDebitNotes(debData.items || []);
           }
         }
       }
@@ -1852,8 +1863,14 @@ export default function AdminVehicles() {
                 <p className="text-lg font-black text-emerald-700">{fmtCOP2.format(leasingSummary.total_collected ?? 0)}</p>
               </div>
               <div className="bg-amber-50 rounded-xl p-3 text-center">
-                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Fondo Mtto</p>
-                <p className="text-lg font-black text-amber-700">{fmtCOP2.format(leasingSummary.maintenance_fund_accumulated ?? 0)}</p>
+                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Fondo Mtto (Disponible)</p>
+                <p className="text-lg font-black text-amber-700">
+                  {fmtCOP2.format(leasingSummary.maintenance_fund_available ?? leasingSummary.maintenance_fund_accumulated ?? 0)}
+                </p>
+                <p className="text-[9px] text-amber-600">
+                  {fmtCOP2.format(leasingSummary.maintenance_fund_accumulated ?? 0)} rec.
+                  {Number(leasingSummary.maintenance_fund_spent) > 0 ? ` · ${fmtCOP2.format(leasingSummary.maintenance_fund_spent)} gast.` : ''}
+                </p>
               </div>
               {leasingSummary.estimated_end_date && (
                 <div className="col-span-2 bg-blue-50 rounded-xl p-3 flex items-center justify-between">
@@ -1867,69 +1884,186 @@ export default function AdminVehicles() {
             </div>
           )}
 
-          {/* Cronograma */}
+          {/* Pestañas de Navegación del Drawer */}
+          <div className="flex border-b border-slate-200 bg-slate-50 px-6 pt-2 shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => setLeasingTab('schedule')}
+              className={`px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                leasingTab === 'schedule'
+                  ? 'border-emerald-600 text-emerald-800 bg-white rounded-t-lg'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Cronograma de Cuotas ({leasingSchedule.length})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setLeasingTab('debitNotes')}
+              className={`px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+                leasingTab === 'debitNotes'
+                  ? 'border-amber-600 text-amber-900 bg-white rounded-t-lg'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <span>Notas Débito de Mtto</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-black ${
+                leasingDebitNotes.length > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {leasingDebitNotes.length}
+              </span>
+            </button>
+          </div>
+
+          {/* Contenido según Pestaña */}
           <div className="flex-1 overflow-y-auto">
-            {loadingLeasingSchedule ? (
-              <div className="flex items-center justify-center h-40 text-slate-400">
-                <div className="text-center">
-                  <div className="h-8 w-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                  Cargando cronograma...
-                </div>
-              </div>
-            ) : leasingSchedule.length === 0 ? (
-              <div className="flex items-center justify-center h-40 text-slate-400 text-sm">
-                No hay cuotas en el cronograma.
+            {leasingTab === 'debitNotes' ? (
+              <div>
+                {leasingDebitNotes.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-slate-400 text-sm">
+                    <span className="text-3xl mb-2">📑</span>
+                    <p className="font-semibold text-slate-600">No hay notas débito registradas</p>
+                    <p className="text-xs text-slate-400 mt-1">Cuando se descuente un gasto del fondo, aparecerá aquí.</p>
+                  </div>
+                ) : (
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
+                      <tr>
+                        <th className="px-4 py-3 text-left font-bold text-slate-600"># Nota</th>
+                        <th className="px-4 py-3 text-left font-bold text-slate-600">Fecha</th>
+                        <th className="px-4 py-3 text-left font-bold text-slate-600">Gasto / Concepto</th>
+                        <th className="px-4 py-3 text-right font-bold text-slate-600">Deducido Fondo</th>
+                        <th className="px-4 py-3 text-right font-bold text-slate-600">Excedente</th>
+                        <th className="px-4 py-3 text-center font-bold text-slate-600">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {leasingDebitNotes.map((d: any) => (
+                        <tr key={d.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3 font-mono font-bold text-slate-800">
+                            ND-{String(d.id).padStart(5, '0')}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {d.created_at ? d.created_at.slice(0, 10) : '—'}
+                          </td>
+                          <td className="px-4 py-3 text-slate-800 font-medium">
+                            {d.expenses?.item || d.notes || 'Mantenimiento'}
+                          </td>
+                          <td className="px-4 py-3 text-right font-bold text-emerald-700">
+                            {fmtCOP2.format(Number(d.amount_deducted))}
+                          </td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-700">
+                            {Number(d.excess_amount) > 0 ? (
+                              <span className="text-red-600 font-bold">
+                                {fmtCOP2.format(Number(d.excess_amount))} ({d.excess_payment_method === 'advance' ? 'Anticipo' : 'Efectivo'})
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                generateDebitNotePDF({
+                                  id: d.id,
+                                  contract_id: d.contract_id,
+                                  plate: d.plate,
+                                  driver_name: leasingSummary?.driver_name,
+                                  driver_document: leasingSummary?.driver_document,
+                                  driver_phone: leasingSummary?.driver_phone,
+                                  date: d.created_at?.slice(0, 10),
+                                  created_at: d.created_at,
+                                  expense_item: d.expenses?.item,
+                                  expense_category: d.expenses?.category,
+                                  total_expense_amount: Number(d.total_expense_amount),
+                                  amount_deducted: Number(d.amount_deducted),
+                                  balance_before: Number(d.balance_before),
+                                  balance_after: Number(d.balance_after),
+                                  excess_amount: Number(d.excess_amount || 0),
+                                  excess_payment_method: d.excess_payment_method,
+                                  advance_id: d.advance_id,
+                                  notes: d.notes,
+                                });
+                              }}
+                              className="inline-flex items-center gap-1 bg-slate-900 hover:bg-black text-white px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-xs cursor-pointer transition-colors"
+                            >
+                              <span>PDF</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             ) : (
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
-                  <tr>
-                    <th className="px-4 py-3 text-left font-bold text-slate-600">#</th>
-                    <th className="px-4 py-3 text-left font-bold text-slate-600">Fecha</th>
-                    <th className="px-4 py-3 text-right font-bold text-slate-600">Mantenimiento</th>
-                    <th className="px-4 py-3 text-right font-bold text-slate-600">Admin</th>
-                    <th className="px-4 py-3 text-right font-bold text-slate-600">Interés</th>
-                    <th className="px-4 py-3 text-right font-bold text-slate-600">Capital</th>
-                    <th className="px-4 py-3 text-center font-bold text-slate-600">Estado</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {leasingSchedule.map((row: any) => {
-                    const isPaid = row.status === 'paid';
-                    const isPartial = row.status === 'partially_paid';
-                    return (
-                      <tr key={row.id} className={`hover:bg-slate-50 transition-colors ${isPaid ? 'opacity-60' : ''}`}>
-                        <td className="px-4 py-2.5 font-mono text-slate-500">{row.installment_no}</td>
-                        <td className="px-4 py-2.5 font-medium text-slate-800">{row.due_date}</td>
-                        <td className="px-4 py-2.5 text-right">
-                          <span className={isPaid ? 'text-emerald-600' : 'text-slate-700'}>
-                            {fmtCOP2.format(Number(isPaid || isPartial ? row.maintenance_paid : row.maintenance_expected))}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
-                          <span className={isPaid ? 'text-emerald-600' : 'text-slate-700'}>
-                            {fmtCOP2.format(Number(isPaid || isPartial ? row.admin_paid : row.admin_expected))}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-red-500">
-                          {fmtCOP2.format(Number(isPaid || isPartial ? row.interest_paid : row.interest_expected))}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-blue-600 font-medium">
-                          {fmtCOP2.format(Number(isPaid || isPartial ? row.principal_paid : row.principal_expected))}
-                        </td>
-                        <td className="px-4 py-2.5 text-center">
-                          {isPaid
-                            ? <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">Pagada ✓</span>
-                            : isPartial
-                            ? <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-full">Parcial</span>
-                            : <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-full">Pendiente</span>
-                          }
-                        </td>
+              /* Cronograma de Cuotas */
+              <>
+                {loadingLeasingSchedule ? (
+                  <div className="flex items-center justify-center h-40 text-slate-400">
+                    <div className="text-center">
+                      <div className="h-8 w-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                      Cargando cronograma...
+                    </div>
+                  </div>
+                ) : leasingSchedule.length === 0 ? (
+                  <div className="flex items-center justify-center h-40 text-slate-400 text-sm">
+                    No hay cuotas en el cronograma.
+                  </div>
+                ) : (
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
+                      <tr>
+                        <th className="px-4 py-3 text-left font-bold text-slate-600">#</th>
+                        <th className="px-4 py-3 text-left font-bold text-slate-600">Fecha</th>
+                        <th className="px-4 py-3 text-right font-bold text-slate-600">Mantenimiento</th>
+                        <th className="px-4 py-3 text-right font-bold text-slate-600">Admin</th>
+                        <th className="px-4 py-3 text-right font-bold text-slate-600">Interés</th>
+                        <th className="px-4 py-3 text-right font-bold text-slate-600">Capital</th>
+                        <th className="px-4 py-3 text-center font-bold text-slate-600">Estado</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {leasingSchedule.map((row: any) => {
+                        const isPaid = row.status === 'paid';
+                        const isPartial = row.status === 'partially_paid';
+                        return (
+                          <tr key={row.id} className={`hover:bg-slate-50 transition-colors ${isPaid ? 'opacity-60' : ''}`}>
+                            <td className="px-4 py-2.5 font-mono text-slate-500">{row.installment_no}</td>
+                            <td className="px-4 py-2.5 font-medium text-slate-800">{row.due_date}</td>
+                            <td className="px-4 py-2.5 text-right">
+                              <span className={isPaid ? 'text-emerald-600' : 'text-slate-700'}>
+                                {fmtCOP2.format(Number(isPaid || isPartial ? row.maintenance_paid : row.maintenance_expected))}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-right">
+                              <span className={isPaid ? 'text-emerald-600' : 'text-slate-700'}>
+                                {fmtCOP2.format(Number(isPaid || isPartial ? row.admin_paid : row.admin_expected))}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-red-500">
+                              {fmtCOP2.format(Number(isPaid || isPartial ? row.interest_paid : row.interest_expected))}
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-blue-600 font-medium">
+                              {fmtCOP2.format(Number(isPaid || isPartial ? row.principal_paid : row.principal_expected))}
+                            </td>
+                            <td className="px-4 py-2.5 text-center">
+                              {isPaid
+                                ? <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">Pagada ✓</span>
+                                : isPartial
+                                ? <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-full">Parcial</span>
+                                : <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-full">Pendiente</span>
+                              }
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </>
             )}
           </div>
         </div>

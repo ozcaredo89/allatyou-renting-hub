@@ -105,7 +105,6 @@ app.use("/uploads", uploads);
 app.use("/payments", payments);
 app.use("/internal", emailTestRouter);
 app.use("/internal", whatsappTestRouter);
-app.use("/expenses", expenses);
 app.use("/investments", investmentsRoutes);
 app.use("/metrics", metricsRouter);
 app.use("/no-pay", noPayRoutes);
@@ -152,6 +151,7 @@ app.use("/audits", basicAuth, auditsRoutes);
 app.use("/inventory", basicAuth, inventoryRoutes);
 app.use("/oracle", basicAuth, oracleRoutes);
 app.use("/fleet-map", basicAuth, fleetMapRoutes);
+app.use("/expenses", basicAuth, expenses);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

@@ -112,8 +112,21 @@ async function checkExpenseAuditRules(expenseId: number, item: string, category:
   }
 }
 
+async function rollbackExpenses(expenseIds: number[]) {
+  if (!expenseIds || expenseIds.length === 0) return;
+  try {
+    await supabase.from("expense_alerts").delete().in("expense_id", expenseIds);
+    await supabase.from("expense_audit_log").delete().in("expense_id", expenseIds);
+    await supabase.from("expense_attachments").delete().in("expense_id", expenseIds);
+    await supabase.from("expense_vehicles").delete().in("expense_id", expenseIds);
+    await supabase.from("expenses").delete().in("id", expenseIds);
+  } catch (err) {
+    console.error("[Expenses] Error rolling back expenses:", err);
+  }
+}
 
 r.post("/", async (req: Request, res: Response) => {
+  let insertedExpenses: any[] | null = null;
   try {
     const {
       date,
@@ -182,8 +195,55 @@ r.post("/", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "No valid items/amounts provided" });
     }
 
+    // 3.1. Pre-validación de leasing y anticipos operativos ANTES de guardar el gasto
+    const applyToLeasing = Boolean(req.body?.apply_to_leasing);
+    const leasingExcessMethod = req.body?.leasing_excess_method as "cash" | "advance" | "none" | undefined;
+    const leasingAdvanceInstallments = Math.max(1, Number(req.body?.leasing_advance_installments) || 10);
+    const leasingAdvanceStartDate = String(req.body?.leasing_advance_start_date || date);
+
+    let leasingSummary: any = null;
+    let targetPlate: string | null = null;
+    let totalExpenseAmount = 0;
+    let excess = 0;
+
+    if (applyToLeasing && normPlates.length === 1) {
+      targetPlate = normPlates[0] ?? null;
+      totalExpenseAmount = expensesList.reduce((sum, e) => sum + e.amount, 0);
+
+      if (targetPlate) {
+        const { data: summary } = await supabase
+          .from("leasing_contracts_summary_vw")
+          .select("*")
+          .eq("plate", targetPlate)
+          .maybeSingle();
+
+        if (summary) {
+          leasingSummary = summary;
+          const availableFund = Math.max(0, Number(summary.maintenance_fund_available ?? summary.maintenance_fund_accumulated));
+          excess = Math.max(0, totalExpenseAmount - availableFund);
+
+          // Si hay excedente y se eligió abrir anticipo operativo, validar ANTES de escribir en la DB
+          if (excess > 0 && leasingExcessMethod === "advance") {
+            const { data: existingAdv } = await supabase
+              .from("operational_advances")
+              .select("id")
+              .eq("plate", targetPlate)
+              .eq("status", "active")
+              .limit(1);
+
+            const activeAdv = existingAdv?.[0];
+            if (activeAdv) {
+              return res.status(400).json({
+                error: `La placa ${targetPlate} ya tiene un anticipo operativo activo (#${activeAdv.id}). Solo se permite un anticipo activo por vehículo. Selecciona 'Pago en Efectivo' para cubrir el excedente de $${Math.round(excess).toLocaleString("es-CO")}.`
+              });
+            }
+          }
+        }
+      }
+    }
+
     // 4. Batch Insert de la tabla principal `expenses`
-    const { data: insertedExpenses, error: eErr } = await supabase
+    const { data: expRows, error: eErr } = await supabase
       .from("expenses")
       .insert(expensesList.map(e => ({
         date,
@@ -195,7 +255,8 @@ r.post("/", async (req: Request, res: Response) => {
       })))
       .select();
 
-    if (eErr || !insertedExpenses) return res.status(500).json({ error: eErr?.message || "Error inserting expenses" });
+    if (eErr || !expRows) return res.status(500).json({ error: eErr?.message || "Error inserting expenses" });
+    insertedExpenses = expRows;
 
     // 5. Bulk prepare de relaciones (Vehículos, Adjuntos, Logs)
     const expenseVehiclesRows: any[] = [];
@@ -234,8 +295,119 @@ r.post("/", async (req: Request, res: Response) => {
     if (expenseAttachmentsRows.length > 0) await supabase.from("expense_attachments").insert(expenseAttachmentsRows);
     if (expenseAuditLogRows.length > 0) await supabase.from("expense_audit_log").insert(expenseAuditLogRows);
 
-    return res.status(201).json({ expenses: insertedExpenses, success: true });
+    // 7. DESCUENTO DE FONDO DE MANTENIMIENTO LEASING (Si aplica)
+    let leasingDebitNote: any = null;
+
+    if (applyToLeasing && targetPlate && leasingSummary && insertedExpenses.length > 0) {
+      const primaryExpense = insertedExpenses[0];
+      if (primaryExpense) {
+        let createdAdvanceId: number | null = null;
+
+        // Si hay excedente y se eligió abrir anticipo operativo
+        if (excess > 0 && leasingExcessMethod === "advance") {
+          let driverName = "Conductor " + targetPlate;
+          if (leasingSummary.driver_id) {
+            const { data: drv } = await supabase.from("drivers").select("full_name").eq("id", leasingSummary.driver_id).single();
+            if (drv?.full_name) driverName = drv.full_name;
+          }
+
+          // Prorrateo exacto en centavos/pesos para que la suma de cuotas coincida al 100%
+          const exactInstallments = splitEven(Math.round(excess), leasingAdvanceInstallments);
+          const dailyInst = exactInstallments[0] || Math.round(excess / leasingAdvanceInstallments);
+
+          const { data: advIns, error: advErr } = await supabase
+            .from("operational_advances")
+            .insert({
+              person_name: driverName,
+              person_type: "driver",
+              driver_id: leasingSummary.driver_id ?? null,
+              plate: targetPlate,
+              amount: Math.round(excess),
+              rate_percent: 0,
+              installments: leasingAdvanceInstallments,
+              start_date: leasingAdvanceStartDate,
+              status: "active",
+              notes: `Excedente de mantenimiento por gasto(s): ${insertedExpenses.map(e => e.item).join(", ")}`,
+              daily_installment: dailyInst,
+              current_installment: 0
+            })
+            .select("*")
+            .single();
+
+          if (advErr || !advIns) {
+            // Revertir el gasto para no dejarlo huérfano/duplicado
+            await rollbackExpenses(insertedExpenses.map(e => e.id));
+            return res.status(500).json({ error: "Error al crear el anticipo operativo: " + (advErr?.message || "desconocido") });
+          }
+
+          createdAdvanceId = advIns.id;
+
+          const advSchedule = exactInstallments.map((instAmount, i) => {
+            const installmentNo = i + 1;
+            const dueDate = new Date(advIns.start_date);
+            dueDate.setDate(dueDate.getDate() + i);
+
+            return {
+              advance_id: advIns.id,
+              installment_no: installmentNo,
+              due_date: dueDate.toISOString().slice(0, 10),
+              installment_amount: instAmount,
+              interest_amount: 0,
+              principal_amount: instAmount,
+              status: "pending",
+            };
+          });
+
+          const { error: schErr } = await supabase.from("operational_advance_schedule").insert(advSchedule);
+          if (schErr) {
+            // Revertir anticipo y revertir el gasto para no dejar datos inconsistentes
+            await supabase.from("operational_advances").delete().eq("id", advIns.id);
+            await rollbackExpenses(insertedExpenses.map(e => e.id));
+            return res.status(500).json({ error: "Error al generar cronograma del anticipo: " + schErr.message });
+          }
+        }
+
+        // Crear la Nota Débito atómica vía RPC
+        const method = excess > 0 ? (leasingExcessMethod || "cash") : "none";
+        const itemsSummary = insertedExpenses.map(e => `${e.item} ($${e.total_amount})`).join(" + ");
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc("create_leasing_maintenance_debit", {
+          p_contract_id: leasingSummary.contract_id,
+          p_expense_id: primaryExpense.id,
+          p_plate: targetPlate,
+          p_total_expense: totalExpenseAmount,
+          p_excess_method: method,
+          p_advance_id: createdAdvanceId,
+          p_notes: `Gasto: ${itemsSummary}`
+        });
+
+        if (rpcErr) {
+          console.error("[Expenses] Error creating leasing debit note:", rpcErr.message);
+          // Si habíamos creado un anticipo, revertirlo y revertir gasto para no dejar deuda huérfana
+          if (createdAdvanceId) {
+            await supabase.from("operational_advance_schedule").delete().eq("advance_id", createdAdvanceId);
+            await supabase.from("operational_advances").delete().eq("id", createdAdvanceId);
+            await rollbackExpenses(insertedExpenses.map(e => e.id));
+            return res.status(500).json({
+              error: `Error al generar la Nota Débito de leasing (${rpcErr.message}). Se revirtió la operación para evitar inconsistencias.`
+            });
+          }
+          return res.status(207).json({
+            expenses: insertedExpenses,
+            success: true,
+            debit_note: null,
+            debit_note_error: `El gasto fue registrado, pero no se pudo generar la Nota Débito: ${rpcErr.message}`
+          });
+        } else if (rpcRes) {
+          leasingDebitNote = rpcRes;
+        }
+      }
+    }
+
+    return res.status(201).json({ expenses: insertedExpenses, success: true, debit_note: leasingDebitNote });
   } catch (err: any) {
+    if (insertedExpenses && insertedExpenses.length > 0) {
+      await rollbackExpenses(insertedExpenses.map(e => e.id)).catch(() => {});
+    }
     return res.status(500).json({ error: err?.message || "internal error" });
   }
 });
@@ -299,7 +471,34 @@ r.get("/", async (req: Request, res: Response) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  res.json({ items: data ?? [], total: count ?? 0, limit, offset });
+  // Enriquecer de forma segura con notas débito asociadas
+  const items = data ?? [];
+  const expenseIds = items.map((e: any) => e.id);
+  const debitsMap = new Map<number, any>();
+
+  if (expenseIds.length > 0) {
+    try {
+      const { data: debits } = await supabase
+        .from("leasing_maintenance_debits")
+        .select("id, expense_id, contract_id, amount_deducted, excess_amount, excess_payment_method, advance_id")
+        .in("expense_id", expenseIds);
+
+      if (debits && Array.isArray(debits)) {
+        debits.forEach((d: any) => {
+          if (d.expense_id) debitsMap.set(d.expense_id, d);
+        });
+      }
+    } catch {
+      // Ignorar si la tabla aún no existe o falla la consulta auxiliar
+    }
+  }
+
+  const enrichedItems = items.map((e: any) => ({
+    ...e,
+    leasing_debit_note: debitsMap.get(e.id) || null
+  }));
+
+  res.json({ items: enrichedItems, total: count ?? 0, limit, offset });
 });
 
 r.put("/:id/attachment", async (req: Request, res: Response) => {

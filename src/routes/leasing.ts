@@ -857,12 +857,17 @@ r.get("/summary", async (req: Request, res: Response) => {
   if (sErr) return res.status(500).json({ error: sErr.message });
   if (!summary) return res.json({ has_leasing: false });
 
-  // 2. Obtener purchase_price desde leasing_contracts
+  // 2. Obtener purchase_price y datos del conductor
   const { data: contract } = await supabase
     .from("leasing_contracts")
-    .select("purchase_price")
+    .select("purchase_price, driver_id, drivers(id, full_name, document_number, phone)")
     .eq("id", summary.contract_id)
     .single();
+
+  const driverData = (contract as any)?.drivers ?? null;
+  const maintSpent = Math.round(Number(summary.maintenance_fund_spent ?? 0));
+  const maintAccum = Math.round(Number(summary.maintenance_fund_accumulated ?? 0));
+  const maintAvail = Math.round(Number(summary.maintenance_fund_available ?? (maintAccum - maintSpent)));
 
   return res.json({
     has_leasing: true,
@@ -879,11 +884,62 @@ r.get("/summary", async (req: Request, res: Response) => {
     total_collected: Math.round(Number(summary.total_collected)),
     pending_balance: Math.round(Number(summary.remaining_capital)),
     remaining_capital: Math.round(Number(summary.remaining_capital)),
-    maintenance_fund_accumulated: Math.round(Number(summary.maintenance_fund_accumulated)),
+    maintenance_fund_accumulated: maintAccum,
+    maintenance_fund_spent: maintSpent,
+    maintenance_fund_available: maintAvail,
+    driver_id: summary.driver_id ?? contract?.driver_id ?? null,
+    driver_name: driverData?.full_name ?? null,
+    driver_document: driverData?.document_number ?? null,
+    driver_phone: driverData?.phone ?? null,
     estimated_end_date: summary.estimated_end_date,
     next_due_date: summary.next_due_date,
   });
 });
+
+// ============================================================================
+// GET /leasing/contracts/:id/debit-notes
+// Lista las notas débito asociadas al fondo de mantenimiento de un contrato.
+// ============================================================================
+r.get("/contracts/:id/debit-notes", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "id requerido" });
+
+  const { data, error } = await supabase
+    .from("leasing_maintenance_debits")
+    .select(`
+      *,
+      expenses (id, item, category, description, date, total_amount, attachment_url)
+    `)
+    .eq("contract_id", id)
+    .order("created_at", { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ items: data || [] });
+});
+
+// ============================================================================
+// GET /leasing/debit-notes/:id
+// Detalle completo de una nota débito para visualización e impresión.
+// ============================================================================
+r.get("/debit-notes/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "id requerido" });
+
+  const { data, error } = await supabase
+    .from("leasing_maintenance_debits")
+    .select(`
+      *,
+      leasing_contracts (id, plate, start_date, status, financed_capital),
+      expenses (id, item, category, description, date, total_amount, attachment_url),
+      drivers (id, full_name, document_number, phone)
+    `)
+    .eq("id", id)
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ debit_note: data });
+});
+
 
 // ============================================================================
 // POST /leasing/contracts/generate
