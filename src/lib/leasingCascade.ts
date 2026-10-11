@@ -105,7 +105,8 @@ export async function getActiveLeasingContract(
 export async function applyLeasingPayment(
   paymentId: number,
   amount: number,
-  contractId: number
+  contractId: number,
+  targetScheduleId?: number
 ): Promise<CascadeResult> {
   // 1. Obtener detalles del pago
   const { data: payment, error: pErr } = await supabase
@@ -166,13 +167,29 @@ export async function applyLeasingPayment(
     return { ok: false, applied: 0, remaining: totalAmount, distributionsInserted: 0, cuotasTouched: 0, error: "LEASING_DUPLICATE_PAYMENT" };
   }
 
-  // 5. Buscar cuota en cronograma con due_date = payment_date
-  const { data: cuota, error: cErr } = await supabase
-    .from("leasing_schedule")
-    .select("*")
-    .eq("contract_id", contractId)
-    .eq("due_date", payment.payment_date)
-    .maybeSingle();
+  // 5. Buscar cuota en cronograma (targetScheduleId si se especifica explícitamente desde conciliación manual, o por due_date = payment_date)
+  let cuota: any = null;
+  let cErr: any = null;
+
+  if (targetScheduleId) {
+    const res = await supabase
+      .from("leasing_schedule")
+      .select("*")
+      .eq("id", targetScheduleId)
+      .eq("contract_id", contractId)
+      .maybeSingle();
+    cuota = res.data;
+    cErr = res.error;
+  } else {
+    const res = await supabase
+      .from("leasing_schedule")
+      .select("*")
+      .eq("contract_id", contractId)
+      .eq("due_date", payment.payment_date)
+      .maybeSingle();
+    cuota = res.data;
+    cErr = res.error;
+  }
 
   if (cErr || !cuota) {
     await supabase.from("payment_inconsistencies").insert([{

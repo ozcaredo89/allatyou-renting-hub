@@ -29,6 +29,7 @@ import {
 import { BankReconciliationModal } from "../components/BankReconciliationModal";
 import { ReconciliationBadge, type BankMatch } from "../components/ReconciliationBadge";
 import { AdvancePaymentModal } from "../components/AdvancePaymentModal";
+import { PaymentApprovalModal } from "../components/PaymentApprovalModal";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -44,6 +45,7 @@ type Row = {
   installment_number: number | null;
   proof_url: string | null;
   status?: 'active' | 'maintenance' | 'sold' | 'inactive';
+  payment_status?: 'pending' | 'confirmed' | 'rejected';
   // Receipt classification (from backend classifyReceipt)
   is_suspicious: boolean;
   is_technical_failure: boolean;
@@ -103,6 +105,8 @@ export default function Reports() {
   const [q, setQ] = useState("");
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [onlySuspicious, setOnlySuspicious] = useState(false);
+  const [onlyPending, setOnlyPending] = useState(false);
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [showInactive, setShowInactive] = useState(true);
   const [items, setItems] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
@@ -112,6 +116,7 @@ export default function Reports() {
   const [showBankModal, setShowBankModal] = useState(false);
   const [bankModalQuery, setBankModalQuery] = useState<string | null>(null);
   const [advanceModalRow, setAdvanceModalRow] = useState<Row | null>(null);
+  const [approvalModalRow, setApprovalModalRow] = useState<Row | null>(null);
   const [reconciling, setReconciling] = useState(false);
   const limit = 20;
 
@@ -191,6 +196,7 @@ export default function Reports() {
     searchQuery = q,
     isOverdue = onlyOverdue,
     isSuspicious = onlySuspicious,
+    isPending = onlyPending,
     withInactive = showInactive
   ) {
     setLoading(true);
@@ -201,6 +207,7 @@ export default function Reports() {
       if (trimmed) params.set("q", trimmed);
       if (isOverdue)    params.set("overdue_only",    "true");
       if (isSuspicious) params.set("suspicious_only", "true");
+      if (isPending)    params.set("pending_only",    "true");
       if (!withInactive) params.set("include_inactive", "false");
       params.set("limit",  String(limit));
       params.set("offset", String(nextOffset));
@@ -223,6 +230,7 @@ export default function Reports() {
       const json = await rs.json();
       setItems(json.items || []);
       setTotal(json.total ?? (json.items?.length ?? 0));
+      setPendingApprovalCount(json.pending_approval_count ?? 0);
       setOffset(nextOffset);
     } catch (e: any) {
       setErrorMsg(e?.message || "Error cargando reportes");
@@ -235,31 +243,32 @@ export default function Reports() {
   useEffect(() => {
     if (!isMounted.current) {
       isMounted.current = true;
-      load(0, q, onlyOverdue, onlySuspicious, showInactive);
+      load(0, q, onlyOverdue, onlySuspicious, onlyPending, showInactive);
       return;
     }
 
     const timer = setTimeout(() => {
-      load(0, q, onlyOverdue, onlySuspicious, showInactive);
+      load(0, q, onlyOverdue, onlySuspicious, onlyPending, showInactive);
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [q, onlyOverdue, onlySuspicious, showInactive]);
+  }, [q, onlyOverdue, onlySuspicious, onlyPending, showInactive]);
 
   const handleClearSearch = () => {
     setQ("");
-    load(0, "", onlyOverdue, onlySuspicious, showInactive);
+    load(0, "", onlyOverdue, onlySuspicious, onlyPending, showInactive);
   };
 
   const handleResetFilters = () => {
     setQ("");
     setOnlyOverdue(false);
     setOnlySuspicious(false);
+    setOnlyPending(false);
     setShowInactive(true);
-    load(0, "", false, false, true);
+    load(0, "", false, false, false, true);
   };
 
-  const hasActiveFilters = Boolean(q.trim() || onlyOverdue || onlySuspicious || !showInactive);
+  const hasActiveFilters = Boolean(q.trim() || onlyOverdue || onlySuspicious || onlyPending || !showInactive);
 
   const canPrev = offset > 0;
   const canNext = offset + limit < total;
@@ -461,6 +470,49 @@ export default function Reports() {
           }}
         />
 
+        <PaymentApprovalModal
+          isOpen={!!approvalModalRow}
+          onClose={() => setApprovalModalRow(null)}
+          paymentId={approvalModalRow?.payment_id ?? null}
+          plate={approvalModalRow?.plate ?? null}
+          ownerName={approvalModalRow?.owner_name}
+          onSuccess={() => {
+            setApprovalModalRow(null);
+            load(offset);
+          }}
+        />
+
+        {/* Banner de aviso cuando hay pagos pendientes de aprobación */}
+        {pendingApprovalCount > 0 && (
+          <div className="mb-5 rounded-2xl border border-amber-300 bg-gradient-to-r from-amber-50 via-amber-50/70 to-orange-50/50 p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-amber-100 text-amber-800 rounded-xl shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-600 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-amber-950 leading-tight">
+                  Hay {pendingApprovalCount} pago{pendingApprovalCount === 1 ? "" : "s"} pendiente{pendingApprovalCount === 1 ? "" : "s"} de aprobación
+                </h3>
+                <p className="text-xs text-amber-800/90 mt-0.5">
+                  Revisa los comprobantes y aprueba los pagos para aplicar los abonos a leasing, anticipos y cuotas diarias.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOnlyPending(!onlyPending)}
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                onlyPending
+                  ? "bg-amber-600 text-white shadow-xs hover:bg-amber-700"
+                  : "bg-white text-amber-950 border border-amber-300 hover:bg-amber-100 shadow-2xs"
+              }`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
+              <span>{onlyPending ? "Mostrando todos los pagos" : "Ver solo pendientes"}</span>
+            </button>
+          </div>
+        )}
+
         {/* Barra principal de búsqueda y filtros interactivos */}
         <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-xs">
           <div className="flex flex-col lg:flex-row lg:items-center gap-3">
@@ -476,7 +528,7 @@ export default function Reports() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    load(0, q, onlyOverdue, onlySuspicious, showInactive);
+                    load(0, q, onlyOverdue, onlySuspicious, onlyPending, showInactive);
                   }
                 }}
               />
@@ -499,6 +551,24 @@ export default function Reports() {
 
             {/* Chips de filtro rápido */}
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setOnlyPending(!onlyPending)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  onlyPending
+                    ? "bg-amber-100 text-amber-900 border-amber-400 shadow-xs"
+                    : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
+                }`}
+              >
+                <Clock className={`w-3.5 h-3.5 ${onlyPending ? "text-amber-700" : "text-gray-400"}`} />
+                <span>Solo pendientes</span>
+                {pendingApprovalCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-200 text-amber-800 font-bold">
+                    {pendingApprovalCount}
+                  </span>
+                )}
+              </button>
+
               <button
                 type="button"
                 onClick={() => setOnlyOverdue(!onlyOverdue)}
@@ -620,8 +690,13 @@ export default function Reports() {
                   </div>
                 </th> 
                 <th className="px-4 py-3 font-semibold">
+                  <div onClick={() => requestSort('payment_status')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                    Estado Pago <SortIcon columnKey="payment_status" />
+                  </div>
+                </th>
+                <th className="px-4 py-3 font-semibold">
                   <div onClick={() => requestSort('days_since')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                    Estado <SortIcon columnKey="days_since" />
+                    Mora / Días <SortIcon columnKey="days_since" />
                   </div>
                 </th>
                 <th className="px-4 py-3 font-semibold text-right">Acciones</th>
@@ -702,6 +777,23 @@ export default function Reports() {
                       {r.installment_number != null ? `#${r.installment_number}` : "—"}
                     </td>
                     <td className="px-4 py-3">
+                      {r.payment_status === "pending" ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 animate-pulse">
+                          <Clock className="w-3 h-3 text-amber-600" />
+                          <span>Pendiente</span>
+                        </span>
+                      ) : r.payment_status === "rejected" ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                          <span>Rechazado</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>Confirmado</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
                       <div className="flex flex-col items-start gap-1.5">
                         {overdue ? (
                           <>
@@ -726,22 +818,35 @@ export default function Reports() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {r.payment_date && (
-                        <button
-                          onClick={() => handleDeleteLastPayment(r.plate)}
-                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Deshacer último pago"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      )}
+                      <div className="flex items-center justify-end gap-2">
+                        {r.payment_status === "pending" && r.payment_id && (
+                          <button
+                            type="button"
+                            onClick={() => setApprovalModalRow(r)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs hover:shadow transition-all cursor-pointer whitespace-nowrap"
+                            title={`Aprobar pago de la placa ${r.plate}`}
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Aprobar</span>
+                          </button>
+                        )}
+                        {r.payment_date && (
+                          <button
+                            onClick={() => handleDeleteLastPayment(r.plate)}
+                            className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                            title="Deshacer último pago"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
               })}
               {visibleItems.length === 0 && !loading && (
                 <tr>
-                  <td className="px-4 py-12 text-center text-gray-500" colSpan={7}>
+                  <td className="px-4 py-12 text-center text-gray-500" colSpan={8}>
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Search className="w-8 h-8 text-gray-300 stroke-1" />
                       <p className="font-medium text-gray-700">No se encontraron vehículos</p>

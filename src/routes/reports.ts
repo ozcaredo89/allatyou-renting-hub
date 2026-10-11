@@ -11,6 +11,7 @@ import {
   FlagDetails,
   DuplicatePaymentSummary,
 } from "../lib/receiptClassification";
+import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
 
 const r = Router();
 
@@ -27,6 +28,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
 
   const overdueOnly     = String(req.query.overdue_only     || "false") === "true";
   const suspiciousOnly  = String(req.query.suspicious_only  || "false") === "true";
+  const pendingOnly     = String(req.query.pending_only     || "false") === "true";
   const includeInactive = String(req.query.include_inactive ?? "true") !== "false";
 
   // Cota práctica compartida por Paso 1 y Paso 3: un pago más antiguo no sería
@@ -36,20 +38,23 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
   const twoYearsAgoStr = twoYearsAgo.toISOString().slice(0, 10);
 
-  // ── Paso 1: resolver qué placas son sospechosas ANTES de paginar ────────
-  // Cuando suspicious_only=true, la condición debe aplicarse sobre el conjunto
-  // COMPLETO antes de recortar con range(). Se consulta payments directamente
-  // (que sí expone receipt_status / flagged_for_review) para obtener la lista
-  // de placas cuyo ÚLTIMO pago es sospechoso, replicando exactamente el criterio
-  // de la vista: ORDER BY payment_date DESC, created_at DESC (sin filtro de status).
-  let suspiciousPlates: Set<string> | null = null;
+  // ── Total de pagos pendientes en toda la flota para banner de advertencia ──
+  const { count: globalPendingCount } = await supabase
+    .from("payments")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending");
 
-  if (suspiciousOnly) {
-    // Traemos solo las columnas necesarias para clasificar, sin limit por placa
-    // (Supabase JS no soporta DISTINCT ON; usamos el mismo truco de "primero visto").
+  // ── Paso 1: resolver qué placas son sospechosas o pendientes ANTES de paginar ────────
+  // Cuando suspicious_only=true o pending_only=true, la condición debe aplicarse sobre el conjunto
+  // COMPLETO antes de recortar con range().
+  let suspiciousPlates: Set<string> | null = null;
+  let pendingPlates: Set<string> | null = null;
+
+  if (suspiciousOnly || pendingOnly) {
+    // Traemos las columnas necesarias para clasificar y saber el status del último pago
     const { data: allAudit, error: auditErr } = await supabase
       .from("payments")
-      .select("plate, receipt_status, flagged_for_review, flag_reason")
+      .select("plate, receipt_status, flagged_for_review, flag_reason, status")
       .gte("payment_date", twoYearsAgoStr)
       .order("payment_date", { ascending: false })
       .order("created_at",   { ascending: false });
@@ -57,23 +62,34 @@ r.get("/last-payments", async (req: Request, res: Response) => {
     if (auditErr) return res.status(500).json({ error: auditErr.message });
 
     // Reducir a "último pago por placa" (primero que aparece en el orden desc)
-    const latestByPlate = new Map<string, { receipt_status: string | null; flagged_for_review: boolean | null; flag_reason: string | null }>();
+    const latestByPlate = new Map<string, { receipt_status: string | null; flagged_for_review: boolean | null; flag_reason: string | null; status: string | null }>();
     for (const row of (allAudit ?? [])) {
       if (!latestByPlate.has(row.plate)) {
         latestByPlate.set(row.plate, {
           receipt_status:    row.receipt_status,
           flagged_for_review: row.flagged_for_review,
           flag_reason:       row.flag_reason,
+          status:            row.status,
         });
       }
     }
 
-    // Clasificar y quedarnos solo con las placas sospechosas
-    suspiciousPlates = new Set<string>();
-    for (const [plate, audit] of latestByPlate) {
-      const cls = classifyReceipt(audit.receipt_status, audit.flagged_for_review, audit.flag_reason);
-      if (cls.is_suspicious || cls.is_technical_failure) {
-        suspiciousPlates.add(plate);
+    if (suspiciousOnly) {
+      suspiciousPlates = new Set<string>();
+      for (const [plate, audit] of latestByPlate) {
+        const cls = classifyReceipt(audit.receipt_status, audit.flagged_for_review, audit.flag_reason);
+        if (cls.is_suspicious || cls.is_technical_failure) {
+          suspiciousPlates.add(plate);
+        }
+      }
+    }
+
+    if (pendingOnly) {
+      pendingPlates = new Set<string>();
+      for (const [plate, audit] of latestByPlate) {
+        if (audit.status === "pending") {
+          pendingPlates.add(plate);
+        }
       }
     }
   }
@@ -102,6 +118,15 @@ r.get("/last-payments", async (req: Request, res: Response) => {
     }
   }
 
+  if (pendingPlates !== null) {
+    if (allowedPlates !== null) {
+      const allowedSet = new Set(allowedPlates);
+      allowedPlates = [...pendingPlates].filter((p) => allowedSet.has(p));
+    } else {
+      allowedPlates = [...pendingPlates];
+    }
+  }
+
   let query = supabase
     .from("vehicle_last_payment")
     .select("*", { count: "exact" })
@@ -121,7 +146,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   if (allowedPlates !== null) {
     if (allowedPlates.length === 0) {
       // No hay ninguna placa que cumpla: responder vacío directamente
-      return res.json({ items: [], total: 0, limit, offset });
+      return res.json({ items: [], total: 0, limit, offset, pending_approval_count: globalPendingCount ?? 0 });
     }
     query = query.in("plate", allowedPlates);
   }
@@ -150,7 +175,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
     // pago más reciente de una placa si las demás placas de la página acumulan más
     // filas recientes — eso desalinea esta reclasificación con la del Paso 1 y hace
     // que el badge nunca aparezca aunque suspicious_only sí haya incluido la placa.
-    const auditBaseColumns = "plate, receipt_status, flagged_for_review, flag_reason, payment_date, created_at";
+    const auditBaseColumns = "plate, receipt_status, flagged_for_review, flag_reason, payment_date, created_at, status";
     let auditPage: any[] | null;
     let auditPageErr: { message: string } | null;
     ({ data: auditPage, error: auditPageErr } = await supabase
@@ -186,17 +211,19 @@ r.get("/last-payments", async (req: Request, res: Response) => {
       created_at: string | null;
       payment_id: number | null;
       bank_transaction_id: number | null;
+      payment_status: string | null;
     }>();
     for (const row of (auditPage ?? [])) {
       if (!auditMap.has(row.plate)) {
         auditMap.set(row.plate, {
-          receipt_status:    row.receipt_status,
-          flagged_for_review: row.flagged_for_review,
-          flag_reason:       row.flag_reason,
-          flag_details:      row.flag_details ?? null,
-          created_at:        row.created_at ?? null,
-          payment_id:        row.id ?? null,
+          receipt_status:      row.receipt_status,
+          flagged_for_review:  row.flagged_for_review,
+          flag_reason:         row.flag_reason,
+          flag_details:        row.flag_details ?? null,
+          created_at:          row.created_at ?? null,
+          payment_id:          row.id ?? null,
           bank_transaction_id: row.bank_transaction_id ?? null,
+          payment_status:      row.status ?? "confirmed",
         });
       }
     }
@@ -245,6 +272,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
         ...row,
         payment_created_at: audit?.created_at ?? null,
         status: statusMap.get(row.plate) || "active",
+        payment_status: audit?.payment_status ?? "confirmed",
         ...classification,
         inconsistency_reasons: refineReasonsForEvidence(
           classification.inconsistency_reasons,
@@ -261,7 +289,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
     });
   }
 
-  return res.json({ items, total: count ?? 0, limit, offset });
+  return res.json({ items, total: count ?? 0, limit, offset, pending_approval_count: globalPendingCount ?? 0 });
 });
 
 // ── POST /reports/reconcile-bank ──────────────────────────────────────────────
@@ -514,6 +542,316 @@ r.get("/bank-transactions", async (req: Request, res: Response) => {
     return res.json({ items: data ?? [] });
   } catch (err: any) {
     console.error("[bank-transactions] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /reports/payments/:id/approval-preview ──────────────────────────────
+// Previsualiza la distribución contable de un pago pendiente para el modal de aprobación
+// - En leasing: cruce estricto con la cuota de leasing_schedule cuya due_date = payment_date.
+//   Si no existe o ya está pagada, can_approve = false y no se inventan valores.
+// - En renting: respeta exactamente el split calculado y almacenado al momento del registro
+//   (maintenance_amount, delivery_amount, insurance_amount, credit_installment_amount).
+r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
+  const paymentId = parseInt(String(req.params.id || ""), 10);
+  if (isNaN(paymentId)) return res.status(400).json({ error: "ID de pago inválido" });
+
+  try {
+    const { data: payment, error: pErr } = await supabase
+      .from("payments")
+      .select("id, plate, payer_name, payment_date, amount, status, receipt_status, proof_url, installment_number, maintenance_amount, delivery_amount, insurance_amount, credit_installment_amount")
+      .eq("id", paymentId)
+      .maybeSingle();
+
+    if (pErr || !payment) {
+      return res.status(404).json({ error: "Pago no encontrado" });
+    }
+
+    const leasingContract = await getActiveLeasingContract(payment.plate);
+    const isLeasing = !!(leasingContract && !leasingContract.start_date_pending_confirmation);
+
+    if (isLeasing) {
+      // 🔴 2 & 🟡 4: Búsqueda estricta de la cuota por fecha de pago
+      const { data: cuota, error: cErr } = await supabase
+        .from("leasing_schedule")
+        .select("*")
+        .eq("contract_id", leasingContract.id)
+        .eq("due_date", payment.payment_date)
+        .maybeSingle();
+
+      if (cErr) {
+        return res.status(500).json({ error: `Error al consultar cronograma de leasing: ${cErr.message}` });
+      }
+
+      if (!cuota) {
+        return res.json({
+          payment_id: payment.id,
+          plate: payment.plate,
+          payer_name: payment.payer_name || "Conductor",
+          payment_date: payment.payment_date,
+          amount: Number(payment.amount),
+          status: payment.status,
+          receipt_status: payment.receipt_status,
+          proof_url: payment.proof_url,
+          type: "leasing",
+          can_approve: false,
+          warning_message: `No existe cuota en el cronograma de leasing para la fecha ${payment.payment_date} (posible domingo o festivo). Concilie la fecha manualmente antes de aprobar.`,
+          leasing_contract: {
+            id: leasingContract.id,
+            installment_no: null,
+            due_date: payment.payment_date,
+            status: "missing",
+          },
+          breakdown: {
+            maintenance: 0,
+            car_capital: 0,
+            interest: 0,
+            admin_insurance: 0,
+            normal_quota: 0,
+            advance: 0,
+            excess: 0,
+          },
+          quota_expected: null,
+        });
+      }
+
+      const mExp = Number(cuota.maintenance_expected || 0);
+      const aExp = Number(cuota.admin_expected || 0);
+      const iExp = Number(cuota.interest_expected || 0);
+      const pExp = Number(cuota.principal_expected || 0);
+      const qTotal = mExp + aExp + iExp + pExp;
+      const amt = Number(payment.amount || 0);
+      const excess = Math.max(0, amt - qTotal);
+
+      if (cuota.status === "paid") {
+        return res.json({
+          payment_id: payment.id,
+          plate: payment.plate,
+          payer_name: payment.payer_name || "Conductor",
+          payment_date: payment.payment_date,
+          amount: amt,
+          status: payment.status,
+          receipt_status: payment.receipt_status,
+          proof_url: payment.proof_url,
+          type: "leasing",
+          can_approve: false,
+          warning_message: `La cuota #${cuota.installment_no} (${cuota.due_date}) ya fue pagada previamente. Verifique si es un pago duplicado o concilie manualmente.`,
+          leasing_contract: {
+            id: leasingContract.id,
+            installment_no: cuota.installment_no,
+            due_date: cuota.due_date,
+            status: cuota.status,
+          },
+          breakdown: {
+            maintenance: mExp,
+            car_capital: pExp,
+            interest: iExp,
+            admin_insurance: aExp,
+            normal_quota: 0,
+            advance: 0,
+            excess: 0,
+          },
+          quota_expected: {
+            maintenance: mExp,
+            admin: aExp,
+            interest: iExp,
+            principal: pExp,
+            total: qTotal,
+          },
+        });
+      }
+
+      return res.json({
+        payment_id: payment.id,
+        plate: payment.plate,
+        payer_name: payment.payer_name || "Conductor",
+        payment_date: payment.payment_date,
+        amount: amt,
+        status: payment.status,
+        receipt_status: payment.receipt_status,
+        proof_url: payment.proof_url,
+        type: "leasing",
+        can_approve: true,
+        warning_message: null,
+        leasing_contract: {
+          id: leasingContract.id,
+          installment_no: cuota.installment_no,
+          due_date: cuota.due_date,
+          status: cuota.status,
+        },
+        breakdown: {
+          maintenance: mExp,
+          car_capital: pExp,
+          interest: iExp,
+          admin_insurance: aExp,
+          normal_quota: 0,
+          advance: 0,
+          excess,
+        },
+        quota_expected: {
+          maintenance: mExp,
+          admin: aExp,
+          interest: iExp,
+          principal: pExp,
+          total: qTotal,
+        },
+      });
+    }
+
+    // ── Renting Tradicional ──
+    // 🟠 3: Usar la distribución guardada en el pago, sin inventar ni recalcular
+    const { data: activeAdv } = await supabase
+      .from("operational_advances")
+      .select("id, daily_installment, current_installment, installments")
+      .eq("plate", payment.plate)
+      .eq("status", "active")
+      .limit(1)
+      .maybeSingle();
+
+    const mStored = Number(payment.maintenance_amount || 0);
+    const dStored = Number(payment.delivery_amount || 0);
+    const iStored = Number(payment.insurance_amount || 0);
+    const cStored = Number(payment.credit_installment_amount || 0);
+    const amt = Number(payment.amount || 0);
+    const totalStored = mStored + dStored + iStored + cStored;
+    const excess = Math.max(0, amt - totalStored);
+
+    return res.json({
+      payment_id: payment.id,
+      plate: payment.plate,
+      payer_name: payment.payer_name || "Conductor",
+      payment_date: payment.payment_date,
+      amount: amt,
+      status: payment.status,
+      receipt_status: payment.receipt_status,
+      proof_url: payment.proof_url,
+      type: "renting",
+      can_approve: true,
+      warning_message: null,
+      active_advance: activeAdv
+        ? {
+            id: activeAdv.id,
+            daily_installment: Number(activeAdv.daily_installment || 0),
+            installment_no: payment.installment_number ?? null,
+          }
+        : null,
+      breakdown: {
+        maintenance: mStored,
+        car_capital: 0,
+        interest: 0,
+        admin_insurance: iStored,
+        normal_quota: dStored,
+        advance: cStored,
+        excess,
+      },
+      quota_expected: null,
+    });
+  } catch (err: any) {
+    console.error("[approval-preview] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /reports/payments/:id/approve ──────────────────────────────────────
+// Aprueba un pago en estado 'pending'.
+// - Si es leasing: aplica la cascada estricta (applyLeasingPayment). Si falla, NO confirma el pago
+//   y retorna 422 con el error. Si triunfa, actualiza status = 'confirmed'.
+// - Si es renting: respeta el split guardado, marca status = 'confirmed' y si el pago
+//   incluía installment_number, asegura que el cronograma del anticipo quede en 'paid'.
+r.post("/payments/:id/approve", async (req: Request, res: Response) => {
+  const paymentId = parseInt(String(req.params.id || ""), 10);
+  if (isNaN(paymentId)) return res.status(400).json({ error: "ID de pago inválido" });
+
+  try {
+    const { data: payment, error: pErr } = await supabase
+      .from("payments")
+      .select("*")
+      .eq("id", paymentId)
+      .maybeSingle();
+
+    if (pErr || !payment) {
+      return res.status(404).json({ error: "Pago no encontrado" });
+    }
+
+    if (payment.status === "confirmed") {
+      return res.status(400).json({ error: "Este pago ya fue confirmado previamente" });
+    }
+
+    const leasingContract = await getActiveLeasingContract(payment.plate);
+    const isLeasing = !!(leasingContract && !leasingContract.start_date_pending_confirmation);
+
+    if (isLeasing) {
+      // 🔴 2 & 🟡 4: Cascada estricta. Si falla, NO confirmamos el pago
+      const cascadeResult = await applyLeasingPayment(payment.id, Number(payment.amount), leasingContract.id);
+      if (!cascadeResult.ok) {
+        return res.status(422).json({
+          error: `No se pudo aplicar la cuota de leasing: ${cascadeResult.error}`,
+        });
+      }
+
+      const { error: upErr } = await supabase
+        .from("payments")
+        .update({
+          status: "confirmed",
+          flagged_for_review: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", payment.id);
+
+      if (upErr) {
+        return res.status(500).json({ error: `Error actualizando estado del pago: ${upErr.message}` });
+      }
+
+      return res.json({
+        success: true,
+        message: "Pago de leasing aprobado y cuota amortizada exitosamente.",
+        cascade: cascadeResult,
+      });
+    } else {
+      // Renting Tradicional:
+      // 🟠 3: Respetamos la distribución ya almacenada
+      const { error: upErr } = await supabase
+        .from("payments")
+        .update({
+          status: "confirmed",
+          flagged_for_review: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", payment.id);
+
+      if (upErr) {
+        return res.status(500).json({ error: `Error actualizando estado del pago: ${upErr.message}` });
+      }
+
+      // Si tenía cuota de anticipo asociada y crédito, marcarla pagada
+      if (payment.installment_number != null && Number(payment.credit_installment_amount) > 0) {
+        const { data: activeAdv } = await supabase
+          .from("operational_advances")
+          .select("id")
+          .eq("plate", payment.plate)
+          .eq("status", "active")
+          .limit(1)
+          .maybeSingle();
+
+        if (activeAdv) {
+          await supabase
+            .from("operational_advance_schedule")
+            .update({
+              status: "paid",
+              paid_date: payment.payment_date,
+            })
+            .eq("advance_id", activeAdv.id)
+            .eq("installment_no", payment.installment_number);
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: "Pago de renting aprobado exitosamente.",
+      });
+    }
+  } catch (err: any) {
+    console.error("[approve payment] error:", err.message);
     return res.status(500).json({ error: err.message });
   }
 });
