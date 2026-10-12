@@ -73,10 +73,15 @@ Reglas confirmadas por el negocio (2026-10-02/03):
 | Monto < cuota (tolerancia $1) | `LEASING_AMOUNT_MISMATCH` | No |
 | Monto > cuota | `LEASING_EXCESS_PAYMENT` | **Sí**: la cuota se cubre y el sobrante solo se etiqueta |
 
-- **Sobrantes:** por ahora (decisión 2026-10-03) **no** se abonan a anticipos, capital ni a nada. Solo se etiquetan.
+- **Sobrantes y anticipos operativos (decisión 2026-10-12):**
+  - Si un vehículo en leasing tiene un anticipo operativo activo y el pago ingresa con `installment_number`:
+    1. Se deduce previamente la cuota del anticipo (`payments.credit_installment_amount = cuota_anticipo`).
+    2. El monto enviado a la cascada de leasing es `monto_pago - credit_installment_amount`, cubriendo exactamente la cuota contractual sin generar falso excedente.
+    3. La cuota del anticipo se amortiza en `operational_advance_schedule`, sincronizando `current_installment` y cerrando el anticipo si culmina.
+  - Si no hay cuota de anticipo asociada y el monto supera la cuota contractual, el sobrante se etiqueta como `LEASING_EXCESS_PAYMENT`.
 - **Pago de $1:** marcador de "vehículo en mantenimiento ese día". No es prueba, no se borra y no se cruza con la cuota.
 - Antes de corregir un monto que no cuadra, **revisar el comprobante**: puede ser error de digitación.
-- Las columnas de reparto de `payments` (`insurance_amount`, `maintenance_amount`, `delivery_amount`, `credit_installment_amount`) son del **renting** y **no** sirven para calcular la parte de leasing. La parte de leasing está en `payment_distributions`.
+- Para vehículos de leasing con anticipo, `credit_installment_amount` guarda la amortización del anticipo; los rubros de leasing (mtto, capital, interés, admin) se almacenan en `payment_distributions`.
 
 Conciliación manual: `GET /leasing/unreconciled`, `PATCH /leasing/schedule/:id/match-payment`, `DELETE /leasing/schedule/:id/match/:paymentId` (pantalla `AdminAmortization`, pestaña "unreconciled").
 

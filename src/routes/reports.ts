@@ -661,6 +661,17 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
         });
       }
 
+      const creditStored = Number(payment.credit_installment_amount || 0);
+      const { data: activeAdvLeasing } = await supabase
+        .from("operational_advances")
+        .select("id, daily_installment, current_installment, installments")
+        .eq("plate", payment.plate)
+        .eq("status", "active")
+        .limit(1)
+        .maybeSingle();
+
+      const leasingExcess = Math.max(0, amt - qTotal - creditStored);
+
       return res.json({
         payment_id: payment.id,
         plate: payment.plate,
@@ -679,14 +690,21 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
           due_date: cuota.due_date,
           status: cuota.status,
         },
+        active_advance: activeAdvLeasing
+          ? {
+              id: activeAdvLeasing.id,
+              daily_installment: Number(activeAdvLeasing.daily_installment || 0),
+              installment_no: payment.installment_number ?? null,
+            }
+          : null,
         breakdown: {
           maintenance: mExp,
           car_capital: pExp,
           interest: iExp,
           admin_insurance: aExp,
           normal_quota: 0,
-          advance: 0,
-          excess,
+          advance: creditStored,
+          excess: leasingExcess,
         },
         quota_expected: {
           maintenance: mExp,
@@ -781,8 +799,11 @@ r.post("/payments/:id/approve", async (req: Request, res: Response) => {
     const isLeasing = !!(leasingContract && !leasingContract.start_date_pending_confirmation);
 
     if (isLeasing) {
-      // 🔴 2 & 🟡 4: Cascada estricta. Si falla, NO confirmamos el pago
-      const cascadeResult = await applyLeasingPayment(payment.id, Number(payment.amount), leasingContract.id);
+      // 🔴 2 & 🟡 4: Cascada estricta. Deducir la cuota de anticipo para enviar el canon limpio
+      const creditAmt = Number(payment.credit_installment_amount || 0);
+      const leasingAmt = Math.max(0, Number(payment.amount) - creditAmt);
+
+      const cascadeResult = await applyLeasingPayment(payment.id, leasingAmt, leasingContract.id);
       if (!cascadeResult.ok) {
         return res.status(422).json({
           error: `No se pudo aplicar la cuota de leasing: ${cascadeResult.error}`,
@@ -800,6 +821,53 @@ r.post("/payments/:id/approve", async (req: Request, res: Response) => {
 
       if (upErr) {
         return res.status(500).json({ error: `Error actualizando estado del pago: ${upErr.message}` });
+      }
+
+      // Si el pago de leasing incluía cuota de anticipo y crédito, marcarla pagada
+      if (payment.installment_number != null && creditAmt > 0) {
+        const { data: activeAdv } = await supabase
+          .from("operational_advances")
+          .select("id")
+          .eq("plate", payment.plate)
+          .eq("status", "active")
+          .limit(1)
+          .maybeSingle();
+
+        if (activeAdv) {
+          await supabase
+            .from("operational_advance_schedule")
+            .update({
+              status: "paid",
+              paid_date: payment.payment_date,
+            })
+            .eq("advance_id", activeAdv.id)
+            .eq("installment_no", payment.installment_number);
+
+          // Sincronizar cuota actual y estado del anticipo
+          const { count: paidCount } = await supabase
+            .from("operational_advance_schedule")
+            .select("id", { count: "exact", head: true })
+            .eq("advance_id", activeAdv.id)
+            .eq("status", "paid");
+
+          const newCurrent = paidCount ?? payment.installment_number;
+          const { data: fullAdv } = await supabase
+            .from("operational_advances")
+            .select("installments")
+            .eq("id", activeAdv.id)
+            .single();
+
+          const isComplete = fullAdv && newCurrent >= (fullAdv.installments ?? 0);
+
+          await supabase
+            .from("operational_advances")
+            .update({
+              current_installment: newCurrent,
+              status: isComplete ? "closed" : "active",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", activeAdv.id);
+        }
       }
 
       return res.json({
@@ -842,6 +910,31 @@ r.post("/payments/:id/approve", async (req: Request, res: Response) => {
             })
             .eq("advance_id", activeAdv.id)
             .eq("installment_no", payment.installment_number);
+
+          // Sincronizar cuota actual y estado del anticipo
+          const { count: paidCount } = await supabase
+            .from("operational_advance_schedule")
+            .select("id", { count: "exact", head: true })
+            .eq("advance_id", activeAdv.id)
+            .eq("status", "paid");
+
+          const newCurrent = paidCount ?? payment.installment_number;
+          const { data: fullAdv } = await supabase
+            .from("operational_advances")
+            .select("installments")
+            .eq("id", activeAdv.id)
+            .single();
+
+          const isComplete = fullAdv && newCurrent >= (fullAdv.installments ?? 0);
+
+          await supabase
+            .from("operational_advances")
+            .update({
+              current_installment: newCurrent,
+              status: isComplete ? "closed" : "active",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", activeAdv.id);
         }
       }
 

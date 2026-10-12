@@ -41,8 +41,11 @@ type DriverFlat = {
   plate: string;
   driver_name: string;
   has_credit: boolean;
+  base_amount?: number | null;
   default_amount: number | null;
   default_installment: number | null;
+  credit_daily_installment?: number | null;
+  is_leasing?: boolean;
 };
 
 type DriverResp =
@@ -107,21 +110,37 @@ function computeBaseSplit(amount: number) {
   return { insurance, maintenance, delivery, credit };
 }
 
-function computeInstallmentSplit(amount: number) {
+function computeInstallmentSplit(amount: number, creditInstallment = 0, base = 70000) {
   const a = clampNonNeg(amount);
+  const expectedMin = base + creditInstallment;
 
-  if (a < 70000) {
-    if (a > 5000) {
-      const insurance = 5000;
-      const delivery = a - 5000;
-      return { insurance, delivery, credit: 0, shortfall: 70000 - a, installmentStatus: "pending" as const };
-    }
-    return { insurance: 0, delivery: 0, credit: 0, shortfall: 70000 - a, installmentStatus: "pending" as const };
+  if (a < expectedMin) {
+    const insurance = a >= 5000 ? 5000 : 0;
+    const maintenance = a > insurance ? Math.min(6000, a - insurance) : 0;
+    const delivery = a > (insurance + maintenance) ? a - insurance - maintenance : 0;
+    return {
+      insurance,
+      maintenance,
+      delivery,
+      credit: 0,
+      shortfall: expectedMin - a,
+      installmentStatus: "pending" as const,
+    };
   }
 
-  const base = computeBaseSplit(a);
-  const installmentStatus = base.credit > 0 ? ("paid" as const) : ("pending" as const);
-  return { ...base, shortfall: 0, installmentStatus };
+  const credit = creditInstallment;
+  const rem = a - credit;
+  const insurance = Math.min(5000, rem);
+  const maintenance = rem > insurance ? Math.min(6000, rem - insurance) : 0;
+  const delivery = rem > (insurance + maintenance) ? rem - insurance - maintenance : 0;
+  return {
+    insurance,
+    maintenance,
+    delivery,
+    credit,
+    shortfall: 0,
+    installmentStatus: credit > 0 ? ("paid" as const) : ("pending" as const),
+  };
 }
 
 // Tooltip simple sin librerías
@@ -257,6 +276,8 @@ export default function App() {
     delivery_amount: "",
     credit_installment_amount: "",
   });
+  const [creditDailyInstallment, setCreditDailyInstallment] = useState<number | null>(null);
+  const [baseAmount, setBaseAmount] = useState<number>(70000);
 
   const [file, setFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -339,14 +360,16 @@ export default function App() {
 
     // Regla: siempre desglosa incluso sin installment_number
     const auto =
-      installmentN != null ? computeInstallmentSplit(amountN) : { ...computeBaseSplit(amountN), shortfall: 0, installmentStatus: null as any };
+      installmentN != null
+        ? computeInstallmentSplit(amountN, creditDailyInstallment ?? 0, baseAmount)
+        : { ...computeBaseSplit(amountN), shortfall: 0, installmentStatus: null as any };
 
     setSplit({
       insurance_amount: auto.insurance ? String(auto.insurance) : "",
       delivery_amount: auto.delivery ? String(auto.delivery) : "",
       credit_installment_amount: auto.credit ? String(auto.credit) : "",
     });
-  }, [amountN, installmentN, editSplit]);
+  }, [amountN, installmentN, editSplit, creditDailyInstallment, baseAmount]);
 
   // ---------- Autocompletar / validar placa ----------
   useEffect(() => {
@@ -355,12 +378,16 @@ export default function App() {
     async function fetchDriver() {
       if (!plateValid) {
         setPlateExists(true);
+        setCreditDailyInstallment(null);
+        setBaseAmount(70000);
         return;
       }
       try {
         const rs = await fetch(`${API}/drivers/${f.plate}`);
         if (!rs.ok) {
           setPlateExists(false);
+          setCreditDailyInstallment(null);
+          setBaseAmount(70000);
           return;
         }
         const raw: DriverResp = await rs.json();
@@ -384,21 +411,28 @@ export default function App() {
         setPlateExists(found);
 
         if (found && d) {
+          setBaseAmount(d.base_amount || 70000);
+          setCreditDailyInstallment(d.credit_daily_installment ?? null);
           setF((prev) => ({
             ...prev,
             payer_name: d.driver_name || prev.payer_name,
             amountStr:
-              d.has_credit && d.default_amount
+              d.default_amount
                 ? fmtCOP.format(d.default_amount)
                 : prev.amountStr,
             installment_number:
-              (!leasingInfo?.has_leasing && d.has_credit && d.default_installment)
+              d.has_credit && d.default_installment
                 ? String(d.default_installment)
-                : (leasingInfo?.has_leasing ? "" : prev.installment_number),
+                : prev.installment_number,
           }));
+        } else {
+          setBaseAmount(70000);
+          setCreditDailyInstallment(null);
         }
       } catch {
         setPlateExists(true);
+        setCreditDailyInstallment(null);
+        setBaseAmount(70000);
       }
     }
 
@@ -510,12 +544,12 @@ export default function App() {
     }
   }
 
-  // Si el vehículo tiene leasing activo, limpiar cuota para evitar asignación a anticipos operativos
+  // Si el vehículo tiene leasing activo y NO tiene anticipo, limpiar cuota
   useEffect(() => {
-    if (leasingInfo?.has_leasing) {
+    if (leasingInfo?.has_leasing && !creditDailyInstallment) {
       setF((prev) => (prev.installment_number ? { ...prev, installment_number: "" } : prev));
     }
-  }, [leasingInfo]);
+  }, [leasingInfo, creditDailyInstallment]);
 
   // --- Batch Preview: días según modalidad ---
   // 1 semana = 6 días pagables (hay 1 día de pico y placa)
@@ -655,11 +689,12 @@ export default function App() {
 
   const installmentAutoInfo = useMemo(() => {
     if (installmentN == null) return null;
-    const auto = computeInstallmentSplit(amountN);
+    const auto = computeInstallmentSplit(amountN, creditDailyInstallment ?? 0, baseAmount);
     return auto;
-  }, [installmentN, amountN]);
+  }, [installmentN, amountN, creditDailyInstallment, baseAmount]);
 
-  const showInstallmentLt70kNotice = installmentN != null && amountN > 0 && amountN < 70000;
+  const expectedMinNotice = baseAmount + (creditDailyInstallment ?? 0);
+  const showInstallmentLt70kNotice = installmentN != null && amountN > 0 && amountN < expectedMinNotice;
 
   const mismatch = useMemo(() => {
     if (!editSplit) return false;
@@ -670,14 +705,14 @@ export default function App() {
   const tooltipLinesForCurrent = useMemo(() => {
     const auto =
       installmentN != null
-        ? computeInstallmentSplit(amountN)
+        ? computeInstallmentSplit(amountN, creditDailyInstallment ?? 0, baseAmount)
         : { ...computeBaseSplit(amountN), shortfall: 0, installmentStatus: null as any };
 
     // Si editSplit, mostramos lo que el usuario puso; si no, mostramos auto
     const insurance = editSplit ? splitN.i : auto.insurance;
     const delivery = editSplit ? splitN.d : auto.delivery;
     const credit = editSplit ? splitN.c : auto.credit;
-    const shortfall = installmentN != null ? (editSplit ? Math.max(0, 70000 - amountN) : auto.shortfall) : 0;
+    const shortfall = installmentN != null ? (editSplit ? Math.max(0, expectedMinNotice - amountN) : auto.shortfall) : 0;
 
     const lines = [
       `Seguro: $${fmtCOP.format(insurance)}`,
@@ -691,7 +726,7 @@ export default function App() {
 
     lines.push(`Fórmula: total = seguro + entrega + cuota`);
     return lines;
-  }, [amountN, installmentN, editSplit, splitN.i, splitN.d, splitN.c]);
+  }, [amountN, installmentN, editSplit, splitN.i, splitN.d, splitN.c, creditDailyInstallment, expectedMinNotice, baseAmount]);
 
   // Helper: do the actual payment POST (with optional skip_receipt_check)
   async function createPayment(body: any, skipCheck = false) {
@@ -804,7 +839,7 @@ export default function App() {
         plate: f.plate.trim().toUpperCase(),
         payment_date: f.payment_date,
         amount: amountN,
-        installment_number: leasingInfo?.has_leasing ? null : (f.installment_number ? Number(f.installment_number) : null),
+        installment_number: f.installment_number ? Number(f.installment_number) : null,
         proof_url,
         upload_id,
         status: f.status as Payment["status"],
@@ -1076,7 +1111,7 @@ export default function App() {
 
               {showInstallmentLt70kNotice && (
                 <div className="mt-1 text-xs text-amber-700">
-                  ⚠️ Monto &lt; 70.000: la cuota quedará <b>pendiente</b>.
+                  ⚠️ Monto &lt; ${fmtCOP.format(expectedMinNotice)}: la cuota quedará <b>pendiente</b>.
                 </div>
               )}
             </div>
@@ -1086,20 +1121,22 @@ export default function App() {
               <label className="mb-1 block text-sm font-medium">Cuota #</label>
               <input
                 className={`w-full rounded-xl border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-black/60 ${
-                  leasingInfo?.has_leasing ? "bg-gray-100 text-gray-500 cursor-not-allowed" : "bg-white"
+                  leasingInfo?.has_leasing && !creditDailyInstallment ? "bg-gray-100 text-gray-500 cursor-not-allowed" : "bg-white"
                 }`}
                 type="number"
                 inputMode="numeric"
                 step="1"
                 min="1"
-                placeholder={leasingInfo?.has_leasing ? "No aplica (Leasing)" : "1"}
-                value={leasingInfo?.has_leasing ? "" : f.installment_number}
-                disabled={Boolean(leasingInfo?.has_leasing)}
+                placeholder={leasingInfo?.has_leasing && !creditDailyInstallment ? "No aplica (Leasing)" : "1"}
+                value={leasingInfo?.has_leasing && !creditDailyInstallment ? "" : f.installment_number}
+                disabled={Boolean(leasingInfo?.has_leasing && !creditDailyInstallment)}
                 onChange={(e) => setF({ ...f, installment_number: e.target.value })}
               />
               {leasingInfo?.has_leasing ? (
                 <div className="mt-1 text-xs font-medium text-indigo-700">
-                  🏢 Vehículo en Leasing: la cuota se concilia contra el cronograma contractual automáticamente.
+                  {creditDailyInstallment
+                    ? "🏢 Leasing con anticipo activo: la cuota ingresada se abonará al anticipo y el canon a la cuota contractual de leasing."
+                    : "🏢 Vehículo en Leasing: la cuota se concilia contra el cronograma contractual automáticamente."}
                 </div>
               ) : (
                 <>

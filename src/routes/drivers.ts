@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { sendEmail } from "../lib/email";
+import { getActiveLeasingContract } from "../lib/leasingCascade";
 
 const r = Router();
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
@@ -237,14 +238,76 @@ r.get("/:plate", async (req: Request, res: Response) => {
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ found: false });
 
+  let hasCredit = Boolean(data.has_credit);
+  let defaultAmount = data.default_amount ?? null;
+  let defaultInstallment = data.default_installment ?? null;
+  let creditDailyInstallment: number | null = null;
+
+  // 1) Determinar tarifa base (Leasing vs Renting)
+  let baseDaily = defaultAmount ? Number(defaultAmount) : 70000;
+  const leasingContract = await getActiveLeasingContract(plate);
+  const isLeasing = !!(leasingContract && !leasingContract.start_date_pending_confirmation);
+
+  if (isLeasing && leasingContract) {
+    const { data: nextCuota } = await supabase
+      .from("leasing_schedule")
+      .select("maintenance_expected, admin_expected, interest_expected, principal_expected")
+      .eq("contract_id", leasingContract.id)
+      .neq("status", "paid")
+      .order("installment_no", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (nextCuota) {
+      baseDaily = Math.round(
+        Number(nextCuota.maintenance_expected) +
+        Number(nextCuota.admin_expected) +
+        Number(nextCuota.interest_expected) +
+        Number(nextCuota.principal_expected)
+      );
+    }
+  }
+
+  // 2) Si el vehículo tiene un anticipo operacional activo, reflejarlo automáticamente
+  const { data: activeAdv } = await supabase
+    .from("operational_advances")
+    .select("id, daily_installment, current_installment, installments")
+    .eq("plate", plate)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+
+  if (activeAdv) {
+    hasCredit = true;
+    creditDailyInstallment = Number(activeAdv.daily_installment || 0);
+
+    // Buscar la siguiente cuota pendiente real en el cronograma
+    const { data: nextUnpaid } = await supabase
+      .from("operational_advance_schedule")
+      .select("installment_no")
+      .eq("advance_id", activeAdv.id)
+      .neq("status", "paid")
+      .order("installment_no", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    defaultInstallment = nextUnpaid?.installment_no ?? ((activeAdv.current_installment ?? 0) + 1);
+    defaultAmount = baseDaily + creditDailyInstallment;
+  } else {
+    defaultAmount = baseDaily;
+  }
+
   return res.json({
     found: true,
     driver: {
       plate: data.plate,
       driver_name: data.driver_name,
-      has_credit: Boolean(data.has_credit),
-      default_amount: data.default_amount ?? null,
-      default_installment: data.default_installment ?? null,
+      has_credit: hasCredit,
+      base_amount: baseDaily,
+      default_amount: defaultAmount,
+      default_installment: defaultInstallment,
+      credit_daily_installment: creditDailyInstallment,
+      is_leasing: isLeasing,
     },
   });
 });

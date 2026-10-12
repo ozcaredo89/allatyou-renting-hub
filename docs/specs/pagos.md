@@ -32,10 +32,17 @@ Para vehículos **sin leasing**, cada pago se reparte en columnas de `payments`:
 | `insurance_amount` (seguro/depósito) | $5.000 si el monto ≥ $5.000 |
 | `maintenance_amount` (provisión mtto.) | min($6.000, resto) |
 | `delivery_amount` (ingreso neto) | todo el remanente (sin tope desde el fix #5229) |
-| `credit_installment_amount` (cuota de anticipo) | Parte del pago diario que se abona a la cuota del anticipo activo. **Regla:** debe tomarse del cronograma del anticipo (`operational_advance_schedule.installment_amount` de la cuota `installment_number`). ⚠️ Hoy el reparto automático la deja en 0 y solo se llena a mano (ver §7) |
+| `credit_installment_amount` (cuota de anticipo) | Parte del pago diario que se abona a la cuota del anticipo activo. **Regla:** se toma del valor diario del anticipo activo (`operational_advance_schedule.installment_amount` de la cuota `installment_number`). |
 
 - `installment_number` = número de la cuota del anticipo que se paga con este pago.
-- Con `installment_number` y monto < $70.000: la cuota queda `pending`, se registra el faltante (`installment_shortfall`) y la alerta `AMOUNT_LT_70000_INSTALLMENT_PENDING`.
+- **Detección y sugerencia automática:** Al consultar datos de la placa (`GET /drivers/:plate`), la API revisa si existe un anticipo operativo activo (`status = 'active'`). Si existe:
+  - Marca `has_credit: true`.
+  - Sugiere `default_installment` consultando la cuota pendiente más antigua en `operational_advance_schedule` (`status != 'paid'`, ordenada por `installment_no ASC limit 1`), con fallback a `current_installment + 1`.
+  - Sugiere `default_amount = tarifa_base + daily_installment` (ej. $70.000 + $30.000 = $100.000).
+  - Retorna `credit_daily_installment` para alimentar el auto-desglose del formulario en frontend.
+- **Cálculo automático de `credit_installment_amount`:** Cuando se envía `installment_number` y hay un anticipo activo:
+  - Si el monto cubre tarifa base + cuota (ej. monto ≥ $100.000): `credit_installment_amount` toma el valor de la cuota del cronograma (`operational_advance_schedule.installment_amount`), el resto ($70.000+) se distribuye en seguro ($5.000), mantenimiento ($6.000) y delivery (remanente completo), y la cuota queda `paid`.
+  - Si el monto no alcanza para tarifa + cuota (monto < tarifa base + cuota esperada): la cuota queda `pending`, `credit_installment_amount = 0`, se registra el faltante (`installment_shortfall`) y la alerta `AMOUNT_LT_70000_INSTALLMENT_PENDING`.
 - **Pagos menores a $70.000:** pueden ocurrir por realidades del negocio (pago parcial, acuerdo con el conductor). Se aceptan, pero el pago debe llevar una **nota que explique el motivo** y cómo se repartió.
 - Los overrides manuales no pueden ser negativos. Sin cuota, la suma no puede superar el monto.
 - Para vehículos **con leasing**, estas columnas **no** representan el reparto real; ver `leasing.md` §4.
@@ -60,7 +67,7 @@ Pantalla Reports: aviso con el conteo global de pendientes, filtro `pending_only
 - `GET /reports/payments/:id/approval-preview` muestra el reparto que se aplicará.
 - `POST /reports/payments/:id/approve`:
   - **Leasing:** aplica la cascada estricta (cuota con `due_date = payment_date`). Si no hay cuota o ya está pagada, `can_approve = false`. Si la cascada falla, el pago **no** se confirma (422).
-  - **Renting:** respeta el reparto guardado al crear el pago; solo cambia el `status` y marca pagada la cuota del anticipo si aplica.
+  - **Renting:** respeta el reparto guardado al crear el pago; solo cambia el `status`. Si el pago tiene `installment_number` y `credit_installment_amount > 0`, marca la cuota como `paid` en `operational_advance_schedule`, sincroniza `operational_advances.current_installment = paidCount` y cierra el anticipo si se completaron todas las cuotas.
   - Nunca recalcula ni inventa montos.
 
 ## 6. Otros flujos
@@ -72,5 +79,4 @@ Pantalla Reports: aviso con el conteo global de pendientes, filtro `pending_only
 
 ## 7. Pendientes de desarrollo (brechas entre la regla y el código)
 
-- **`credit_installment_amount` automático:** desde el fix #5229 el reparto automático nunca lo asigna (backend y `Pay.tsx`), así que la cuota del anticipo solo queda `paid` si alguien escribe el crédito a mano. Debe llenarse solo con el valor de la cuota del cronograma del anticipo.
-- **Reparto con monto < $70.000:** `computeInstallmentSplit` del backend asigna $6.000 a mantenimiento y el de `Pay.tsx` no, así que la UI muestra un reparto y se guarda otro. Hay que unificarlos y generar la **nota explicativa** en el pago.
+- **Asignación retroactiva de cuota en conciliación:** Si un pago entró sin `installment_number` pero el conductor pagó el monto completo de canon + anticipo, permitir en la pantalla de aprobación asignar la cuota pendiente antes de confirmar.

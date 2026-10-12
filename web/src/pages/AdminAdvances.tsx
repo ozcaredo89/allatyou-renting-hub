@@ -657,7 +657,7 @@ function ScheduleModal({
                   <thead className="bg-gray-50 text-left sticky top-0 z-10">
                     <tr>
                       <th className="px-4 py-2">#</th>
-                      <th className="px-4 py-2">Fecha</th>
+                      <th className="px-4 py-2">Vencimiento</th>
                       <th className="px-4 py-2">Cuota</th>
                       <th className="px-4 py-2">Estado</th>
                       <th className="px-4 py-2">Acción</th>
@@ -666,12 +666,16 @@ function ScheduleModal({
                   <tbody>
                     {rows.map((r) => {
                       const state = r.overdue && r.status !== "paid" ? "overdue" : r.status;
-                      const displayDate = r.status === 'paid' && r.paid_date ? r.paid_date : r.due_date;
                       
                       return (
                         <tr key={r.id} className="border-t hover:bg-gray-50">
                           <td className="px-4 py-2">{r.installment_no}</td>
-                          <td className="px-4 py-2 text-gray-600">{displayDate}</td>
+                          <td className="px-4 py-2 text-gray-600">
+                            <div>{r.due_date}</div>
+                            {r.status === 'paid' && r.paid_date && r.paid_date !== r.due_date && (
+                              <div className="text-[11px] text-emerald-600 font-medium">Pagada: {r.paid_date}</div>
+                            )}
+                          </td>
                           <td className="px-4 py-2 font-medium">
                             ${fmtCOP.format(r.installment_amount)}
                           </td>

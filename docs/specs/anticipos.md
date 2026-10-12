@@ -24,8 +24,11 @@ Un **anticipo operativo** es dinero que la empresa presta a un conductor (o cola
 
 ## 3. Cómo se pagan las cuotas
 
-- Desde un pago diario con `installment_number` (ver `pagos.md` §3): `credit_installment_amount` es lo que se abona a la cuota y **debe salir del valor de la cuota en el cronograma** (hoy se llena a mano; pendiente de desarrollo). Si el pago es `rejected`, no toca el cronograma.
-- Directamente: `POST /advances/:id/payments` marca una cuota pagada y actualiza `current_installment`.
+- **Desde el pago diario con `installment_number` (ver `pagos.md` §3):**
+  - Detección automática: `GET /drivers/:plate` consulta `operational_advances` en estado `active`. Si existe, reporta `has_credit: true`, prellena `default_installment` con la cuota pendiente más antigua de `operational_advance_schedule` (`status != 'paid'`, `order installment_no asc limit 1`, con fallback a `current_installment + 1`), y suma `daily_installment` a la tarifa sugerida (ej. $70.000 + $30.000 = $100.000). Retorna `credit_daily_installment` para el auto-desglose.
+  - Al crearse el pago (`POST /payments`), `credit_installment_amount` toma automáticamente el valor de la cuota del cronograma (`installment_amount`) si el monto cubre tarifa + cuota, y la cuota se marca `paid` en `operational_advance_schedule`. Luego `maybeCloseAdvance` sincroniza `operational_advances.current_installment = paidCount` y cierra el anticipo (`status = 'closed'`) si se completaron todas las cuotas. Si el pago es `rejected`, no toca el cronograma.
+  - Al aprobarse un pago en `pending` (`POST /reports/payments/:id/approve`), si este tiene `installment_number` y `credit_installment_amount > 0`, la cuota se marca `paid` en `operational_advance_schedule`, se sincroniza `operational_advances.current_installment = paidCount` y se cierra el anticipo si no quedan cuotas pendientes.
+- **Directamente:** `POST /advances/:id/payments` marca una cuota pagada y actualiza `current_installment`.
 - Si hay más de un anticipo activo para la placa, el pago se rechaza con 400 (no debería pasar por la regla del índice único).
 
 ## 4. Anticipos originados en otros módulos
@@ -33,7 +36,7 @@ Un **anticipo operativo** es dinero que la empresa presta a un conductor (o cola
 | Origen | Características |
 |---|---|
 | Excedente de una Nota Débito de mantenimiento (`gastos-fondo-mantenimiento.md`) | Tasa 0%, N cuotas (default 10) que suman exactamente el excedente, nota "Excedente de mantenimiento por gasto(s): …" |
-| Pago de mora con anticipo (`pagos.md` §6) | Usa un anticipo existente para cubrir días de renta atrasados |
+| Pago de mora con anticipo (`pagos.md` §6) | Usa un anticipo existente para cubrir días de renta atrasados (crea pagos con `receipt_status = 'advance_offset'`). **Aclaración clave:** estos pagos saldan la deuda de renta del vehículo, pero **no** son abonos del conductor al anticipo. La amortización del conductor ocurre cuando este paga sus cuotas diarias de recuperación (ej. $30.000) junto con su canon. |
 
 **No hay saldo de anticipo.** El anticipo es dinero que se entrega al conductor; parte puede destinarse a pagar entregas atrasadas y el excedente queda en manos del conductor. No se registra cuánto se usó ni cuánto sobró (decisión 2026-10-12). Lo único que se controla es que lo pagado con el anticipo no supere su monto.
 

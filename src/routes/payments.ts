@@ -109,10 +109,11 @@ function computeBaseSplit(totalAmount: number) {
  *   - installment_status = paid si credit > 0 else pending
  *   - shortfall = 0
  */
-function computeInstallmentSplit(totalAmount: number) {
+function computeInstallmentSplit(totalAmount: number, creditExpected = 0, baseRate = 70000) {
   const amount = clampNonNeg(totalAmount);
+  const expectedTotal = baseRate + creditExpected;
 
-  if (amount < 70000) {
+  if (amount < expectedTotal) {
     const insurance = amount >= 5000 ? 5000 : 0;
     const maintenance = amount > insurance ? Math.min(6000, amount - insurance) : 0;
     const delivery = amount > (insurance + maintenance) ? amount - insurance - maintenance : 0;
@@ -122,15 +123,22 @@ function computeInstallmentSplit(totalAmount: number) {
       delivery,
       credit: 0,
       installment_status: "pending" as const,
-      shortfall: 70000 - amount,
+      shortfall: expectedTotal - amount,
       issue_code: "AMOUNT_LT_70000_INSTALLMENT_PENDING" as const,
     };
   }
 
-  const base = computeBaseSplit(amount);
-  const installment_status: InstallmentStatus = base.credit > 0 ? "paid" : "pending";
+  const credit = creditExpected;
+  const rem = amount - credit;
+  const insurance = Math.min(5000, rem);
+  const maintenance = rem > insurance ? Math.min(6000, rem - insurance) : 0;
+  const delivery = rem > (insurance + maintenance) ? rem - insurance - maintenance : 0;
+  const installment_status: InstallmentStatus = credit > 0 ? "paid" : "pending";
   return {
-    ...base,
+    insurance,
+    maintenance,
+    delivery,
+    credit,
     installment_status,
     shortfall: 0,
     issue_code: null as string | null,
@@ -149,7 +157,7 @@ function hasAnyOverride(body: any): boolean {
 async function getActiveAdvanceByPlateOrError(plate: string, paymentDate: string, paymentIdForLog: number | null) {
   const { data, error } = await supabase
     .from("operational_advances")
-    .select("id, plate, start_date, status")
+    .select("id, plate, start_date, status, daily_installment, current_installment, installments")
     .eq("plate", plate)
     .eq("status", "active");
 
@@ -331,6 +339,14 @@ async function applyScheduleStatus(params: {
 }
 
 async function maybeCloseAdvance(advance_id: number) {
+  // 1) Contar cuotas pagadas reales en el cronograma
+  const { count: paidCount } = await supabase
+    .from("operational_advance_schedule")
+    .select("id", { count: "exact", head: true })
+    .eq("advance_id", advance_id)
+    .eq("status", "paid");
+
+  // 2) Revisar si quedan cuotas pendientes
   const { data: rest, error } = await supabase
     .from("operational_advance_schedule")
     .select("id")
@@ -338,9 +354,17 @@ async function maybeCloseAdvance(advance_id: number) {
     .neq("status", "paid")
     .limit(1);
 
-  if (!error && (rest?.length ?? 0) === 0) {
-    await supabase.from("operational_advances").update({ status: "closed" }).eq("id", advance_id);
-  }
+  const isClosed = !error && (rest?.length ?? 0) === 0;
+
+  // 3) Sincronizar cuota actual y estado del anticipo
+  await supabase
+    .from("operational_advances")
+    .update({
+      current_installment: paidCount ?? 0,
+      status: isClosed ? "closed" : "active",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", advance_id);
 }
 
 // Helper para determinar la tarifa diaria de renta de un vehículo (drivers_vw, leasing o historial)
@@ -1406,7 +1430,24 @@ r.post("/", async (req: Request, res: Response) => {
     installment_status = null;
     installment_shortfall = null;
   } else {
-    const calc = computeInstallmentSplit(amt);
+    let expectedCredit = 0;
+    const advRes = await getActiveAdvanceByPlateOrError(upperPlate, payment_date, null);
+    if (advRes.kind === "one") {
+      const { data: schedRow } = await supabase
+        .from("operational_advance_schedule")
+        .select("installment_amount")
+        .eq("advance_id", advRes.advance.id)
+        .eq("installment_no", instNo)
+        .maybeSingle();
+
+      expectedCredit = Number(schedRow?.installment_amount || advRes.advance.daily_installment || 0);
+    }
+
+    // Resolver tarifa base dinámica para esta placa (drivers_vw, leasing o fallback 70000)
+    const { dailyRate } = await resolveDailyRentRate(upperPlate);
+    const baseRate = dailyRate > 0 ? dailyRate : 70000;
+
+    const calc = computeInstallmentSplit(amt, expectedCredit, baseRate);
     splitInsurance = calc.insurance;
     splitMaintenance = calc.maintenance;
     splitDelivery = calc.delivery;
@@ -1421,8 +1462,8 @@ r.post("/", async (req: Request, res: Response) => {
         plate: upperPlate,
         payment_date,
         issue_code: calc.issue_code,
-        message: "Installment payment amount < 70000; installment marked pending and credit set to 0.",
-        metadata: { amount: amt, installment_no: instNo },
+        message: "Installment payment amount < expected total; installment marked pending and credit set to 0.",
+        metadata: { amount: amt, installment_no: instNo, expected_credit: expectedCredit, base_rate: baseRate },
       });
     }
   }
@@ -1693,7 +1734,9 @@ r.post("/", async (req: Request, res: Response) => {
   if (safeStatus === "confirmed" && amt > 0) {
     const leasingContract = await getActiveLeasingContract(upperPlate);
     if (leasingContract && !leasingContract.start_date_pending_confirmation) {
-      const cascadeResult = await applyLeasingPayment(payment.id, amt, leasingContract.id);
+      // Deducir la parte del anticipo para que la cascada reciba el canon exacto sin excedente
+      const leasingAmt = Math.max(0, amt - splitCredit);
+      const cascadeResult = await applyLeasingPayment(payment.id, leasingAmt, leasingContract.id);
       if (!cascadeResult.ok) {
         // Loguear el error pero no revertir el payment (ya está registrado)
         await logInconsistency({
@@ -1702,10 +1745,37 @@ r.post("/", async (req: Request, res: Response) => {
           payment_date,
           issue_code: "LEASING_CASCADE_ERROR",
           message: cascadeResult.error ?? "applyLeasingPayment failed",
-          metadata: { contract_id: leasingContract.id, amount: amt },
+          metadata: { contract_id: leasingContract.id, amount: leasingAmt, original_amount: amt, credit_deducted: splitCredit },
         });
       }
-      // Retornar temprano: el pago de leasing no toca operational_advance_schedule
+
+      // Si el pago incluía cuota de anticipo, amortizarla en operational_advance_schedule
+      if (instNo != null && splitCredit > 0) {
+        const advRes = await getActiveAdvanceByPlateOrError(upperPlate, payment_date, payment.id);
+        if (advRes.kind === "one") {
+          const advance = advRes.advance;
+          const ensured = await ensureScheduleRow({
+            advance_id: advance.id,
+            start_date: advance.start_date,
+            installment_no: instNo,
+            payment_date,
+            plate: upperPlate,
+            payment_id: payment.id,
+            desired_status: installment_status === "paid" ? "paid" : "pending",
+          });
+          if (ensured.ok) {
+            await applyScheduleStatus({
+              schedule_id: ensured.row.id,
+              desired_status: installment_status === "paid" ? "paid" : "pending",
+              payment_date,
+              plate: upperPlate,
+              payment_id: payment.id,
+            });
+            await maybeCloseAdvance(advance.id);
+          }
+        }
+      }
+
       return res.status(201).json({
         ...payment,
         leasing: {
