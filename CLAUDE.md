@@ -43,7 +43,7 @@ Database schema changes are plain SQL files in `supabase/migrations/`, named `YY
 - `middleware/basicAuth.ts` — the only auth mechanism for internal/admin routes (see Auth below).
 
 ### Auth model
-There is no session/JWT auth. Admin-facing routes are gated by **HTTP Basic Auth** (`middleware/basicAuth.ts`, credentials from `ADMIN_BASIC_USER`/`ADMIN_BASIC_PASS`), applied per-route at mount time in `index.ts` (e.g. `app.use("/vehicles", basicAuth, vehiclesRoutes)`). Driver/public-facing routes (`/drivers`, `/payments`, `/expenses`, `/marketing`, `/chat`, `/marketplace`, `/pledges`, `/trips`, `/driver-applications`, `/vehicle-applications`) are unauthenticated by design. When adding a new route, decide up front whether it needs `basicAuth` and mount it accordingly — don't add auth logic inside the route handler itself.
+There is no session/JWT auth. Admin-facing routes are gated by **HTTP Basic Auth** (`middleware/basicAuth.ts`, credentials from `ADMIN_BASIC_USER`/`ADMIN_BASIC_PASS`), applied per-route at mount time in `index.ts` (e.g. `app.use("/vehicles", basicAuth, vehiclesRoutes)`). Driver/public-facing routes (`/drivers`, `/payments`, `/marketing`, `/chat`, `/marketplace`, `/pledges`, `/trips`, `/driver-applications`, `/vehicle-applications`) are unauthenticated by design. When adding a new route, decide up front whether it needs `basicAuth` and mount it accordingly — don't add auth logic inside the route handler itself.
 
 Separately, the **`companies`** resource (accounts-receivable / cuentas de cobro) has its own lightweight OTP flow (`routes/companies.ts`: `/companies/auth/request` + `/auth/verify`, code sent via WhatsApp+email, verified client-side by `web/src/components/CompanyLock.tsx` storing an unlock in memory) — unrelated to the admin Basic Auth.
 
@@ -68,6 +68,15 @@ These run in-process (not separate workers) — restarting the API restarts all 
 
 ### Database (Supabase/Postgres)
 Schema lives in `supabase/migrations/*.sql` (chronological, hand-written) plus baseline dumps in `docs/*.sql` (`Database.sql`, `Database_Updates.sql`). Key tables/domains: `payments` (driver payments incl. AI-assisted receipt classification), `expenses`/`expense_vehicles`/`expense_audit_log` (prorated multi-vehicle expenses with audit trail), `vehicle_ledger` (manual accounting adjustments feeding monthly profit), `vehicle_investments` (capital-recovery tracking), `operational_advances`/`operational_advance_schedule` (driver loans with auto-generated payment schedules), leasing/rent-to-own tables (`20260714_leasing_schema.sql` and related migrations), `oracle_nodes`/BI views (GPS telemetry), `driver_liquidations`. The service-role Supabase client in `src/lib/supabase.ts` bypasses RLS — all authorization is therefore enforced at the API layer (`basicAuth`), not in the database.
+
+## Business rules → `docs/specs/`
+Business rules live in `docs/specs/` (index: `docs/specs/README.md`). **Before changing code in one of these domains, read its spec**, and update the spec in the same commit when a rule changes:
+- Leasing / rent-to-own, cascade, `leasing_contracts_summary_vw` → `docs/specs/leasing.md`
+- Driver payments, receipts/anti-fraud, payment approval → `docs/specs/pagos.md`
+- Operational advances (driver loans) → `docs/specs/anticipos.md`
+- Expenses, maintenance fund, debit notes → `docs/specs/gastos-fondo-mantenimiento.md`
+
+Never resolve a business ambiguity by inventing a rule: if the spec doesn't cover it, ask the user and record the answer in the spec.
 
 ## Conventions specific to this repo
 - Code comments, commit-adjacent inline notes, and route docstrings are written in **Spanish**; match that when editing existing files.
