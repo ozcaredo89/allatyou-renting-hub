@@ -689,26 +689,22 @@ export default function AdminVehicles() {
         <div className="mb-3 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setStatusFilter('active')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
-              Operativos
-              {plateFilter.trim() ? (
-                <span className={`ml-1.5 rounded-full text-[10px] px-2 py-0.5 ${statusFilter === 'active' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800 font-bold'}`}>
-                  {activeCount}
-                </span>
-              ) : null}
+              Operativos{" "}
+              <span className={`ml-1.5 rounded-full text-[10px] px-2 py-0.5 ${statusFilter === 'active' ? 'bg-white/20 text-white font-bold' : 'bg-emerald-100 text-emerald-800 font-bold'}`}>
+                {activeCount}
+              </span>
             </button>
             <button onClick={() => setStatusFilter('leasing')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'leasing' ? 'bg-emerald-700 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
               🚗 Leasing / Reservados{" "}
-              <span className={`ml-1 rounded-full text-[10px] px-2 py-0.5 ${statusFilter === 'leasing' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
-                {plateFilter.trim() ? leasingCount : items.filter(v => v.status === 'leasing' || v.status === 'reserved').length}
+              <span className={`ml-1.5 rounded-full text-[10px] px-2 py-0.5 ${statusFilter === 'leasing' ? 'bg-white/20 text-white font-bold' : 'bg-emerald-100 text-emerald-700 font-bold'}`}>
+                {leasingCount}
               </span>
             </button>
             <button onClick={() => setStatusFilter('inactive')} className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${statusFilter === 'inactive' ? 'bg-slate-700 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
-              Vendidos / Inactivos
-              {plateFilter.trim() ? (
-                <span className={`ml-1.5 rounded-full text-[10px] px-2 py-0.5 ${statusFilter === 'inactive' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700 font-bold'}`}>
-                  {inactiveCount}
-                </span>
-              ) : null}
+              Vendidos / Inactivos{" "}
+              <span className={`ml-1.5 rounded-full text-[10px] px-2 py-0.5 ${statusFilter === 'inactive' ? 'bg-white/20 text-white font-bold' : 'bg-slate-200 text-slate-700 font-bold'}`}>
+                {inactiveCount}
+              </span>
             </button>
           </div>
 
