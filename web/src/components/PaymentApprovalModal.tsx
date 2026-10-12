@@ -30,6 +30,8 @@ export type ApprovalPreviewData = {
   type: "leasing" | "renting";
   can_approve?: boolean;
   warning_message?: string | null;
+  installment_number?: number | null;
+  base_rent_rate?: number | null;
   leasing_contract?: {
     id: number;
     installment_no: number | null;
@@ -266,13 +268,23 @@ export function PaymentApprovalModal({
                 )}
               </div>
 
-              {/* Advertencia si no se puede aprobar automáticamente */}
-              {data.can_approve === false && (
-                <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs flex items-start gap-2.5">
-                  <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600 mt-0.5" />
+              {/* Advertencia si no se puede aprobar automáticamente o alerta de conciliación */}
+              {(data.can_approve === false || Boolean(data.warning_message)) && (
+                <div className={`p-3.5 rounded-xl text-xs flex items-start gap-2.5 ${
+                  data.can_approve === false
+                    ? "bg-red-50 border border-red-300 text-red-900"
+                    : "bg-amber-50 border border-amber-300 text-amber-900"
+                }`}>
+                  <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${
+                    data.can_approve === false ? "text-red-600" : "text-amber-600"
+                  }`} />
                   <div>
-                    <p className="font-bold">No se puede aprobar automáticamente</p>
-                    <p className="mt-0.5 text-amber-800 leading-relaxed">
+                    <p className="font-bold">
+                      {data.can_approve === false ? "No se puede aprobar automáticamente" : "Alerta de Conciliación"}
+                    </p>
+                    <p className={`mt-0.5 leading-relaxed ${
+                      data.can_approve === false ? "text-red-800" : "text-amber-800"
+                    }`}>
                       {data.warning_message || "Existe una discrepancia con el cronograma o la cuota ya fue pagada."}
                     </p>
                   </div>
@@ -381,7 +393,9 @@ export function PaymentApprovalModal({
                   <div className={`p-3 rounded-xl border shadow-2xs transition-colors ${
                     (b?.advance || 0) > 0
                       ? "bg-amber-50/50 border-amber-200"
-                      : "bg-white border-gray-200"
+                      : data.installment_number && !data.active_advance
+                        ? "bg-amber-50/70 border-amber-300"
+                        : "bg-white border-gray-200"
                   }`}>
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
@@ -392,12 +406,14 @@ export function PaymentApprovalModal({
                         ${fmtCOP.format(b?.advance || 0)}
                       </span>
                     </div>
-                    <p className="text-[11px] text-gray-400">
+                    <p className="text-[11px] text-gray-500">
                       {data.active_advance
                         ? (b?.advance || 0) > 0
                           ? `Cuota #${data.active_advance.installment_no ?? "—"} descontada de préstamo`
                           : "Tiene anticipo activo (sin cuota en este pago)"
-                        : "Sin anticipo activo"}
+                        : data.installment_number
+                          ? `⚠️ Pago indica Cuota #${data.installment_number} pero no hay anticipo activo`
+                          : "Sin anticipo activo"}
                     </p>
                   </div>
 

@@ -43,6 +43,13 @@ Para vehículos **sin leasing**, cada pago se reparte en columnas de `payments`:
 - **Cálculo automático de `credit_installment_amount`:** Cuando se envía `installment_number` y hay un anticipo activo:
   - Si el monto cubre tarifa base + cuota (ej. monto ≥ $100.000): `credit_installment_amount` toma el valor de la cuota del cronograma (`operational_advance_schedule.installment_amount`), el resto ($70.000+) se distribuye en seguro ($5.000), mantenimiento ($6.000) y delivery (remanente completo), y la cuota queda `paid`.
   - Si el monto no alcanza para tarifa + cuota (monto < tarifa base + cuota esperada): la cuota queda `pending`, `credit_installment_amount = 0`, se registra el faltante (`installment_shortfall`) y la alerta `AMOUNT_LT_70000_INSTALLMENT_PENDING`.
+- **Canon de arrendamiento base del negocio:** En vehículos de renting tradicional, el canon diario estándar es de **$70.000 COP** (salvo tarifa específica configurada en `vehicles.default_amount`).
+- **Pagos con cuota sin anticipo activo o sobrepago sobre canon (decisión 2026-10-12):**
+  - Si un pago registra `installment_number` pero el vehículo **NO** tiene ningún anticipo activo (`operational_advances` con `status = 'active'`):
+    - No es una restricción bloqueante: el pago se registra y `can_approve` permanece en `true`.
+    - Al no haber anticipo activo al cual abonar, `credit_installment_amount` queda en 0 y el excedente se asigna a canon/entrega.
+    - En la pantalla de aprobación (`approval-preview`), el sistema emite una **Alerta de Conciliación** visible informando que el vehículo no tiene anticipo activo y que todo el monto extra se asignó a Canon y $0 a anticipo. Esto alerta al auditor sobre un posible anticipo otorgado que no se ha creado aún en el sistema.
+  - Si el monto pagado de renting supera el canon base ($70.000) sin tener anticipo activo, la pantalla de aprobación también emite la alerta indicando la diferencia sobre el canon habitual.
 - **Pagos menores a $70.000:** pueden ocurrir por realidades del negocio (pago parcial, acuerdo con el conductor). Se aceptan, pero el pago debe llevar una **nota que explique el motivo** y cómo se repartió.
 - Los overrides manuales no pueden ser negativos. Sin cuota, la suma no puede superar el monto.
 - Para vehículos **con leasing**, estas columnas **no** representan el reparto real; ver `leasing.md` §4.

@@ -29,7 +29,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   const overdueOnly     = String(req.query.overdue_only     || "false") === "true";
   const suspiciousOnly  = String(req.query.suspicious_only  || "false") === "true";
   const pendingOnly     = String(req.query.pending_only     || "false") === "true";
-  const includeInactive = String(req.query.include_inactive ?? "true") !== "false";
+  const includeInactive = String(req.query.include_inactive ?? "false") === "true";
 
   // Cota práctica compartida por Paso 1 y Paso 3: un pago más antiguo no sería
   // "el último" si hay alguno más reciente, así que ninguno de los dos pasos
@@ -559,7 +559,7 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
   try {
     const { data: payment, error: pErr } = await supabase
       .from("payments")
-      .select("id, plate, payer_name, payment_date, amount, status, receipt_status, proof_url, installment_number, maintenance_amount, delivery_amount, insurance_amount, credit_installment_amount")
+      .select("id, plate, payer_name, payment_date, amount, status, receipt_status, proof_url, installment_number, installment_status, installment_shortfall, maintenance_amount, delivery_amount, insurance_amount, credit_installment_amount")
       .eq("id", paymentId)
       .maybeSingle();
 
@@ -726,6 +726,15 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
       .limit(1)
       .maybeSingle();
 
+    // Consultar canon de arrendamiento base configurado o fallback al canon estándar del negocio ($70.000)
+    const { data: vRow } = await supabase
+      .from("vehicles")
+      .select("default_amount")
+      .eq("plate", payment.plate)
+      .maybeSingle();
+
+    const baseRentRate = vRow?.default_amount ? Number(vRow.default_amount) : 70000;
+
     const mStored = Number(payment.maintenance_amount || 0);
     const dStored = Number(payment.delivery_amount || 0);
     const iStored = Number(payment.insurance_amount || 0);
@@ -733,6 +742,24 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
     const amt = Number(payment.amount || 0);
     const totalStored = mStored + dStored + iStored + cStored;
     const excess = Math.max(0, amt - totalStored);
+
+    const fmt = new Intl.NumberFormat("es-CO");
+    let warningMessage: string | null = null;
+    const instNo = payment.installment_number ?? null;
+
+    if (!activeAdv) {
+      if (instNo != null && amt > baseRentRate) {
+        const extra = amt - baseRentRate;
+        warningMessage = `El pago indica Cuota #${instNo} y el monto ($${fmt.format(amt)}) supera el canon base ($${fmt.format(baseRentRate)}) por $${fmt.format(extra)}, pero este vehículo NO tiene ningún anticipo activo registrado en el sistema. Todo el valor extra se asignó a Canon y $0 a anticipo. Verifique si falta crear el anticipo operacional antes de aprobar.`;
+      } else if (instNo != null) {
+        warningMessage = `El pago indica Cuota #${instNo}, pero este vehículo NO tiene ningún anticipo activo registrado en el sistema. El abono al anticipo es $0 y todo fue asignado a Canon. Verifique si falta registrar el anticipo.`;
+      } else if (amt > baseRentRate) {
+        const extra = amt - baseRentRate;
+        warningMessage = `El monto pagado ($${fmt.format(amt)}) supera el canon base de renta ($${fmt.format(baseRentRate)}) por $${fmt.format(extra)}, y el vehículo no tiene anticipo activo. Todo el monto extra quedó asignado a Canon/Entrega.`;
+      }
+    } else if (payment.installment_status === "pending" && (payment.installment_shortfall ?? 0) > 0) {
+      warningMessage = `El monto pagado no alcanzó para cubrir la cuota del anticipo (faltante: $${fmt.format(payment.installment_shortfall)}). La cuota permanece pendiente.`;
+    }
 
     return res.json({
       payment_id: payment.id,
@@ -745,7 +772,9 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
       proof_url: payment.proof_url,
       type: "renting",
       can_approve: true,
-      warning_message: null,
+      warning_message: warningMessage,
+      installment_number: instNo,
+      base_rent_rate: baseRentRate,
       active_advance: activeAdv
         ? {
             id: activeAdv.id,

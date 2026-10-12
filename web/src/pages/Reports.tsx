@@ -107,7 +107,7 @@ export default function Reports() {
   const [onlySuspicious, setOnlySuspicious] = useState(false);
   const [onlyPending, setOnlyPending] = useState(false);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
-  const [showInactive, setShowInactive] = useState(true);
+  const [showInactive, setShowInactive] = useState(false);
   const [items, setItems] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -208,7 +208,8 @@ export default function Reports() {
       if (isOverdue)    params.set("overdue_only",    "true");
       if (isSuspicious) params.set("suspicious_only", "true");
       if (isPending)    params.set("pending_only",    "true");
-      if (!withInactive) params.set("include_inactive", "false");
+      if (withInactive) params.set("include_inactive", "true");
+      else params.set("include_inactive", "false");
       params.set("limit",  String(limit));
       params.set("offset", String(nextOffset));
 
@@ -264,11 +265,11 @@ export default function Reports() {
     setOnlyOverdue(false);
     setOnlySuspicious(false);
     setOnlyPending(false);
-    setShowInactive(true);
-    load(0, "", false, false, false, true);
+    setShowInactive(false);
+    load(0, "", false, false, false, false);
   };
 
-  const hasActiveFilters = Boolean(q.trim() || onlyOverdue || onlySuspicious || onlyPending || !showInactive);
+  const hasActiveFilters = Boolean(q.trim() || onlyOverdue || onlySuspicious || onlyPending || showInactive);
 
   const canPrev = offset > 0;
   const canNext = offset + limit < total;
@@ -882,14 +883,14 @@ export default function Reports() {
           <div className="flex items-center gap-2">
             <button
               disabled={!canPrev || loading}
-              onClick={() => load(Math.max(0, offset - limit), q, onlyOverdue, onlySuspicious, showInactive)}
+              onClick={() => load(Math.max(0, offset - limit), q, onlyOverdue, onlySuspicious, onlyPending, showInactive)}
               className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-xs hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               Anterior
             </button>
             <button
               disabled={!canNext || loading}
-              onClick={() => load(offset + limit, q, onlyOverdue, onlySuspicious, showInactive)}
+              onClick={() => load(offset + limit, q, onlyOverdue, onlySuspicious, onlyPending, showInactive)}
               className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-xs hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               Siguiente
