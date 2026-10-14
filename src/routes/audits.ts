@@ -64,16 +64,44 @@ r.put("/rules/:id", async (req: Request, res: Response) => {
 // ==========================================
 r.get("/dashboard", async (req: Request, res: Response) => {
     try {
-        // --- A. TOP INSUMOS (DISTRIBUCIÓN DEL DINERO GESTIONADO EN LA DB) ---
-        // Dado que Supabase no permite agrupar y sumar fácilmente por JSONB o relaciones complejas, 
-        // traeremos los gastos recientes y sumaremos en memoria. Es un approach válido para volúmenes medianos.
-        const { data: expenses, error: expErr } = await supabase
-            .from("expenses")
-            .select("item, total_amount, category, date")
-            // Vamos a analizar el histórico completo o últimos 12 meses
-            .gte("date", new Date(new Date().setFullYear(new Date().getFullYear() - 1)).toISOString().split('T')[0]);
+        const yearQuery = req.query.year ? String(req.query.year).trim() : null;
+        // Paginación en bloques de 1000 para superar el límite por defecto de PostgREST / Supabase
+        const PAGE_SIZE = 1000;
+        let allExpenses: { item: string; total_amount: number; category: string; date: string }[] = [];
+        let from = 0;
+        let hasMore = true;
 
-        if (expErr) throw expErr;
+        while (hasMore) {
+            let q = supabase
+                .from("expenses")
+                .select("item, total_amount, category, date")
+                .order("id", { ascending: true })
+                .range(from, from + PAGE_SIZE - 1);
+
+            if (yearQuery && /^\d{4}$/.test(yearQuery)) {
+                q = q.gte("date", `${yearQuery}-01-01`).lte("date", `${yearQuery}-12-31`);
+            } else {
+                // Últimos 12 meses (por defecto)
+                const oneYearAgo = new Date();
+                oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+                q = q.gte("date", oneYearAgo.toISOString().split('T')[0]);
+            }
+
+            const { data, error } = await q;
+            if (error) throw error;
+
+            if (data && data.length > 0) {
+                allExpenses.push(...data);
+                from += PAGE_SIZE;
+                if (data.length < PAGE_SIZE) {
+                    hasMore = false;
+                }
+            } else {
+                hasMore = false;
+            }
+        }
+
+        const expenses = allExpenses;
 
         // Limpieza básica para el top
         const costMap: Record<string, number> = {};
@@ -136,19 +164,31 @@ r.get("/dashboard", async (req: Request, res: Response) => {
 
         if (alertErr) throw alertErr;
 
-        // --- D. HISTÓRICO DE GASTOS (ÚLTIMOS 6 MESES) ---
-        const last6Months: string[] = [];
+        // --- D. HISTÓRICO DE GASTOS (POR MESES DEL PERÍODO) ---
         const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
         const historyMap: Record<string, { label: string; total: number }> = {};
-        
-        for (let i = 5; i >= 0; i--) {
-            const d = new Date();
-            d.setDate(1); // FIX: prevent month skipping on the 31st
-            d.setMonth(d.getMonth() - i);
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            const label = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
-            last6Months.push(key);
-            historyMap[key] = { label, total: 0 };
+        const historyKeys: string[] = [];
+
+        if (yearQuery && /^\d{4}$/.test(yearQuery)) {
+            // Si es un año específico, mostrar los 12 meses de ese año
+            const yr = parseInt(yearQuery, 10);
+            for (let m = 0; m < 12; m++) {
+                const key = `${yr}-${String(m + 1).padStart(2, '0')}`;
+                const label = `${monthNames[m]} ${yr}`;
+                historyKeys.push(key);
+                historyMap[key] = { label, total: 0 };
+            }
+        } else {
+            // Últimos 12 meses
+            for (let i = 11; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(1); // FIX: prevent month skipping on the 31st
+                d.setMonth(d.getMonth() - i);
+                const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                const label = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+                historyKeys.push(key);
+                historyMap[key] = { label, total: 0 };
+            }
         }
 
         (expenses || []).forEach(e => {
@@ -159,9 +199,27 @@ r.get("/dashboard", async (req: Request, res: Response) => {
             }
         });
 
-        const expensesHistory = last6Months.map(key => ({
+        const expensesHistory = historyKeys.map(key => ({
             month: historyMap[key]!.label,
             total: historyMap[key]!.total
+        }));
+
+        // --- E. MAPA DE CALOR DIARIO (HEATMAP TIPO GITHUB) ---
+        const dailyExpensesMap: Record<string, { total: number; count: number }> = {};
+        (expenses || []).forEach(e => {
+            if (!e.date) return;
+            const dayKey = e.date.substring(0, 10);
+            if (!dailyExpensesMap[dayKey]) {
+                dailyExpensesMap[dayKey] = { total: 0, count: 0 };
+            }
+            dailyExpensesMap[dayKey].total += (Number(e.total_amount) || 0);
+            dailyExpensesMap[dayKey].count += 1;
+        });
+
+        const dailyExpenses = Object.entries(dailyExpensesMap).map(([date, val]) => ({
+            date,
+            total: val.total,
+            count: val.count
         }));
 
         return res.json({
@@ -172,7 +230,8 @@ r.get("/dashboard", async (req: Request, res: Response) => {
             top_expense_items: topItems,
             worst_roi_vehicles: worstVehicles,
             active_alerts: alerts || [],
-            expenses_history: expensesHistory
+            expenses_history: expensesHistory,
+            daily_expenses: dailyExpenses
         });
 
     } catch (err: any) {

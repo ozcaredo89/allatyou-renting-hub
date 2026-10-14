@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { ensureBasicAuth, requestWithBasicAuth } from "../lib/auth";
 import { ShieldAlert, TrendingDown, BellIcon, Settings, AlertTriangle, AlertCircle, CheckCircle, X, Save, Edit2 } from "lucide-react";
+import ExpenseHeatmap, { type DailyExpense } from "../components/ExpenseHeatmap";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -34,6 +35,7 @@ type AuditsDashboard = {
     worst_roi_vehicles: WorstVehicle[];
     active_alerts: AuditAlert[];
     expenses_history: { month: string; total: number }[];
+    daily_expenses?: DailyExpense[];
 };
 
 function formatCurrencyStr(val: number) {
@@ -225,23 +227,42 @@ function RulesModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void 
 export default function AdminAudits() {
     const [dashboard, setDashboard] = useState<AuditsDashboard | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isChangingYear, setIsChangingYear] = useState(false);
     const [isRulesModalOpen, setRulesModalOpen] = useState(false);
+    const [selectedYear, setSelectedYear] = useState<string>("last12");
+
+    // Evitar race conditions cuando el usuario cambia rápidamente de año
+    const activeRequestId = useRef(0);
 
     useEffect(() => {
         ensureBasicAuth();
-        fetchDashboard();
-    }, []);
+        fetchDashboard(selectedYear);
+    }, [selectedYear]);
 
-    const fetchDashboard = async () => {
+    const fetchDashboard = async (year = selectedYear) => {
+        const reqId = ++activeRequestId.current;
+        if (dashboard) {
+            setIsChangingYear(true);
+        } else {
+            setLoading(true);
+        }
         try {
-            const res = await requestWithBasicAuth(`${API}/audits/dashboard`);
+            const url = year === "last12"
+                ? `${API}/audits/dashboard`
+                : `${API}/audits/dashboard?year=${year}`;
+            const res = await requestWithBasicAuth(url);
             if (!res.ok) throw new Error("Error cargando dashboard de auditorías");
             const data = await res.json();
+            // Descartar respuestas si el usuario ya cambió a otro año antes de que esta terminara
+            if (reqId !== activeRequestId.current) return;
             setDashboard(data);
         } catch (err: any) {
             console.error(err);
         } finally {
-            setLoading(false);
+            if (reqId === activeRequestId.current) {
+                setLoading(false);
+                setIsChangingYear(false);
+            }
         }
     };
 
@@ -283,6 +304,9 @@ export default function AdminAudits() {
 
     if (!dashboard) return null;
 
+    const periodLabel = selectedYear === "last12" ? "Últimos 12 meses" : `Año ${selectedYear}`;
+    const historyPeriodLabel = selectedYear === "last12" ? "Últimos 12 meses" : `Meses de ${selectedYear}`;
+
     return (
         <div className="min-h-full bg-slate-50 p-4 md:p-8 space-y-8 animate-in fade-in zoom-in-95 duration-500">
             {/* ENCABEZADO */}
@@ -308,6 +332,14 @@ export default function AdminAudits() {
 
             <RulesModal isOpen={isRulesModalOpen} onClose={() => setRulesModalOpen(false)} />
 
+            {/* MATRIZ DE GASTOS DIARIOS (GITHUB HEATMAP) */}
+            <ExpenseHeatmap
+                dailyExpenses={dashboard.daily_expenses || []}
+                selectedYear={selectedYear}
+                onSelectYear={(yr) => setSelectedYear(yr)}
+                isLoading={isChangingYear}
+            />
+
             {/* SECCIÓN 1: KPI GLOBAL Y ALERTAS */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
@@ -320,7 +352,7 @@ export default function AdminAudits() {
                         <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
                             <TrendingDown className="w-6 h-6 text-slate-400" />
                             Distribución del Gasto
-                            <span className="text-xs font-normal bg-slate-100 text-slate-500 px-2 py-1 rounded-full ml-auto">Últimos meses</span>
+                            <span className="text-xs font-normal bg-slate-100 text-slate-500 px-2 py-1 rounded-full ml-auto">{periodLabel}</span>
                         </h2>
 
                         <div className="space-y-4">
@@ -360,7 +392,7 @@ export default function AdminAudits() {
                         <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
                             <TrendingDown className="w-6 h-6 text-indigo-400" />
                             Histórico de Gastos
-                            <span className="text-xs font-normal bg-slate-100 text-slate-500 px-2 py-1 rounded-full ml-auto">Últimos 6 meses</span>
+                            <span className="text-xs font-normal bg-slate-100 text-slate-500 px-2 py-1 rounded-full ml-auto">{historyPeriodLabel}</span>
                         </h2>
 
                         <div className="h-64 flex items-end gap-2 md:gap-4 mt-8 pb-6 border-b border-slate-100">
