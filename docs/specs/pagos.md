@@ -61,7 +61,7 @@ Para vehículos **sin leasing**, cada pago se reparte en columnas de `payments`:
    - el comprobante existe y **no fue usado** en otro pago (también se protege contra carreras al enlazar `linked_payment_id`);
    - **duplicado por referencia** (normalizada) o por **mismo monto + fecha + placa**;
    - el **monto leído** por OCR coincide con el ingresado.
-3. Si hay alertas, la primera vez responde **409 `RECEIPT_WARNING`**. Si el usuario confirma (`skip_receipt_check`), el pago se guarda marcado como `suspicious_duplicate` o `suspicious_amount_mismatch` según la causa real.
+3. Si hay alertas, la primera vez responde **409 `RECEIPT_WARNING`**. Si la discrepancia es de monto (`amount_mismatch`), el formulario de registro (`Pay.tsx`) ofrece ajustar automáticamente el monto al valor leído del comprobante (`Ajustar y guardar` o `Ajustar en formulario`), registrándose con el monto verificado sin inconsistencia. Si el usuario decide forzar el monto digitado (`skip_receipt_check`), el pago se guarda marcado como `suspicious_duplicate` o `suspicious_amount_mismatch` según la causa real.
 4. Comprobante "VEHÍCULO SIN CONDUCTOR": se acepta con monto $0 solo si el vehículo ya no tiene conductor asignado (`current_driver_id`).
 5. Pago de **$1** = marcador de día en taller/mantenimiento (no se cruza con leasing).
 

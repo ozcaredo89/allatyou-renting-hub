@@ -201,9 +201,19 @@ export default function App() {
   // Duplicate warning modal state
   type DuplicateWarning = {
     message: string;
+    warnings?: string[];
+    has_duplicate?: boolean;
+    match_type?: string | null;
     ocr_reference: string | null;
     ocr_amount: number | null;
     ocr_date: string | null;
+    amount_mismatch?: {
+      db_amount: number;
+      ocr_amount: number;
+      difference: number;
+      payable_days: number;
+      is_batch: boolean;
+    } | null;
     pendingBody: any;
   };
   const [dupWarning, setDupWarning] = useState<DuplicateWarning | null>(null);
@@ -745,10 +755,14 @@ export default function App() {
         setProgressStep("idle");
         setLoading(false);
         setDupWarning({
-          message: json.error,
+          message: json.error || "Inconsistencias en el comprobante",
+          warnings: Array.isArray(json.warnings) ? json.warnings : [],
+          has_duplicate: Boolean(json.has_duplicate),
+          match_type: json.match_type ?? null,
           ocr_reference: json.ocr_reference ?? null,
           ocr_amount: json.ocr_amount ?? null,
           ocr_date: json.ocr_date ?? null,
+          amount_mismatch: json.amount_mismatch ?? null,
           pendingBody: body,
         });
         return; // detenemos aquí — el modal tomará el control
@@ -785,6 +799,41 @@ export default function App() {
     await loadRecentByPlate(body.plate);
     await fetchLastSuggestion(body.plate);
     setTimeout(() => setProgressStep("idle"), 2000);
+  }
+
+  async function retryPayment(body: any, skipCheck: boolean) {
+    setLoading(true);
+    try {
+      await createPayment(body, skipCheck);
+    } catch (err: any) {
+      alert(err?.message || "Error al guardar");
+      setProgressStep("idle");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAdjustAndSave(adjustedDailyAmount: number) {
+    if (!dupWarning) return;
+    const updatedBody = {
+      ...dupWarning.pendingBody,
+      amount: adjustedDailyAmount,
+    };
+    delete updatedBody.force_override;
+    delete updatedBody.insurance_amount;
+    delete updatedBody.delivery_amount;
+    delete updatedBody.credit_installment_amount;
+
+    setF((prev) => ({ ...prev, amountStr: fmtCOP.format(adjustedDailyAmount) }));
+    setEditSplit(false);
+
+    await retryPayment(updatedBody, false);
+  }
+
+  function handleAdjustInForm(adjustedDailyAmount: number) {
+    setF((prev) => ({ ...prev, amountStr: fmtCOP.format(adjustedDailyAmount) }));
+    setEditSplit(false);
+    setDupWarning(null);
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -1299,58 +1348,211 @@ export default function App() {
           </form>
         </div>
 
-        {/* Modal: Advertencia de duplicado */}
-        {dupWarning && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
-              <div className="mb-1 flex items-center gap-2">
-                <span className="text-2xl">⚠️</span>
-                <h3 className="text-lg font-bold text-gray-900">Inconsistencias en el comprobante</h3>
-              </div>
-              <p className="mt-2 text-sm text-gray-700">{dupWarning.message}</p>
-              {(dupWarning.ocr_reference || dupWarning.ocr_amount || dupWarning.ocr_date) && (
-                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900 space-y-1">
-                  {dupWarning.ocr_reference && (
-                    <div><span className="font-semibold">Referencia OCR:</span> {dupWarning.ocr_reference}</div>
-                  )}
-                  {dupWarning.ocr_amount && (
-                    <div><span className="font-semibold">Monto OCR:</span> ${fmtCOP.format(dupWarning.ocr_amount)}</div>
-                  )}
-                  {dupWarning.ocr_date && (
-                    <div><span className="font-semibold">Fecha OCR:</span> {dupWarning.ocr_date}</div>
-                  )}
+        {/* Modal: Advertencia de comprobante / Inconsistencias */}
+        {dupWarning && (() => {
+          const mismatch = dupWarning.amount_mismatch;
+          const isBatch = Boolean(mismatch?.is_batch ?? dupWarning.pendingBody?.batch_mode);
+          const payableDays = mismatch?.payable_days ?? (isBatch ? (dupWarning.pendingBody?.days_count || 1) : 1);
+          const ocrAmt = mismatch ? mismatch.ocr_amount : dupWarning.ocr_amount;
+          const dbAmt = mismatch ? mismatch.db_amount : dupWarning.pendingBody?.amount;
+
+          // Hay diferencia de monto si el backend reportó mismatch o si ocrAmt difiere de lo enviado
+          const hasAmountMismatch = Boolean(
+            ocrAmt != null &&
+            ocrAmt > 0 &&
+            (mismatch ? mismatch.ocr_amount !== mismatch.db_amount : ocrAmt !== dbAmt)
+          );
+
+          // Redondeo / divisibilidad en lote
+          const dividesEvenly = !isBatch || (ocrAmt != null && payableDays > 0 && ocrAmt % payableDays === 0);
+          const adjustedDailyAmount = isBatch && ocrAmt != null
+            ? Math.floor(ocrAmt / Math.max(1, payableDays))
+            : (ocrAmt ?? dbAmt);
+          const remainder = isBatch && ocrAmt != null && payableDays > 0 ? (ocrAmt % payableDays) : 0;
+
+          // Detección de duplicado basada en flags estructurados del backend (sin búsqueda por texto)
+          const hasDuplicate = Boolean(dupWarning.has_duplicate);
+
+          const duplicateMessage = (() => {
+            if (!hasDuplicate) return null;
+            if (dupWarning.match_type === "reference") {
+              return "Se detectó otro pago registrado previamente con el mismo número de referencia.";
+            }
+            if (dupWarning.match_type === "amount_date") {
+              return "Monto y fecha del comprobante idénticos a otro pago existente para este vehículo.";
+            }
+            const nonAmountWarning = dupWarning.warnings?.find(
+              (w) => !w.toLowerCase().includes("no coincide")
+            );
+            return nonAmountWarning || "Se detectó una coincidencia con otro pago registrado previamente en el sistema.";
+          })();
+
+          const hadManualOverride = Boolean(dupWarning.pendingBody?.force_override);
+          const modalTitle = hasAmountMismatch && hasDuplicate
+            ? "Inconsistencias en el comprobante"
+            : hasDuplicate
+              ? "Posible comprobante duplicado"
+              : hasAmountMismatch
+                ? "Discrepancia en el monto"
+                : "Advertencia en comprobante";
+
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4 overflow-y-auto">
+              <div className="w-full max-w-sm sm:max-w-md my-auto max-h-[90vh] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden border border-gray-100">
+                {/* Header fijo */}
+                <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100 flex items-center gap-2.5 shrink-0 bg-white">
+                  <span className="text-xl sm:text-2xl leading-none">⚠️</span>
+                  <h3 className="text-base sm:text-lg font-bold text-gray-900 leading-tight">
+                    {modalTitle}
+                  </h3>
                 </div>
-              )}
-              <p className="mt-3 text-xs text-gray-500">
-                Si procedes, este pago quedará marcado para <strong>revisión</strong> por el equipo.
-              </p>
-              <div className="mt-5 flex gap-3">
-                <button
-                  className="flex-1 rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                  onClick={() => setDupWarning(null)}
-                >
-                  Cancelar
-                </button>
-                <button
-                  className="flex-1 rounded-xl bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600"
-                  onClick={async () => {
-                    setLoading(true);
-                    try {
-                      await createPayment(dupWarning.pendingBody, true);
-                    } catch (err: any) {
-                      alert(err?.message || "Error al guardar");
-                      setProgressStep("idle");
-                    } finally {
-                      setLoading(false);
-                    }
-                  }}
-                >
-                  Guardar de todas formas
-                </button>
+
+                {/* Contenido scrolleable para evitar desbordes en pantallas pequeñas */}
+                <div className="px-4 py-3 sm:px-6 sm:py-4 overflow-y-auto min-h-0 space-y-3.5 flex-1 text-xs sm:text-sm">
+                  {/* 1. Alerta de duplicados (si existe, SIEMPRE visible) */}
+                  {hasDuplicate && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-950 space-y-1.5">
+                      <div className="font-bold text-red-800 flex items-center gap-1.5">
+                        <span>🚨</span> Posible pago duplicado detectado:
+                      </div>
+                      <p className="leading-relaxed text-red-900">
+                        {duplicateMessage}
+                      </p>
+                      {dupWarning.ocr_reference && (
+                        <p className="pt-1 text-[11px] text-red-800 border-t border-red-200/80">
+                          <span className="font-semibold">Referencia detectada:</span> {dupWarning.ocr_reference}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 2. Alerta de discrepancia de monto */}
+                  {hasAmountMismatch && (
+                    <div className="rounded-xl border border-amber-300 bg-amber-50/90 p-3 sm:p-3.5 text-xs text-amber-950 space-y-2">
+                      <p className="font-semibold text-amber-900">
+                        El monto del pago no coincide con el valor detectado en el comprobante:
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-amber-200/80">
+                        <div className="bg-white/70 p-2 rounded-lg border border-amber-200/60">
+                          <span className="text-gray-500 block text-[11px] leading-tight">
+                            {isBatch ? `Total lote (${payableDays} d):` : "Monto digitado:"}
+                          </span>
+                          <span className="font-bold text-gray-800 text-sm">
+                            ${fmtCOP.format(dbAmt)}
+                          </span>
+                        </div>
+                        <div className="bg-white/70 p-2 rounded-lg border border-amber-200/60">
+                          <span className="text-gray-500 block text-[11px] leading-tight">Monto comprobante:</span>
+                          <span className="font-extrabold text-emerald-700 text-sm">
+                            ${fmtCOP.format(ocrAmt!)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {isBatch && payableDays > 1 && (
+                        dividesEvenly ? (
+                          <p className="text-[11px] text-amber-900 pt-0.5">
+                            Lote de {payableDays} días pagables. Al ajustar, el valor diario será de <strong>${fmtCOP.format(adjustedDailyAmount)}/día</strong>.
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-amber-950 font-medium pt-1 bg-amber-100/80 p-2 rounded-lg border border-amber-300">
+                            ⚠️ El monto del comprobante (${fmtCOP.format(ocrAmt!)}) no divide exacto entre los {payableDays} días pagables (${fmtCOP.format(adjustedDailyAmount)}/día con residuo de ${fmtCOP.format(remainder)}). Para evitar diferencias en el total, ajusta el valor en el formulario.
+                          </p>
+                        )
+                      )}
+
+                      {hadManualOverride && (
+                        <p className="text-[11px] text-gray-600 italic pt-0.5">
+                          ℹ️ El desglose manual configurado se restablecerá automáticamente al ajustar el monto.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 3. Mensaje general de respaldo */}
+                  {!hasAmountMismatch && !hasDuplicate && (
+                    <p className="text-xs sm:text-sm text-gray-700">{dupWarning.message}</p>
+                  )}
+
+                  {/* 4. Metadatos del comprobante */}
+                  {!hasDuplicate && (dupWarning.ocr_reference || dupWarning.ocr_date) && (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] sm:text-xs text-gray-700 space-y-0.5">
+                      {dupWarning.ocr_reference && (
+                        <div><span className="font-semibold text-gray-600">Referencia OCR:</span> {dupWarning.ocr_reference}</div>
+                      )}
+                      {dupWarning.ocr_date && (
+                        <div><span className="font-semibold text-gray-600">Fecha OCR:</span> {dupWarning.ocr_date}</div>
+                      )}
+                    </div>
+                  )}
+
+                  <p className="text-[11px] sm:text-xs text-gray-500 leading-normal">
+                    {hasDuplicate
+                      ? "Si continúas, este pago quedará registrado pero marcado para revisión por posible duplicado."
+                      : hasAmountMismatch
+                        ? "Puedes ajustar el pago al valor real del comprobante para registrarlo limpio, o forzar el monto digitado."
+                        : "Si continúas, este pago quedará marcado para revisión por el equipo."}
+                  </p>
+                </div>
+
+                {/* Footer fijo con botones ergonómicos táctiles */}
+                <div className="p-3 sm:p-4 bg-gray-50/90 border-t border-gray-100 shrink-0 space-y-2">
+                  {/* Botón principal de ajuste (solo si divide exacto y ocrAmt > 0) */}
+                  {hasAmountMismatch && dividesEvenly && ocrAmt != null && ocrAmt > 0 && (
+                    <button
+                      type="button"
+                      disabled={loading}
+                      className="w-full min-h-[44px] rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer flex items-center justify-center gap-1.5 touch-manipulation"
+                      onClick={() => handleAdjustAndSave(adjustedDailyAmount)}
+                    >
+                      <span>
+                        {loading ? "Guardando..." : `Ajustar a $${fmtCOP.format(ocrAmt)} y guardar`}
+                      </span>
+                    </button>
+                  )}
+
+                  {/* Acciones secundarias en cuadrícula limpia para móvil */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={loading}
+                      className="min-h-[42px] rounded-xl border border-gray-300 bg-white px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 active:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer text-center flex items-center justify-center touch-manipulation"
+                      onClick={() => setDupWarning(null)}
+                    >
+                      Cancelar
+                    </button>
+
+                    {hasAmountMismatch && ocrAmt != null && ocrAmt > 0 && (
+                      <button
+                        type="button"
+                        disabled={loading}
+                        className="min-h-[42px] rounded-xl border border-gray-300 bg-gray-100 px-3 py-2 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-200 active:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer text-center flex items-center justify-center touch-manipulation"
+                        onClick={() => handleAdjustInForm(adjustedDailyAmount)}
+                      >
+                        Ajustar en formulario
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      disabled={loading}
+                      className={`min-h-[42px] rounded-xl bg-amber-500 px-3 py-2 text-xs sm:text-sm font-medium text-white hover:bg-amber-600 active:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer text-center flex items-center justify-center touch-manipulation ${
+                        hasAmountMismatch && ocrAmt != null && ocrAmt > 0 ? "col-span-2" : "col-span-1"
+                      }`}
+                      onClick={() => retryPayment(dupWarning.pendingBody, true)}
+                    >
+                      {loading
+                        ? "Guardando..."
+                        : hasAmountMismatch
+                          ? "Forzar monto digitado"
+                          : "Guardar de todas formas"}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Modal: Confirmación de Pago Exitoso */}
         {successInfo && (

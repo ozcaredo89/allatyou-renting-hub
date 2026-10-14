@@ -1010,12 +1010,18 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
 
     // 2. Validar que el monto del comprobante coincida con el total del lote
     const ocrAmount = uploadData?.amount ?? null;
-    let amountMismatch: { db_amount: number; ocr_amount: number; difference: number } | null = null;
+    let amountMismatch: { db_amount: number; ocr_amount: number; difference: number; payable_days: number; is_batch: boolean } | null = null;
     if (ocrAmount !== null && ocrAmount !== totalBatchAmount) {
       warnings.push(
         `El monto total del lote ($${totalBatchAmount.toLocaleString("es-CO")}) no coincide con el valor del comprobante ($${ocrAmount.toLocaleString("es-CO")}).`
       );
-      amountMismatch = { db_amount: totalBatchAmount, ocr_amount: ocrAmount, difference: totalBatchAmount - ocrAmount };
+      amountMismatch = {
+        db_amount: totalBatchAmount,
+        ocr_amount: ocrAmount,
+        difference: totalBatchAmount - ocrAmount,
+        payable_days: payableDates.length,
+        is_batch: true,
+      };
     }
 
     if (duplicateIds.length > 0 || amountMismatch) {
@@ -1043,9 +1049,12 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
           code: "RECEIPT_WARNING",
           error: warnings.join(" "),
           warnings,
+          has_duplicate: duplicateIds.length > 0,
+          match_type: matchType ?? null,
           ocr_reference: reference_number,
           ocr_amount: ocrAmount ?? totalBatchAmount,
           ocr_date: receipt_date,
+          amount_mismatch: amountMismatch,
         });
         return;
       }
@@ -1619,12 +1628,18 @@ r.post("/", async (req: Request, res: Response) => {
 
     // 3. Validar que el monto del comprobante coincida con el monto ingresado
     const ocrAmount = uploadData?.amount ?? null;
-    let amountMismatch: { db_amount: number; ocr_amount: number; difference: number } | null = null;
+    let amountMismatch: { db_amount: number; ocr_amount: number; difference: number; payable_days: number; is_batch: boolean } | null = null;
     if (ocrAmount !== null && ocrAmount !== amt) {
       warnings.push(
         `El monto ingresado ($${amt.toLocaleString("es-CO")}) no coincide con el valor del comprobante ($${ocrAmount.toLocaleString("es-CO")}).`
       );
-      amountMismatch = { db_amount: amt, ocr_amount: ocrAmount, difference: amt - ocrAmount };
+      amountMismatch = {
+        db_amount: amt,
+        ocr_amount: ocrAmount,
+        difference: amt - ocrAmount,
+        payable_days: 1,
+        is_batch: false,
+      };
     }
 
     if (duplicateIds.length > 0 || amountMismatch) {
@@ -1659,9 +1674,12 @@ r.post("/", async (req: Request, res: Response) => {
           code: "RECEIPT_WARNING",
           error: warnings.join(" "),
           warnings,
+          has_duplicate: duplicateIds.length > 0,
+          match_type: matchType ?? null,
           ocr_reference: reference_number,
           ocr_amount: ocrAmount ?? amt,
           ocr_date: receipt_date,
+          amount_mismatch: amountMismatch,
         });
       }
     }
