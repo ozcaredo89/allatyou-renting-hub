@@ -17,6 +17,7 @@ import {
   Landmark,
   CheckCircle2,
   CreditCard,
+  History,
 } from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { useSortableData } from "../hooks/useSortableData";
@@ -30,6 +31,7 @@ import { BankReconciliationModal } from "../components/BankReconciliationModal";
 import { ReconciliationBadge, type BankMatch } from "../components/ReconciliationBadge";
 import { AdvancePaymentModal } from "../components/AdvancePaymentModal";
 import { PaymentApprovalModal } from "../components/PaymentApprovalModal";
+import { PaymentHistoryModal } from "../components/PaymentHistoryModal";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -117,6 +119,9 @@ export default function Reports() {
   const [bankModalQuery, setBankModalQuery] = useState<string | null>(null);
   const [advanceModalRow, setAdvanceModalRow] = useState<Row | null>(null);
   const [approvalModalRow, setApprovalModalRow] = useState<Row | null>(null);
+  // Historial de pagos por placa (columna Acciones)
+  const [historyRow, setHistoryRow] = useState<Row | null>(null);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
   const [reconciling, setReconciling] = useState(false);
   const limit = 20;
 
@@ -479,8 +484,18 @@ export default function Reports() {
           ownerName={approvalModalRow?.owner_name}
           onSuccess={() => {
             setApprovalModalRow(null);
+            setHistoryRefresh((n) => n + 1);
             load(offset);
           }}
+        />
+
+        <PaymentHistoryModal
+          isOpen={!!historyRow}
+          onClose={() => setHistoryRow(null)}
+          plate={historyRow?.plate ?? null}
+          ownerName={historyRow?.owner_name}
+          refreshKey={historyRefresh}
+          onApprove={(paymentId) => historyRow && setApprovalModalRow({ ...historyRow, payment_id: paymentId })}
         />
 
         {/* Banner de aviso cuando hay pagos pendientes de aprobación */}
@@ -820,6 +835,14 @@ export default function Reports() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setHistoryRow(r)}
+                          className="p-1.5 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+                          title={`Ver historial de pagos de ${r.plate}`}
+                        >
+                          <History size={18} />
+                        </button>
                         {r.payment_status === "pending" && r.payment_id && (
                           <button
                             type="button"
