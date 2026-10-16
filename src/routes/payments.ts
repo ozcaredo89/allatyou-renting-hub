@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase";
 import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
 import { getAmortizationDates, nextPayableDate } from "../lib/noPay";
 import { randomUUID } from "crypto";
+import { computeLateFee, lateFeePaidFromExcess } from "../lib/lateFee";
 import {
   classifyReceipt,
   suspiciousOnlyFilter,
@@ -1244,6 +1245,25 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
     }
   }
 
+  // Recargo por pago tardío por cada día del lote (pagos.md §3). El RPC no conoce estas
+  // columnas, así que se actualizan después. Cada día paga su tarifa exacta, sin excedente:
+  // late_fee_paid queda en 0 y el recargo causado queda debiendo.
+  const batchReceiptTime: string | null = uploadData?.receipt_time ?? null;
+  const batchLateFees: (number | null)[] = isLeasing
+    ? payableDates.map(() => 0)
+    : payableDates.map((date) => computeLateFee(date, receipt_date, batchReceiptTime).amount);
+  if (!isLeasing && insertedIds.length === payableDates.length) {
+    await Promise.all(payableDates.map((_date, idx) =>
+      supabase
+        .from("payments")
+        .update({
+          late_fee_amount: batchLateFees[idx],
+          receipt_time: idx === 0 ? batchReceiptTime : null,
+        })
+        .eq("id", insertedIds[idx]!)
+    ));
+  }
+
   // Actualizar current_installment en operational_advances solo si avanzamos cuotas y instNo != null
   if (advanceUpdates.length > 0 && instNo != null) {
     const advData2 = await activeAdvanceForDriver(upperPlate, batchStartDate, "id, current_installment, installments");
@@ -1335,6 +1355,12 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
     total_amount: amt * payableDates.length,
     advance_installments_updated: advanceUpdates.length,
     leasing: leasingInfo,
+    // Recargo por pago tardío del lote: suma de lo causado por día (queda debiendo; late_fee_paid = 0)
+    late_fee: {
+      amount: batchLateFees.some((x) => x == null) ? null : batchLateFees.reduce<number>((a, x) => a + (x ?? 0), 0),
+      paid: 0,
+      receipt_time: batchReceiptTime,
+    },
   });
 }
 
@@ -1780,6 +1806,28 @@ r.post("/", async (req: Request, res: Response) => {
   }
 
 
+  // ---------------- Recargo por pago tardío (pagos.md §3) ----------------
+  // Deuda aparte del canon: se registra lo causado y se abona solo con el excedente
+  // sobre canon + cuota de anticipo. late_fee_paid es la parte de delivery_amount que
+  // corresponde al recargo (delivery no cambia). No aplica a leasing ni a pagos en $0.
+  const receipt_time: string | null = uploadData?.receipt_time ?? null;
+  let lateFeeAmount: number | null = 0;
+  let lateFeePaid = 0;
+  const isLeasingVehicle = !!(await getActiveLeasingContract(upperPlate));
+  if (!isLeasingVehicle && amt > 0) {
+    lateFeeAmount = computeLateFee(payment_date, receipt_date, receipt_time).amount;
+    if (!wantsOverride) {
+      const { dailyRate } = await resolveDailyRentRate(upperPlate);
+      lateFeePaid = lateFeePaidFromExcess({
+        lateFee: lateFeeAmount,
+        amount: amt,
+        canon: dailyRate > 0 ? dailyRate : 70000,
+        credit: splitCredit,
+        delivery: splitDelivery,
+      });
+    }
+  }
+
   // ---------------- Insert payment ----------------
   const insertPayload: any = {
     payer_name: payer_name.trim(),
@@ -1803,8 +1851,11 @@ r.post("/", async (req: Request, res: Response) => {
     reference_number: (skip_receipt_check === true) ? null : (reference_number || null),
     provider_name: provider_name || null,
     receipt_date: receipt_date || null,
+    receipt_time,
     receipt_status: finalReceiptStatus,
     flag_details: flagDetailsObj,
+    late_fee_amount: lateFeeAmount,
+    late_fee_paid: lateFeePaid,
   };
 
   const { data: payment, error: insErr } = await supabase

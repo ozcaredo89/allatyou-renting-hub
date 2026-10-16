@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   PlusCircle,
   Pencil,
+  Clock,
 } from "lucide-react";
 import { ensureBasicAuth } from "../lib/auth";
 
@@ -51,8 +52,17 @@ export type ApprovalPreviewData = {
     admin_insurance: number;
     normal_quota: number;
     advance: number;
+    late_fee?: number;
     excess: number;
   };
+  // Recargo por pago tardío (solo renting). amount null = el comprobante no tiene hora legible.
+  late_fee?: {
+    amount: number | null;
+    paid: number;
+    pending: number;
+    receipt_date: string | null;
+    receipt_time: string | null;
+  } | null;
   quota_expected?: {
     maintenance: number;
     admin: number;
@@ -315,6 +325,7 @@ export function PaymentApprovalModal({
       (b.admin_insurance || 0) +
       (b.normal_quota || 0) +
       (b.advance || 0) +
+      (b.late_fee || 0) +
       (b.excess || 0)
     : 0;
 
@@ -566,6 +577,37 @@ export function PaymentApprovalModal({
                           : "Sin anticipo activo"}
                     </p>
                   </div>
+
+                  {/* Recargo por pago tardío (pagos.md §3) */}
+                  {!isLeasing && data.late_fee && (
+                    <div className={`p-3 rounded-xl border shadow-2xs sm:col-span-2 ${
+                      (data.late_fee.amount ?? 0) > 0
+                        ? "bg-red-50/60 border-red-200"
+                        : data.late_fee.amount == null
+                          ? "bg-gray-50 border-gray-300"
+                          : "bg-white border-gray-200"
+                    }`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-red-600" />
+                          Recargo por pago tardío
+                        </span>
+                        <span className="text-xs font-bold text-gray-900">
+                          {data.late_fee.amount == null ? "—" : `$${fmtCOP.format(data.late_fee.paid)} de $${fmtCOP.format(data.late_fee.amount)}`}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-500">
+                        {data.late_fee.amount == null
+                          ? "⚠️ No se pudo leer la fecha u hora del comprobante: el recargo no se calculó. Revísalo en la imagen."
+                          : `Transferencia: ${data.late_fee.receipt_date ?? "—"}${data.late_fee.receipt_time ? ` ${data.late_fee.receipt_time}` : ""}.`
+                            + (data.late_fee.amount === 0
+                              ? " Pagado antes de las 4:00 PM, sin recargo."
+                              : data.late_fee.pending > 0
+                                ? ` Queda debiendo $${fmtCOP.format(data.late_fee.pending)}.`
+                                : " Recargo pagado completo con el excedente.")}
+                      </p>
+                    </div>
+                  )}
 
                   {/* 7. Excedente (si hay) */}
                   {(b?.excess || 0) > 0 && (

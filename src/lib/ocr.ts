@@ -8,6 +8,8 @@ export interface OCRResult {
   reference_number: string | null;
   provider_name: string | null;
   receipt_date: string | null;
+  // Hora de la transferencia (HH:MM, 24h, hora Colombia). Se usa para el recargo por pago tardío.
+  receipt_time: string | null;
   amount: number | null;
   // "no_driver_image" agregado para detectar plantilla "VEHÍCULO SIN CONDUCTOR"
   status: "verified" | "suspicious_ocr_failed" | "timeout" | "no_driver_image";
@@ -23,13 +25,14 @@ function isKnownNoDriverImageByHash(buffer: Buffer): boolean {
 
 // ── Prompt compartido ─────────────────────────────────────────────────────────
 const RECEIPT_PROMPT = `Analiza este comprobante de pago colombiano (Nequi, Bancolombia, Daviplata, etc.) y extrae la información en formato JSON con exactamente estas claves:
-reference_number, provider_name, receipt_date, amount, is_no_driver.
+reference_number, provider_name, receipt_date, receipt_time, amount, is_no_driver.
 
 Instrucciones estrictas:
 - reference_number: SOLO el número que identifica la TRANSACCIÓN — el campo etiquetado como "Referencia", "Número de aprobación", "Número de operación" o "Comprobante No.". Este número es DIFERENTE en cada comprobante, incluso entre pagos al mismo destinatario.
   ⚠️ NUNCA uses el "Número de cuenta" / "Cuenta destino", el número de celular ni el número de documento del destinatario como reference_number: esos valores son FIJOS (se repiten en todos los comprobantes hacia el mismo destinatario) y confundirlos con la referencia causa falsos positivos de "pago duplicado". Si el comprobante no muestra un campo de referencia/aprobación claramente distinto de la cuenta destino, responde null.
 - provider_name: Nombre del banco o app (Nequi, Bancolombia, Daviplata, etc.). Null si no hay.
 - receipt_date: Fecha del pago en formato YYYY-MM-DD. Convierte fechas como "21 de junio de 2026 a las 02:32 p. m." → "2026-06-21". Null si no hay.
+- receipt_time: Hora de la transacción en formato 24 horas HH:MM, tal como aparece en el comprobante. Convierte "02:32 p. m." → "14:32" y "9:05 a. m." → "09:05". Null si el comprobante no muestra hora.
 - amount: Monto como número entero sin símbolos. "$ 70.000,00" → 70000. Null si no hay.
 - is_no_driver: true si la imagen contiene el texto "VEHÍCULO SIN CONDUCTOR" o indica que el vehículo no tiene conductor asignado. false en cualquier otro caso (comprobante normal).
 
@@ -81,6 +84,20 @@ export function normalizeOcrDate(raw: any): string | null {
   return null;
 }
 
+/** Normaliza la hora del comprobante a "HH:MM" (24h). Acepta "14:32", "2:32 pm", "02:32 p. m.". */
+export function normalizeOcrTime(raw: any): string | null {
+  if (!raw) return null;
+  const s = String(raw).trim().toLowerCase();
+  const m = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*([ap])?\.?\s*m?\.?$/);
+  if (!m || !m[1] || !m[2]) return null;
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+  if (m[3] === "p" && h < 12) h += 12;
+  if (m[3] === "a" && h === 12) h = 0;
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
 function normalizeProvider(raw: any): string | null {
   if (!raw) return null;
   const s = String(raw).trim();
@@ -103,6 +120,7 @@ function buildResult(data: any, provider: "gemini" | "openai" | "deepseek"): OCR
       reference_number: null,
       provider_name: null,
       receipt_date: null,
+      receipt_time: null,
       amount: null,
       status: "no_driver_image",
       ocr_provider: provider,
@@ -112,6 +130,7 @@ function buildResult(data: any, provider: "gemini" | "openai" | "deepseek"): OCR
 
   const rawRef = normalizeRef(data.reference_number);
   const rawDate = normalizeOcrDate(data.receipt_date);
+  const rawTime = normalizeOcrTime(data.receipt_time);
   const rawProvider = normalizeProvider(data.provider_name);
   const rawAmount =
     typeof data.amount === "number" && !Number.isNaN(data.amount)
@@ -125,6 +144,7 @@ function buildResult(data: any, provider: "gemini" | "openai" | "deepseek"): OCR
       reference_number: rawRef,
       provider_name: rawProvider,
       receipt_date: rawDate,
+      receipt_time: rawTime,
       amount: rawAmount,
       status: "suspicious_ocr_failed",
       ocr_provider: provider,
@@ -136,6 +156,7 @@ function buildResult(data: any, provider: "gemini" | "openai" | "deepseek"): OCR
     reference_number: rawRef,
     provider_name: rawProvider,
     receipt_date: rawDate,
+    receipt_time: rawTime,
     amount: rawAmount,
     status: "verified",
     ocr_provider: provider,
@@ -158,6 +179,7 @@ async function parseWithGemini(buffer: Buffer, mimeType: string): Promise<OCRRes
             reference_number: { type: SchemaType.STRING, description: "Número de referencia alfanumérico." },
             provider_name:    { type: SchemaType.STRING, description: "Banco o app de pago." },
             receipt_date:     { type: SchemaType.STRING, description: "Fecha en formato YYYY-MM-DD." },
+            receipt_time:     { type: SchemaType.STRING, description: "Hora de la transacción HH:MM (24h). '02:32 p. m.' → '14:32'.", nullable: true },
             amount:           { type: SchemaType.NUMBER, description: "Monto entero sin símbolos. '$ 70.000,00' → 70000." },
             is_no_driver:     { type: SchemaType.BOOLEAN, description: "true si la imagen dice VEHÍCULO SIN CONDUCTOR o indica que el vehículo no tiene conductor." },
           },
@@ -242,6 +264,7 @@ export async function parseReceipt(buffer: Buffer, mimeType: string): Promise<OC
       reference_number: null,
       provider_name: null,
       receipt_date: null,
+      receipt_time: null,
       amount: null,
       status: "no_driver_image",
       ocr_provider: "hash",
@@ -255,6 +278,7 @@ export async function parseReceipt(buffer: Buffer, mimeType: string): Promise<OC
     reference_number: null,
     provider_name: null,
     receipt_date: null,
+    receipt_time: null,
     amount: null,
     status: "timeout",
     message: "Timeout al procesar la imagen con OCR.",
@@ -326,6 +350,7 @@ export async function parseReceipt(buffer: Buffer, mimeType: string): Promise<OC
     reference_number: null,
     provider_name: null,
     receipt_date: null,
+    receipt_time: null,
     amount: null,
     status: "suspicious_ocr_failed",
     message: "Ningún proveedor de OCR disponible (Gemini / OpenAI / DeepSeek).",

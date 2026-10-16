@@ -15,6 +15,7 @@ import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCas
 import { checkVehicleInShop, validateMaintenanceDay, MaintenanceValidation } from "../lib/taller";
 import { checkAdvanceInstallment } from "./payments";
 import { activeAdvanceForDriver } from "../lib/advanceOwnership";
+import { lateFeePaidFromExcess } from "../lib/lateFee";
 
 const r = Router();
 
@@ -610,7 +611,7 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
   try {
     const { data: payment, error: pErr } = await supabase
       .from("payments")
-      .select("id, plate, payer_name, payment_date, amount, status, receipt_status, proof_url, installment_number, installment_status, installment_shortfall, maintenance_amount, delivery_amount, insurance_amount, credit_installment_amount")
+      .select("id, plate, payer_name, payment_date, amount, status, receipt_status, proof_url, installment_number, installment_status, installment_shortfall, maintenance_amount, delivery_amount, insurance_amount, credit_installment_amount, receipt_date, receipt_time, late_fee_amount, late_fee_paid")
       .eq("id", paymentId)
       .maybeSingle();
 
@@ -778,6 +779,7 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
     const dStored = Number(payment.delivery_amount || 0);
     const iStored = Number(payment.insurance_amount || 0);
     const cStored = Number(payment.credit_installment_amount || 0);
+    const lfPaid = Number(payment.late_fee_paid || 0);
     const amt = Number(payment.amount || 0);
     const totalStored = mStored + dStored + iStored + cStored;
     const excess = Math.max(0, amt - totalStored);
@@ -826,9 +828,19 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
         car_capital: 0,
         interest: 0,
         admin_insurance: iStored,
-        normal_quota: dStored,
+        // late_fee_paid es parte de delivery_amount: se muestra aparte del canon
+        normal_quota: dStored - lfPaid,
         advance: cStored,
+        late_fee: lfPaid,
         excess,
+      },
+      // Recargo por pago tardío (pagos.md §3). amount null = el comprobante no tiene hora/fecha legible.
+      late_fee: {
+        amount: payment.late_fee_amount == null ? null : Number(payment.late_fee_amount),
+        paid: lfPaid,
+        pending: Math.max(0, Number(payment.late_fee_amount || 0) - lfPaid),
+        receipt_date: payment.receipt_date ?? null,
+        receipt_time: payment.receipt_time ? String(payment.receipt_time).slice(0, 5) : null,
       },
       quota_expected: null,
     });
@@ -926,7 +938,7 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
 
   const { data: payment } = await supabase
     .from("payments")
-    .select("id, plate, payment_date, amount, installment_number, status, receipt_status, notes")
+    .select("id, plate, payment_date, amount, installment_number, status, receipt_status, notes, late_fee_amount")
     .eq("id", paymentId)
     .maybeSingle();
   if (!payment) return res.status(404).json({ error: "Pago no encontrado" });
@@ -976,6 +988,14 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
   const insurance = rem >= 5000 ? 5000 : 0;
   const maintenance = rem > insurance ? Math.min(6000, rem - insurance) : 0;
   const delivery = Math.max(0, rem - insurance - maintenance);
+  // Parte de delivery que abona el recargo por pago tardío: excedente sobre canon + cuota (pagos.md §3)
+  const lateFeePaid = lateFeePaidFromExcess({
+    lateFee: payment.late_fee_amount == null ? null : Number(payment.late_fee_amount),
+    amount,
+    canon,
+    credit,
+    delivery,
+  });
 
   // Si el monto ahora coincide con lo que dice el comprobante, se quita la alerta de monto
   const { data: receipt } = await supabase.from("receipt_uploads").select("amount").eq("linked_payment_id", paymentId).maybeSingle();
@@ -993,6 +1013,7 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
     insurance_amount: insurance,
     maintenance_amount: maintenance,
     delivery_amount: delivery,
+    late_fee_paid: lateFeePaid,
     installment_status: instNo == null ? null : coversCredit ? "paid" : "pending",
     installment_shortfall: instNo == null ? null : coversCredit ? 0 : canon + expectedCredit - amount,
     notes: [payment.notes, adjustNote].filter(Boolean).join(" "),
@@ -1110,6 +1131,8 @@ r.post("/payments/:id/mark-maintenance", async (req: Request, res: Response) => 
       maintenance_amount: 0,
       delivery_amount: 0,
       credit_installment_amount: 0,
+      late_fee_amount: 0,
+      late_fee_paid: 0,
       installment_number: null,
       installment_status: null,
       installment_shortfall: null,

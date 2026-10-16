@@ -236,6 +236,8 @@ export default function App() {
     payableDates: string[];
     installmentNumber?: number | null;
     proofUrl?: string | null;
+    // Recargo por pago tardío (pagos.md §3). amount null = el comprobante no tiene hora legible.
+    lateFee?: { amount: number | null; paid: number; receiptTime: string | null } | null;
   };
   const [successInfo, setSuccessInfo] = useState<SuccessPaymentInfo | null>(null);
 
@@ -802,6 +804,17 @@ export default function App() {
     const daysCount = result.days_count ?? (body.batch_mode ? body.days_count : 1);
     const payableDates: string[] = result.payable_dates ?? (body.payment_date ? [body.payment_date] : []);
     const totalAmount = result.total_amount ?? (body.amount * (body.days_count || 1));
+    // Leasing no lleva recargo. El lote responde late_fee; el pago individual, las columnas del pago.
+    const rawLateFee = result.leasing
+      ? null
+      : result.late_fee ?? { amount: result.late_fee_amount, paid: result.late_fee_paid, receipt_time: result.receipt_time };
+    const lateFee = rawLateFee
+      ? {
+          amount: rawLateFee.amount == null ? null : Number(rawLateFee.amount),
+          paid: Number(rawLateFee.paid || 0),
+          receiptTime: rawLateFee.receipt_time ? String(rawLateFee.receipt_time).slice(0, 5) : null,
+        }
+      : null;
 
     setSuccessInfo({
       plate: body.plate?.toUpperCase() || "",
@@ -811,6 +824,7 @@ export default function App() {
       payableDates,
       installmentNumber: body.installment_number ?? null,
       proofUrl: body.proof_url ?? null,
+      lateFee: body.amount > 0 ? lateFee : null,
     });
 
     setF((prev) => ({ ...prev, amountStr: "", installment_number: "" }));
@@ -1183,6 +1197,12 @@ export default function App() {
               {showInstallmentLt70kNotice && (
                 <div className="mt-1 text-xs text-amber-700">
                   ⚠️ Monto &lt; ${fmtCOP.format(expectedMinNotice)}: la cuota quedará <b>pendiente</b>.
+                </div>
+              )}
+
+              {!leasingInfo && (
+                <div className="mt-1 text-xs text-gray-500">
+                  El canon del día se paga antes de las 4:00 PM (hora del comprobante). Desde las 4 PM hay recargo de $5.000 + $5.000 por hora, máx. $15.000.
                 </div>
               )}
             </div>
@@ -1706,6 +1726,33 @@ export default function App() {
                       #{successInfo.installmentNumber}
                       {successInfo.daysCount > 1 ? ` a #${successInfo.installmentNumber + successInfo.daysCount - 1}` : ""}
                     </span>
+                  </div>
+                )}
+
+                {/* Recargo por pago tardío */}
+                {successInfo.lateFee && successInfo.lateFee.amount == null && (
+                  <div className="rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-xs text-slate-700">
+                    ⏱️ No se pudo leer la hora del comprobante: el recargo por pago tardío no se calculó.
+                  </div>
+                )}
+                {successInfo.lateFee && (successInfo.lateFee.amount ?? 0) > 0 && (
+                  <div className="rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 text-xs text-red-900 space-y-0.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">
+                        ⏱️ Recargo por pago tardío{successInfo.lateFee.receiptTime ? ` (transferencia ${successInfo.lateFee.receiptTime})` : ""}:
+                      </span>
+                      <span className="font-bold">${fmtCOP.format(successInfo.lateFee.amount ?? 0)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Abonado con este pago:</span>
+                      <span className="font-bold">${fmtCOP.format(successInfo.lateFee.paid)}</span>
+                    </div>
+                    {(successInfo.lateFee.amount ?? 0) - successInfo.lateFee.paid > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span>Queda debiendo:</span>
+                        <span className="font-bold">${fmtCOP.format((successInfo.lateFee.amount ?? 0) - successInfo.lateFee.paid)}</span>
+                      </div>
+                    )}
                   </div>
                 )}
 

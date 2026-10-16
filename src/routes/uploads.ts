@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { uploadToR2 } from "../lib/r2";
-import { parseReceipt, normalizeOcrDate } from "../lib/ocr";
+import { parseReceipt, normalizeOcrDate, normalizeOcrTime } from "../lib/ocr";
 import { supabase } from "../lib/supabase";
 import { NO_DRIVER_IMAGE_HASHES } from "../lib/knownReceiptTemplates";
 
@@ -78,6 +78,7 @@ r.post("/", (req: Request, res: Response, next) => {
         if (ocrData) {
           // Guardar en la DB de forma segura (Zero-Trust)
           const safeDate = normalizeOcrDate(ocrData.receipt_date);
+          const safeTime = normalizeOcrTime(ocrData.receipt_time);
           const safeAmount =
             typeof ocrData.amount === "number" && !Number.isNaN(ocrData.amount)
               ? Math.round(ocrData.amount)
@@ -90,6 +91,7 @@ r.post("/", (req: Request, res: Response, next) => {
               reference_number: ocrData.reference_number || null,
               provider_name: ocrData.provider_name || null,
               receipt_date: safeDate,
+              receipt_time: safeTime,
               amount: safeAmount,
               ocr_status: ocrData.status || "unverified"
             }])

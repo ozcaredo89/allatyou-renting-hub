@@ -57,6 +57,18 @@ Para vehículos **sin leasing**, cada pago se reparte en columnas de `payments`:
     - En la pantalla de aprobación (`approval-preview`), el sistema emite una **Alerta de Conciliación** visible informando que el vehículo no tiene anticipo activo y que todo el monto extra se asignó a Canon y $0 a anticipo. Esto alerta al auditor sobre un posible anticipo otorgado que no se ha creado aún en el sistema.
   - Si el monto pagado de renting supera el canon base ($70.000) sin tener anticipo activo, la pantalla de aprobación también emite la alerta indicando la diferencia sobre el canon habitual.
 - **Pagos menores a $70.000:** pueden ocurrir por realidades del negocio (pago parcial, acuerdo con el conductor). Se aceptan, pero el pago debe llevar una **nota que explique el motivo** y cómo se repartió.
+- **Recargo por pago tardío (decisión 2026-10-16):**
+  - El canon de cada día se paga antes de las **4:00 PM** de ese día. Cuenta la **hora de la transferencia en el comprobante**, no la hora en que se registró el pago. El OCR la lee en `receipt_uploads.receipt_time` (HH:MM, 24 h) y se copia a `payments.receipt_time`.
+  - A las 4:00 PM se cobran **$5.000**, y **$5.000 más por cada hora adicional**, con un **máximo de $15.000 por día**: 4:00–4:59 PM → $5.000, 5:00–5:59 PM → $10.000, 6 PM o después → $15.000.
+  - Si el día no se paga, queda debiendo canon + recargo máximo (ej. $70.000 + $15.000 = $85.000). Al día siguiente debe ese saldo más el canon del día en curso, y la regla se vuelve a aplicar sobre el nuevo día desde las 4:00 PM.
+  - **No aplica a vehículos en leasing**, ni a pagos en $0 (vehículo sin conductor) ni a días en mantenimiento (§5.1 pone el recargo en 0).
+  - **Registro (decisión 2026-10-16): deuda aparte del canon.** El canon se registra completo y el recargo se lleva en dos columnas de `payments` (cálculo en `src/lib/lateFee.ts`):
+    - `late_fee_amount` = recargo causado para `payment_date`, comparando con la fecha y hora de la transferencia: transferencia de un día anterior → $0 (pago adelantado); del mismo día → según la hora; de un día posterior → $15.000 (el día no se pagó). `NULL` = no se pudo calcular porque el comprobante no tiene fecha u hora legible; la aprobación lo muestra para revisarlo en la imagen. En leasing = 0.
+    - `late_fee_paid` = parte del recargo que se abona con este pago: el **excedente sobre canon + cuota de anticipo**, hasta el valor del recargo. Es una **parte de `delivery_amount`** (no se descuenta de ahí), así las vistas de utilidad no cambian. Ej.: $80.000 a las 5 PM → canon $70.000, `late_fee_amount = 10.000`, `late_fee_paid = 10.000`. $70.000 a las 5 PM → `late_fee_paid = 0` y quedan debiendo $10.000.
+    - Si el pago trae override manual del reparto, `late_fee_paid = 0`.
+    - **Pago por lote:** cada día lleva su `late_fee_amount`; cada día paga su tarifa exacta, así que `late_fee_paid = 0`.
+    - Ajuste en aprobación (§5.0) recalcula `late_fee_paid` con el nuevo monto.
+  - Se muestra en el formulario de pago (aviso de la regla y, al guardar, recargo causado / abonado / pendiente) y en el modal de aprobación (`approval-preview` devuelve `late_fee` y `breakdown.late_fee`; el canon se muestra sin la parte del recargo).
 - Los overrides manuales no pueden ser negativos. Sin cuota, la suma no puede superar el monto.
 - Para vehículos **con leasing**, estas columnas **no** representan el reparto real; ver `leasing.md` §4.
 
@@ -120,5 +132,7 @@ Botón **"En mantenimiento"** en el modal de aprobación. Sirve cuando el conduc
 - **Tarifa diaria** (`resolveDailyRentRate`): `drivers_vw.default_amount` → cuota pendiente de leasing → último pago → contrato pendiente → $70.000 por defecto.
 
 ## 7. Pendientes de desarrollo (brechas entre la regla y el código)
+
+- **Saldo de recargos por pago tardío (§3):** cada pago registra su recargo causado y lo abonado, pero no hay un saldo acumulado por placa (`late_fee_amount - late_fee_paid`) ni se muestra en mora. Tampoco se pueden abonar recargos de días anteriores con un pago posterior, y los días que nunca se registran no generan fila con recargo.
 
 - **Asignación retroactiva de cuota en conciliación:** Si un pago entró sin `installment_number` pero el conductor pagó el monto completo de canon + anticipo, permitir en la pantalla de aprobación asignar la cuota pendiente antes de confirmar.
