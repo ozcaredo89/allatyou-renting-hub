@@ -294,6 +294,54 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   return res.json({ items, total: count ?? 0, limit, offset, pending_approval_count: globalPendingCount ?? 0 });
 });
 
+// ── GET /reports/pending-payments ─────────────────────────────────────────────
+// Todos los pagos en estado 'pending' (uno por fila, no uno por placa), para la vista
+// "Solo pendientes" de Reportes. Ordenados por placa y fecha pagada.
+r.get("/pending-payments", async (_req: Request, res: Response) => {
+  const { data, error } = await supabase
+    .from("payments")
+    .select("id, plate, payer_name, payment_date, amount, installment_number, credit_installment_amount, proof_url, receipt_status, flagged_for_review, flag_reason, flag_details, notes, created_at")
+    .eq("status", "pending")
+    .order("plate", { ascending: true })
+    .order("payment_date", { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+
+  const plates = [...new Set((data ?? []).map((p: any) => p.plate))];
+  const { data: vehicles } = plates.length
+    ? await supabase.from("vehicles").select("plate, owner_name").in("plate", plates)
+    : { data: [] as any[] };
+  const ownerByPlate = new Map((vehicles ?? []).map((v: any) => [v.plate, v.owner_name]));
+
+  // Monto leído del comprobante (OCR), para mostrar cuando no coincide con lo registrado
+  const ids = (data ?? []).map((p: any) => p.id);
+  const { data: receipts } = ids.length
+    ? await supabase.from("receipt_uploads").select("linked_payment_id, amount").in("linked_payment_id", ids)
+    : { data: [] as any[] };
+  const ocrByPayment = new Map((receipts ?? []).map((u: any) => [u.linked_payment_id, Number(u.amount || 0)]));
+
+  const items = (data ?? []).map((p: any) => {
+    const cls = classifyReceipt(p.receipt_status, p.flagged_for_review, p.flag_reason);
+    const ocr = ocrByPayment.get(p.id);
+    return {
+      ocr_amount: ocr && ocr > 0 ? ocr : null,
+      id: p.id,
+      plate: p.plate,
+      owner_name: ownerByPlate.get(p.plate) ?? p.payer_name ?? null,
+      payment_date: p.payment_date,
+      amount: Number(p.amount || 0),
+      installment_number: p.installment_number,
+      credit_installment_amount: Number(p.credit_installment_amount || 0),
+      proof_url: p.proof_url,
+      notes: p.notes ?? null,
+      created_at: p.created_at,
+      inconsistency_reasons: cls.inconsistency_reasons,
+      amount_mismatch: buildAmountMismatch(p.flag_details),
+    };
+  });
+
+  return res.json({ items, total: items.length });
+});
+
 // ── POST /reports/reconcile-bank ──────────────────────────────────────────────
 // Cruce estricto y persistente entre pagos y movimientos bancarios entrantes:
 // misma fecha + mismo monto exacto, 1 a 1. Si para un pago hay 0 candidatos

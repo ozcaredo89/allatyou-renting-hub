@@ -32,6 +32,7 @@ import { ReconciliationBadge, type BankMatch } from "../components/Reconciliatio
 import { AdvancePaymentModal } from "../components/AdvancePaymentModal";
 import { PaymentApprovalModal } from "../components/PaymentApprovalModal";
 import { PaymentHistoryModal } from "../components/PaymentHistoryModal";
+import { PendingPaymentsTable } from "../components/PendingPaymentsTable";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -675,6 +676,16 @@ export default function Reports() {
           </div>
         )}
 
+        {onlyPending ? (
+          // Vista "Solo pendientes": un pago pendiente por fila (no uno por placa)
+          <PendingPaymentsTable
+            query={q}
+            refreshKey={historyRefresh}
+            onReview={(p) => setApprovalModalRow({ plate: p.plate, owner_name: p.owner_name, payment_id: p.id } as Row)}
+            onHistory={(p) => setHistoryRow({ plate: p.plate, owner_name: p.owner_name } as Row)}
+          />
+        ) : (
+        <>
         {/* Tabla (sigue siendo “último pago por placa”) */}
         <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
           <table className="min-w-full text-sm">
@@ -920,6 +931,8 @@ export default function Reports() {
             </button>
           </div>
         </div>
+        </>
+        )}
       </div>
     </div>
   );
