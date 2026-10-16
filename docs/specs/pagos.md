@@ -1,6 +1,6 @@
 # Spec — Pagos diarios de conductores
 
-**Estado:** Vigente · **Última revisión:** 2026-10-12
+**Estado:** Vigente · **Última revisión:** 2026-10-16
 **Código principal:** `src/routes/payments.ts`, `src/routes/reports.ts` (aprobación), `src/lib/receiptClassification.ts`, `web/src/pages/Pay.tsx`, `web/src/pages/Reports.tsx`, `web/src/components/PaymentApprovalModal.tsx`
 **Relacionado:** `leasing.md` (cascada), `anticipos.md`
 
@@ -63,7 +63,7 @@ Para vehículos **sin leasing**, cada pago se reparte en columnas de `payments`:
    - el **monto leído** por OCR coincide con el ingresado.
 3. Si hay alertas, la primera vez responde **409 `RECEIPT_WARNING`**. Si la discrepancia es de monto (`amount_mismatch`), el formulario de registro (`Pay.tsx`) ofrece ajustar automáticamente el monto al valor leído del comprobante (`Ajustar y guardar` o `Ajustar en formulario`), registrándose con el monto verificado sin inconsistencia. Si el usuario decide forzar el monto digitado (`skip_receipt_check`), el pago se guarda marcado como `suspicious_duplicate` o `suspicious_amount_mismatch` según la causa real.
 4. Comprobante "VEHÍCULO SIN CONDUCTOR": se acepta con monto $0 solo si el vehículo ya no tiene conductor asignado (`current_driver_id`).
-5. Pago de **$1** = marcador de día en taller/mantenimiento (no se cruza con leasing).
+5. **Día en mantenimiento** = pago confirmado en **$0** con `receipt_status = 'maintenance_day'` y nota obligatoria en `payments.notes` (ver §5.1). Reemplaza el antiguo marcador de **$1**, que se usaba porque la UI no permitía $0; los pagos históricos de $1 se siguen leyendo igual. No se cruza con leasing ni con anticipos.
 
 Clasificación para reportes: `classifyReceipt` (`receiptClassification.ts`) separa sospechosos (duplicados, operacional) de fallas técnicas de OCR.
 
@@ -76,6 +76,23 @@ Pantalla Reports: aviso con el conteo global de pendientes, filtro `pending_only
   - **Leasing:** aplica la cascada estricta (cuota con `due_date = payment_date`). Si no hay cuota o ya está pagada, `can_approve = false`. Si la cascada falla, el pago **no** se confirma (422).
   - **Renting:** respeta el reparto guardado al crear el pago; solo cambia el `status`. Si el pago tiene `installment_number` y `credit_installment_amount > 0`, marca la cuota como `paid` en `operational_advance_schedule`, sincroniza `operational_advances.current_installment = paidCount` y cierra el anticipo si se completaron todas las cuotas.
   - Nunca recalcula ni inventa montos.
+
+### 5.1 Marcar como día en mantenimiento (decisión 2026-10-16)
+
+Botón **"En mantenimiento"** en el modal de aprobación. Sirve cuando el conductor registra un día con soporte de mantenimiento en lugar de una transferencia (ej. imagen "MANTENIMIENTO").
+
+- `GET /reports/payments/:id/maintenance-check` consulta TallerPro (`GET {TALLERPRO_API_URL}/v1/vehiculos/{placa}/historial`, header `X-API-Key: TALLERPRO_API_KEY`, cliente en `src/lib/taller.ts`). Cada ingreso no cancelado es una **estadía** `[fecha_ingreso, fecha_salida]`, en días de hora Bogotá y ambos inclusive. `fecha_salida` sale de la bitácora; si sigue en el taller, el rango llega hasta hoy. Mientras se consulta, la UI muestra "Consultando en el taller...".
+- **La validación es best-effort:** si TallerPro no responde (sin key, timeout de 3 s, error), no se muestra nada y el flujo sigue igual que si la integración no existiera. La nota queda opcional. Los fallos solo quedan en el log (TODO: tarea de reporte de errores).
+- **Validación del día D (`payment_date`) (decisión 2026-10-16):**
+  - D dentro del rango de alguna estadía → **sin warning**, aunque haya otros días marcados: una estadía de varios días cubre varios días de mantenimiento.
+  - D fuera de todo rango → warning con detalle: la estadía más cercana (entrada, salida, motivo) y las últimas estadías.
+  - Además, si la estadía más cercana está a **más de 3 días** de D → warning "fecha muy lejana".
+  - Además, si D ya tiene otro pago no rechazado de la misma placa → warning "fecha ya usada". Esto solo se evalúa cuando D está fuera de rango.
+- `POST /reports/payments/:id/mark-maintenance` `{ notes }`:
+  - Solo para pagos `pending` y sin abono a cuota de anticipo (`credit_installment_amount = 0`).
+  - Sin warnings: la nota se arma con la estadía que cubre el día (id, entrada, salida, motivo) y la nota del usuario es opcional.
+  - Con warnings: se puede guardar igual, pero la nota es **obligatoria** (mín. 10 caracteres): qué mantenimiento es y por qué no se hace en el taller. Sin nota, responde 422.
+  - El pago queda en `amount = 0`, todo el reparto en 0, sin `installment_number`, `receipt_status = 'maintenance_day'`, `status = 'confirmed'`. La nota guarda el monto original que se había registrado.
 
 ## 6. Otros flujos
 

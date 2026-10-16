@@ -61,6 +61,24 @@ export type ApprovalPreviewData = {
   } | null;
 };
 
+type TallerStay = {
+  id: string;
+  estado: string;
+  motivo_visita: string | null;
+  entrada: string;
+  salida: string | null;
+  salida_fuente: "bitacora" | "estimada" | null;
+};
+type TallerCheck = {
+  taller: { available: boolean; in_shop: boolean; stays: TallerStay[] };
+  // null cuando TallerPro no respondió: no se muestra nada ni se bloquea
+  validation: {
+    covering_stay: TallerStay | null;
+    warnings: { code: string; message: string }[];
+  } | null;
+};
+const TALLER_UNAVAILABLE: TallerCheck = { taller: { available: false, in_shop: false, stays: [] }, validation: null };
+
 interface PaymentApprovalModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -84,12 +102,21 @@ export function PaymentApprovalModal({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  // Flujo "día en mantenimiento"
+  const [mttoOpen, setMttoOpen] = useState(false);
+  const [mttoChecking, setMttoChecking] = useState(false);
+  const [mttoCheck, setMttoCheck] = useState<TallerCheck | null>(null);
+  const [mttoNote, setMttoNote] = useState("");
+
   useEffect(() => {
     if (!isOpen || !paymentId) {
       setData(null);
       setErrorMsg(null);
       setSuccessMsg(null);
       setApproving(false);
+      setMttoOpen(false);
+      setMttoCheck(null);
+      setMttoNote("");
       return;
     }
 
@@ -154,7 +181,53 @@ export function PaymentApprovalModal({
     }
   }
 
+  async function openMaintenance() {
+    if (!paymentId) return;
+    setMttoOpen(true);
+    setMttoChecking(true);
+    setMttoCheck(null);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`${API}/reports/payments/${paymentId}/maintenance-check`, {
+        headers: { Authorization: ensureBasicAuth() },
+      });
+      const json = await res.json().catch(() => ({}));
+      setMttoCheck(res.ok && json.taller ? { taller: json.taller, validation: json.validation ?? null } : TALLER_UNAVAILABLE);
+    } catch {
+      setMttoCheck(TALLER_UNAVAILABLE);
+    } finally {
+      setMttoChecking(false);
+    }
+  }
+
+  async function handleMarkMaintenance() {
+    if (!paymentId) return;
+    setApproving(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`${API}/reports/payments/${paymentId}/mark-maintenance`, {
+        method: "POST",
+        headers: { Authorization: ensureBasicAuth(), "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: mttoNote.trim() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (json.taller) setMttoCheck({ taller: json.taller, validation: json.validation ?? null });
+        throw new Error(json.error || "Error marcando mantenimiento");
+      }
+      setSuccessMsg(json.message || "Pago marcado como día en mantenimiento");
+      setTimeout(() => onSuccess(), 1200);
+    } catch (err) {
+      setErrorMsg((err instanceof Error && err.message) || "Error marcando mantenimiento");
+      setApproving(false);
+    }
+  }
+
   if (!isOpen) return null;
+
+  // Si el taller no respondió no se muestra nada y la nota es opcional (validación best-effort)
+  const needsMttoNote = !!mttoCheck?.validation?.warnings.length;
+  const mttoNoteOk = !needsMttoNote || mttoNote.trim().length >= 10;
 
   const isLeasing = data?.type === "leasing";
   const b = data?.breakdown;
@@ -448,6 +521,77 @@ export function PaymentApprovalModal({
                 </div>
               </div>
 
+              {/* Día en mantenimiento */}
+              {mttoOpen && (
+                <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/60 space-y-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+                    <Wrench className="w-4 h-4" />
+                    Marcar como día en mantenimiento
+                  </h3>
+                  <p className="text-[11px] text-amber-900">
+                    El pago quedará confirmado en <strong>$0</strong> (sin reparto ni abono a anticipo) y con una nota del motivo.
+                  </p>
+
+                  {mttoChecking ? (
+                    <div className="flex items-center gap-2 p-3 rounded-lg bg-white border border-amber-200 text-xs text-gray-700">
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-600" /> Consultando en el taller...
+                    </div>
+                  ) : mttoCheck?.validation?.covering_stay ? (
+                    <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-900">
+                      <p className="font-bold">✔ El {data.payment_date} el carro estaba en el taller</p>
+                      <p className="mt-0.5">
+                        Entrada {mttoCheck.validation.covering_stay.entrada} · Salida{" "}
+                        {mttoCheck.validation.covering_stay.salida ?? "sigue en taller"}
+                        {mttoCheck.validation.covering_stay.salida_fuente === "estimada" ? " (estimada)" : ""}
+                        {mttoCheck.validation.covering_stay.motivo_visita ? ` · ${mttoCheck.validation.covering_stay.motivo_visita}` : ""}
+                      </p>
+                    </div>
+                  ) : mttoCheck?.validation?.warnings.length ? (
+                    <div className="p-3 rounded-lg bg-red-50 border border-red-300 text-xs text-red-900 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
+                      <div className="space-y-1">
+                        <p className="font-bold">El día no concuerda con el taller</p>
+                        <ul className="list-disc pl-4 space-y-0.5">
+                          {mttoCheck.validation.warnings.map((w) => (
+                            <li key={w.code}>{w.message}</li>
+                          ))}
+                        </ul>
+                        {mttoCheck.taller.stays.length > 0 && (
+                          <div className="pt-1">
+                            <p className="font-semibold">Últimas estadías en el taller:</p>
+                            <ul className="pl-1">
+                              {mttoCheck.taller.stays.slice(0, 4).map((s) => (
+                                <li key={s.id}>
+                                  {s.entrada} → {s.salida ?? "sigue en taller"}
+                                  {s.salida_fuente === "estimada" ? " (est.)" : ""}
+                                  {s.motivo_visita ? ` · ${s.motivo_visita}` : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        <p className="pt-1">Escribe qué tipo de mantenimiento es y por qué no se hace en el taller.</p>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {!mttoChecking && mttoCheck && (
+                    <div>
+                      <label className="text-[11px] font-semibold text-gray-700 block mb-1">
+                        Nota {needsMttoNote ? "(obligatoria, mín. 10 caracteres)" : "(opcional)"}
+                      </label>
+                      <textarea
+                        value={mttoNote}
+                        onChange={(e) => setMttoNote(e.target.value)}
+                        rows={2}
+                        placeholder={needsMttoNote ? "Ej: cambio de llantas en montallantas externo" : "Detalle adicional"}
+                        className="w-full text-xs rounded-lg border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Mensajes de éxito o error */}
               {errorMsg && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-center gap-2">
@@ -476,6 +620,28 @@ export function PaymentApprovalModal({
           >
             Cancelar
           </button>
+          {mttoOpen ? (
+            <button
+              type="button"
+              onClick={handleMarkMaintenance}
+              disabled={mttoChecking || approving || !mttoCheck || !mttoNoteOk || !!successMsg}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+            >
+              {approving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wrench className="w-4 h-4" />}
+              <span>{successMsg ? "¡Marcado!" : "Confirmar día en mantenimiento"}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={openMaintenance}
+              disabled={loading || approving || !data || !!successMsg}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100 text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <Wrench className="w-4 h-4" />
+              <span>En mantenimiento</span>
+            </button>
+          )}
+          {!mttoOpen && (
           <button
             type="button"
             onClick={handleApprove}
@@ -499,6 +665,7 @@ export function PaymentApprovalModal({
               </>
             )}
           </button>
+          )}
         </div>
       </div>
     </div>

@@ -12,6 +12,7 @@ import {
   DuplicatePaymentSummary,
 } from "../lib/receiptClassification";
 import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
+import { checkVehicleInShop, validateMaintenanceDay, MaintenanceValidation } from "../lib/taller";
 
 const r = Router();
 
@@ -797,6 +798,117 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
     console.error("[approval-preview] error:", err.message);
     return res.status(500).json({ error: err.message });
   }
+});
+
+// ── Día en mantenimiento: validación contra TallerPro ───────────────────────
+// Consulta el taller y valida el payment_date contra las estadías (entrada → salida).
+// Si TallerPro no responde, taller.available = false y no hay validación (best-effort).
+async function buildMaintenanceCheck(payment: { id: number; plate: string; payment_date: string }) {
+  const taller = await checkVehicleInShop(payment.plate);
+  if (!taller.available) return { taller, validation: null as MaintenanceValidation | null };
+
+  const { data: sameDay } = await supabase
+    .from("payments")
+    .select("id, amount, status")
+    .eq("plate", payment.plate)
+    .eq("payment_date", payment.payment_date)
+    .neq("status", "rejected")
+    .neq("id", payment.id);
+
+  const validation = validateMaintenanceDay(payment.payment_date, taller, (sameDay || []) as any[]);
+  return { taller, validation };
+}
+
+// ── GET /reports/payments/:id/maintenance-check ─────────────────────────────
+r.get("/payments/:id/maintenance-check", async (req: Request, res: Response) => {
+  const paymentId = parseInt(String(req.params.id || ""), 10);
+  if (isNaN(paymentId)) return res.status(400).json({ error: "ID de pago inválido" });
+
+  const { data: payment, error } = await supabase
+    .from("payments")
+    .select("id, plate, payment_date, status")
+    .eq("id", paymentId)
+    .maybeSingle();
+  if (error || !payment) return res.status(404).json({ error: "Pago no encontrado" });
+
+  const { taller, validation } = await buildMaintenanceCheck(payment);
+  return res.json({ payment_id: payment.id, plate: payment.plate, payment_date: payment.payment_date, taller, validation });
+});
+
+// ── POST /reports/payments/:id/mark-maintenance ─────────────────────────────
+// Marca un pago pendiente como "día en mantenimiento": monto $0, sin reparto, confirmado.
+// - Día dentro de una estadía del taller → sin warnings; la nota se arma con la estadía.
+// - Día fuera de rango / muy lejano / ya usado → warnings y nota obligatoria (mín. 10 caracteres).
+// - TallerPro no responde → sigue sin validar, nota opcional.
+// Body: { notes?: string }
+r.post("/payments/:id/mark-maintenance", async (req: Request, res: Response) => {
+  const paymentId = parseInt(String(req.params.id || ""), 10);
+  if (isNaN(paymentId)) return res.status(400).json({ error: "ID de pago inválido" });
+  const userNote = String(req.body?.notes || "").trim();
+
+  const { data: payment, error: pErr } = await supabase
+    .from("payments")
+    .select("id, plate, payment_date, amount, status, credit_installment_amount")
+    .eq("id", paymentId)
+    .maybeSingle();
+  if (pErr || !payment) return res.status(404).json({ error: "Pago no encontrado" });
+  if (payment.status !== "pending") {
+    return res.status(400).json({ error: "Solo se pueden marcar en mantenimiento pagos pendientes." });
+  }
+  if (Number(payment.credit_installment_amount || 0) > 0) {
+    return res.status(400).json({
+      error: "El pago tiene abono a una cuota de anticipo. Corrija la cuota antes de marcarlo como mantenimiento.",
+    });
+  }
+
+  const { taller, validation } = await buildMaintenanceCheck(payment);
+  const warnings = validation?.warnings ?? [];
+
+  if (warnings.length && userNote.length < 10) {
+    return res.status(422).json({
+      error: "El día no concuerda con el taller. Escriba qué tipo de mantenimiento es y por qué no se hace en el taller.",
+      requires_note: true,
+      taller,
+      validation,
+    });
+  }
+
+  let notes: string;
+  const s = validation?.covering_stay;
+  if (s) {
+    notes = `Día en mantenimiento (taller): ingreso ${s.id} · entrada ${s.entrada} · salida ${s.salida ?? "sigue en taller"}` +
+      (s.salida_fuente === "estimada" ? " (estimada)" : "") +
+      (s.motivo_visita ? ` · ${s.motivo_visita.trim()}` : "") +
+      (userNote ? ` — ${userNote}` : "");
+  } else if (validation) {
+    notes = `Día en mantenimiento FUERA del taller: ${userNote} [${warnings.map((w) => w.code).join(", ")}]`;
+  } else {
+    notes = `Día en mantenimiento${userNote ? `: ${userNote}` : ""}`;
+  }
+  notes += ` (monto original registrado: $${Number(payment.amount || 0)})`;
+
+  const { error: upErr } = await supabase
+    .from("payments")
+    .update({
+      amount: 0,
+      insurance_amount: 0,
+      maintenance_amount: 0,
+      delivery_amount: 0,
+      credit_installment_amount: 0,
+      installment_number: null,
+      installment_status: null,
+      installment_shortfall: null,
+      receipt_status: "maintenance_day",
+      flagged_for_review: false,
+      status: "confirmed",
+      notes,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", paymentId)
+    .eq("status", "pending");
+  if (upErr) return res.status(500).json({ error: `Error marcando mantenimiento: ${upErr.message}` });
+
+  return res.json({ success: true, message: "Pago marcado como día en mantenimiento.", notes });
 });
 
 // ── POST /reports/payments/:id/approve ──────────────────────────────────────
