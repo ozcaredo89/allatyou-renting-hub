@@ -218,6 +218,15 @@ export default function App() {
   };
   const [dupWarning, setDupWarning] = useState<DuplicateWarning | null>(null);
 
+  // Advertencia: la cuota digitada no corresponde a una cuota real del anticipo
+  type InstallmentWarning = {
+    message: string;
+    installment_number: number;
+    suggested_installment: number | null;
+    pendingBody: any;
+  };
+  const [instWarning, setInstWarning] = useState<InstallmentWarning | null>(null);
+
   // Success confirmation modal state
   type SuccessPaymentInfo = {
     plate: string;
@@ -766,6 +775,19 @@ export default function App() {
           pendingBody: body,
         });
         return; // detenemos aquí — el modal tomará el control
+      }
+
+      // 409 INSTALLMENT_WARNING: la cuota no corresponde al anticipo (no existe, ya pagada o sin anticipo)
+      if (rs.status === 409 && json.code === "INSTALLMENT_WARNING") {
+        setProgressStep("idle");
+        setLoading(false);
+        setInstWarning({
+          message: json.error || "La cuota no corresponde al anticipo.",
+          installment_number: Number(json.installment_number),
+          suggested_installment: json.suggested_installment ?? null,
+          pendingBody: body,
+        });
+        return;
       }
 
       const msg = json.error || json.message || "Error creando pago";
@@ -1347,6 +1369,53 @@ export default function App() {
             </div>
           </form>
         </div>
+
+        {/* Modal: la cuota no corresponde al anticipo */}
+        {instWarning && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+              <h3 className="text-base font-bold text-gray-900">⚠️ Revisa la cuota del anticipo</h3>
+              <p className="mt-2 text-sm leading-relaxed text-gray-700">{instWarning.message}</p>
+              <div className="mt-4 flex flex-col gap-2">
+                {instWarning.suggested_installment != null && (
+                  <button
+                    type="button"
+                    disabled={loading}
+                    className="rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                    onClick={() => {
+                      const s = instWarning.suggested_installment!;
+                      const body = { ...instWarning.pendingBody, installment_number: s };
+                      setF((prev) => ({ ...prev, installment_number: String(s) }));
+                      setInstWarning(null);
+                      retryPayment(body, false);
+                    }}
+                  >
+                    Usar la cuota {instWarning.suggested_installment} y guardar
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={loading}
+                  className="rounded-xl border border-amber-400 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-900 disabled:opacity-50"
+                  onClick={() => {
+                    const body = { ...instWarning.pendingBody, confirm_installment: true };
+                    setInstWarning(null);
+                    retryPayment(body, false);
+                  }}
+                >
+                  Estoy seguro, guardar con la cuota {instWarning.installment_number}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-xl px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+                  onClick={() => setInstWarning(null)}
+                >
+                  Volver y corregir
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Modal: Advertencia de comprobante / Inconsistencias */}
         {dupWarning && (() => {

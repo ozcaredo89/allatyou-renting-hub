@@ -192,6 +192,57 @@ async function getActiveAdvanceByPlateOrError(plate: string, paymentDate: string
   return { kind: "one" as const, advance: list[0] as any };
 }
 
+/**
+ * Valida que installment_number corresponda a una cuota real del anticipo activo.
+ * Devuelve null si es válida; si no, el motivo y un mensaje claro para el usuario.
+ * - NO_ACTIVE_ADVANCE: la placa no tiene anticipo activo.
+ * - NOT_IN_SCHEDULE: el número no existe en el cronograma (ej. 4714 = leasing 47 + anticipo 14).
+ * - ALREADY_PAID: la cuota ya está pagada.
+ */
+async function checkAdvanceInstallment(plate: string, instNo: number) {
+  const advRes = await getActiveAdvanceByPlateOrError(plate, "", null);
+  if (advRes.kind !== "one" && advRes.kind !== "none") return null; // errores se manejan en el flujo normal
+
+  const closing = "Corrígela con la cuota sugerida o, si estás seguro, guárdala así: el pago se registra pero no abona nada al anticipo.";
+
+  if (advRes.kind === "none") {
+    return {
+      reason: "NO_ACTIVE_ADVANCE" as const,
+      suggested_installment: null as number | null,
+      message: `${plate} no tiene un anticipo activo, así que la cuota ${instNo} no se puede abonar a ningún anticipo. Deja el campo vacío o, si estás seguro, guárdala así: el pago se registra pero no abona nada al anticipo.`,
+    };
+  }
+
+  const adv = advRes.advance;
+  const total = Number(adv.installments || 0);
+  const { data: rows } = await supabase
+    .from("operational_advance_schedule")
+    .select("installment_no, status")
+    .eq("advance_id", adv.id)
+    .gte("installment_no", 1)
+    .lte("installment_no", total)
+    .order("installment_no", { ascending: true });
+  const next = (rows || []).find((r: any) => r.status !== "paid")?.installment_no ?? null;
+  const nextTxt = next != null ? ` La siguiente por pagar es la ${next}.` : "";
+
+  if (instNo < 1 || instNo > total) {
+    return {
+      reason: "NOT_IN_SCHEDULE" as const,
+      suggested_installment: next,
+      message: `La cuota ${instNo} no existe en el anticipo de ${plate}: ese anticipo tiene ${total} cuotas (de la 1 a la ${total}).${nextTxt} ${closing}`,
+    };
+  }
+  const row = (rows || []).find((r: any) => r.installment_no === instNo);
+  if (row?.status === "paid") {
+    return {
+      reason: "ALREADY_PAID" as const,
+      suggested_installment: next,
+      message: `La cuota ${instNo} del anticipo de ${plate} ya está pagada.${nextTxt} ${closing}`,
+    };
+  }
+  return null;
+}
+
 async function ensureScheduleRow(params: {
   advance_id: number;
   start_date: string;
@@ -200,8 +251,22 @@ async function ensureScheduleRow(params: {
   plate: string;
   payment_id: number | null;
   desired_status: "paid" | "pending";
+  /** Total de cuotas del anticipo: nunca se crean filas fuera de 1..installments */
+  installments: number;
 }) {
   const { advance_id, start_date, installment_no } = params;
+
+  if (installment_no < 1 || installment_no > Number(params.installments || 0)) {
+    await logInconsistency({
+      payment_id: params.payment_id,
+      plate: params.plate,
+      payment_date: params.payment_date,
+      issue_code: "SCHEDULE_INSTALLMENT_OUT_OF_RANGE",
+      message: "installment_no fuera del cronograma del anticipo; no se crea fila.",
+      metadata: { advance_id, installment_no, installments: params.installments },
+    });
+    return { ok: false as const, error: `La cuota ${installment_no} no existe en el anticipo (${params.installments} cuotas).` };
+  }
 
   const { data: existing, error: exErr } = await supabase
     .from("operational_advance_schedule")
@@ -1093,6 +1158,7 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
         const ensured = await ensureScheduleRow({
           advance_id: advance.id,
           start_date: advance.start_date,
+          installments: Number(advance.installments || 0),
           installment_no: cuotaNo,
           payment_date: pDate,
           plate: upperPlate,
@@ -1300,6 +1366,9 @@ r.post("/", async (req: Request, res: Response) => {
     // Cuando el usuario confirma explícitamente a pesar de la alerta de duplicado
     skip_receipt_check,
 
+    // Cuando el usuario confirma guardar una cuota que no corresponde al anticipo
+    confirm_installment,
+
     // Campos para pago multi-día (lote)
     batch_mode,
     days_count,
@@ -1419,6 +1488,35 @@ r.post("/", async (req: Request, res: Response) => {
   }
 
 
+  // ---------------- Validación de la cuota de anticipo ----------------
+  // Si el número no corresponde a una cuota real del anticipo, se avisa (409) para que el
+  // usuario la corrija. Si confirma guardarla así, el pago se registra sin abonar al anticipo
+  // y sin tocar el cronograma (antes se creaban filas falsas como la #4714).
+  let installmentInvalid = false;
+  if (instNo != null) {
+    const instIssue = await checkAdvanceInstallment(upperPlate, instNo);
+    if (instIssue) {
+      if (confirm_installment !== true) {
+        return res.status(409).json({
+          code: "INSTALLMENT_WARNING",
+          error: instIssue.message,
+          reason: instIssue.reason,
+          installment_number: instNo,
+          suggested_installment: instIssue.suggested_installment,
+        });
+      }
+      installmentInvalid = true;
+      await logInconsistency({
+        payment_id: null,
+        plate: upperPlate,
+        payment_date,
+        issue_code: `INSTALLMENT_CONFIRMED_${instIssue.reason}`,
+        message: "El usuario confirmó guardar una cuota que no corresponde al anticipo; no se abona al anticipo.",
+        metadata: { installment_no: instNo },
+      });
+    }
+  }
+
   // ---------------- Split siempre ----------------
   const wantsOverride = force_override === true || hasAnyOverride(req.body);
 
@@ -1441,7 +1539,7 @@ r.post("/", async (req: Request, res: Response) => {
   } else {
     let expectedCredit = 0;
     const advRes = await getActiveAdvanceByPlateOrError(upperPlate, payment_date, null);
-    if (advRes.kind === "one") {
+    if (advRes.kind === "one" && !installmentInvalid) {
       const { data: schedRow } = await supabase
         .from("operational_advance_schedule")
         .select("installment_amount")
@@ -1768,13 +1866,14 @@ r.post("/", async (req: Request, res: Response) => {
       }
 
       // Si el pago incluía cuota de anticipo, amortizarla en operational_advance_schedule
-      if (instNo != null && splitCredit > 0) {
+      if (instNo != null && splitCredit > 0 && !installmentInvalid) {
         const advRes = await getActiveAdvanceByPlateOrError(upperPlate, payment_date, payment.id);
         if (advRes.kind === "one") {
           const advance = advRes.advance;
           const ensured = await ensureScheduleRow({
             advance_id: advance.id,
             start_date: advance.start_date,
+            installments: Number(advance.installments || 0),
             installment_no: instNo,
             payment_date,
             plate: upperPlate,
@@ -1812,7 +1911,7 @@ r.post("/", async (req: Request, res: Response) => {
 
   // ---------------- Update schedule (solo si installment_number != null) ----------------
   // Protección: si payment fue rejected, NO tocamos schedule.
-  if (instNo != null && safeStatus !== "rejected") {
+  if (instNo != null && safeStatus !== "rejected" && !installmentInvalid) {
     const advRes = await getActiveAdvanceByPlateOrError(upperPlate, payment_date, payment.id);
 
     if (advRes.kind === "one") {
@@ -1822,6 +1921,7 @@ r.post("/", async (req: Request, res: Response) => {
       const ensured = await ensureScheduleRow({
         advance_id: advance.id,
         start_date: advance.start_date,
+        installments: Number(advance.installments || 0),
         installment_no: instNo,
         payment_date,
         plate: upperPlate,

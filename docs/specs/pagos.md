@@ -44,6 +44,12 @@ Para vehículos **sin leasing**, cada pago se reparte en columnas de `payments`:
   - Si el monto cubre tarifa base + cuota (ej. monto ≥ $100.000): `credit_installment_amount` toma el valor de la cuota del cronograma (`operational_advance_schedule.installment_amount`), el resto ($70.000+) se distribuye en seguro ($5.000), mantenimiento ($6.000) y delivery (remanente completo), y la cuota queda `paid`.
   - Si el monto no alcanza para tarifa + cuota (monto < tarifa base + cuota esperada): la cuota queda `pending`, `credit_installment_amount = 0`, se registra el faltante (`installment_shortfall`) y la alerta `AMOUNT_LT_70000_INSTALLMENT_PENDING`.
 - **Canon de arrendamiento base del negocio:** En vehículos de renting tradicional, el canon diario estándar es de **$70.000 COP** (salvo tarifa específica configurada en `vehicles.default_amount`).
+- **Cuota que no corresponde al anticipo (decisión 2026-10-16):** al registrar un pago (`POST /payments`), si `installment_number` no es una cuota real del anticipo activo, el backend responde **409 `INSTALLMENT_WARNING`** con un mensaje claro y la cuota sugerida, que es la siguiente pendiente. Aplica cuando:
+  - el número está fuera de 1..`installments` (ej. `4714`, que es la cuota de leasing 47 pegada a la cuota de anticipo 14);
+  - la cuota ya está pagada;
+  - el vehículo no tiene anticipo activo.
+
+  El formulario ofrece **"Usar la cuota N y guardar"**, **"Estoy seguro, guardar con la cuota X"** (envía `confirm_installment: true`) o **"Volver y corregir"**. Si se confirma, el pago se registra con ese número, `credit_installment_amount = 0` y **sin tocar el cronograma** del anticipo, y queda registrado en el log de inconsistencias. El backend nunca crea filas en `operational_advance_schedule` fuera de 1..`installments`. Antes sí las creaba, y así se generaron las filas falsas de JHW889.
 - **Pagos con cuota sin anticipo activo o sobrepago sobre canon (decisión 2026-10-12):**
   - Si un pago registra `installment_number` pero el vehículo **NO** tiene ningún anticipo activo (`operational_advances` con `status = 'active'`):
     - No es una restricción bloqueante: el pago se registra y `can_approve` permanece en `true`.
