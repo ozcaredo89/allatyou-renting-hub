@@ -72,3 +72,23 @@ Numeración `ND-00001` (id con padding). PDF generado en el navegador (`debitNot
 
 - ¿Se pueden descontar del fondo gastos de vehículos en renting (no leasing)? Hoy no.
 - ¿Editar el valor de un gasto con nota débito debe recalcular la nota?
+
+---
+
+## 6. Integración con AllAtYou Taller (Sincronización Automática de Reparaciones)
+
+**Origen:** Al dar salida a un vehículo (`estado = 'entregado'`) en la aplicación de taller (`allatyou-taller`).
+
+### Reglas de Negocio y Validación de Flota
+- **Propietario / Flota propia:** La sincronización solo aplica a los vehículos de la flota propia administrada por AllAtYou. Se valida en el taller verificando que el cliente asociado al vehículo coincida con el documento configurado (`ALLATYOU_RENTING_CLIENTE_DOC`) y el tenant del taller (`ALLATYOU_RENTING_EMPRESA_ID`).
+- **Consistencia de placas:** Se validó que las placas activas de la flota en Renting coinciden al 100% con los vehículos registrados a nombre del propietario en el taller.
+
+### Mecanismo de Integración
+- **Consumo de API:** El backend de Taller consume directamente `POST /expenses` con HTTP Basic Auth (`ADMIN_BASIC_USER` / `ADMIN_BASIC_PASS`).
+- **Mapeo de Datos:**
+  - `date`: Fecha de entrega o ingreso en formato `YYYY-MM-DD`.
+  - `plates`: `[placa]` del vehículo.
+  - `description`: Motivo de visita / diagnóstico de la orden de taller.
+  - `items`: Arreglo extraído de `items_factura` de la orden de taller (filtrando montos `> 0`). Cada ítem se clasifica bajo categoría `"Mantenimiento"`.
+- **Idempotencia:** La sincronización se dispara únicamente en la transición de estado hacia `entregado` (`isTransitioningToEntregado`), garantizando que ediciones posteriores no dupliquen gastos.
+- **Resiliencia:** La llamada se ejecuta asíncronamente en segundo plano (fire-and-forget con logging de errores) para no bloquear la salida del vehículo en el taller si la red o API externa presenta demoras.

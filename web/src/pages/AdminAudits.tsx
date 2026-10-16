@@ -42,6 +42,18 @@ function formatCurrencyStr(val: number) {
     return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(val);
 }
 
+function formatCompactCurrency(val: number): string {
+    if (!val || val === 0) return "$0";
+    if (val >= 1_000_000) {
+        const m = val / 1_000_000;
+        return `$${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+    }
+    if (val >= 1_000) {
+        return `$${Math.round(val / 1_000)}k`;
+    }
+    return `$${val}`;
+}
+
 // ==========================================
 // COMPONENTE MODAL DE REGLAS
 // ==========================================
@@ -230,6 +242,14 @@ export default function AdminAudits() {
     const [isChangingYear, setIsChangingYear] = useState(false);
     const [isRulesModalOpen, setRulesModalOpen] = useState(false);
     const [selectedYear, setSelectedYear] = useState<string>("last12");
+    const [showAlerts, setShowAlerts] = useState<boolean>(() => {
+        try {
+            const s = localStorage.getItem("audits_show_alerts");
+            return s !== null ? s === "true" : true;
+        } catch {
+            return true;
+        }
+    });
 
     // Evitar race conditions cuando el usuario cambia rápidamente de año
     const activeRequestId = useRef(0);
@@ -304,11 +324,12 @@ export default function AdminAudits() {
 
     if (!dashboard) return null;
 
+    const activeAlertsCount = dashboard.summary.active_alerts_count ?? dashboard.active_alerts.length;
     const periodLabel = selectedYear === "last12" ? "Últimos 12 meses" : `Año ${selectedYear}`;
     const historyPeriodLabel = selectedYear === "last12" ? "Últimos 12 meses" : `Meses de ${selectedYear}`;
 
     return (
-        <div className="min-h-full bg-slate-50 p-4 md:p-8 space-y-8 animate-in fade-in zoom-in-95 duration-500">
+        <div className="min-h-full bg-slate-50 p-4 md:p-8 space-y-8 animate-in fade-in zoom-in-95 duration-500 relative">
             {/* ENCABEZADO */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
@@ -320,14 +341,43 @@ export default function AdminAudits() {
                         Tablero gerencial inteligente. Monitorea la distribución de tu presupuesto, detecta variaciones de precios y analiza el ROI de tus vehículos.
                     </p>
                 </div>
-                {/* Botón hacia las configuraciones de auditoría (Reglas) en un futuro modal/pantalla */}
-                <button
-                    onClick={() => setRulesModalOpen(true)}
-                    className="flex items-center gap-2 bg-white border border-slate-200 px-4 py-2 rounded-xl text-slate-600 hover:text-emerald-700 hover:border-emerald-300 transition-colors shadow-sm font-semibold"
-                >
-                    <Settings className="w-5 h-5" />
-                    Reglas y Precios
-                </button>
+
+                {/* Acciones principales: Buzón de Alertas y Reglas */}
+                <div className="flex flex-wrap items-center gap-2.5">
+                    {/* Botón para alternar visibilidad del Buzón de Alertas */}
+                    <button
+                        onClick={() => {
+                            const next = !showAlerts;
+                            setShowAlerts(next);
+                            try { localStorage.setItem("audits_show_alerts", String(next)); } catch {}
+                        }}
+                        className={`flex items-center gap-2 border px-4 py-2 rounded-xl transition-all shadow-sm font-semibold text-sm ${
+                            showAlerts
+                                ? "bg-slate-900 text-white border-slate-800 hover:bg-slate-800"
+                                : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                        }`}
+                        title={showAlerts ? "Ocultar panel lateral de alertas" : "Mostrar panel lateral de alertas"}
+                    >
+                        <BellIcon className={`w-4 h-4 ${activeAlertsCount > 0 ? "text-amber-400" : "text-slate-400"}`} />
+                        <span>{showAlerts ? "Ocultar Buzón" : "Buzón de Alertas"}</span>
+                        <span className={`text-[11px] font-black px-2 py-0.5 rounded-full ${
+                            activeAlertsCount > 0
+                                ? "bg-red-500 text-white shadow-sm"
+                                : "bg-emerald-100 text-emerald-700"
+                        }`}>
+                            {activeAlertsCount}
+                        </span>
+                    </button>
+
+                    {/* Botón hacia las configuraciones de auditoría (Reglas) */}
+                    <button
+                        onClick={() => setRulesModalOpen(true)}
+                        className="flex items-center gap-2 bg-white border border-slate-200 px-4 py-2 rounded-xl text-slate-600 hover:text-emerald-700 hover:border-emerald-300 transition-colors shadow-sm font-semibold text-sm"
+                    >
+                        <Settings className="w-4 h-4" />
+                        Reglas y Precios
+                    </button>
+                </div>
             </div>
 
             <RulesModal isOpen={isRulesModalOpen} onClose={() => setRulesModalOpen(false)} />
@@ -343,8 +393,8 @@ export default function AdminAudits() {
             {/* SECCIÓN 1: KPI GLOBAL Y ALERTAS */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-                {/* COLUMNA IZQUIERDA: Distribución del Gasto y Vehículos Críticos */}
-                <div className="lg:col-span-2 space-y-6">
+                {/* COLUMNA IZQUIERDA: Distribución del Gasto, Histórico y Vehículos Críticos */}
+                <div className={`${showAlerts ? "lg:col-span-2" : "lg:col-span-3"} space-y-6 transition-all duration-300`}>
 
                     {/* TOP INSUMOS */}
                     <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-100 relative overflow-hidden">
@@ -386,47 +436,60 @@ export default function AdminAudits() {
                         </div>
                     </div>
 
-                    {/* HISTÓRICO DE GASTOS */}
-                    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-100 relative overflow-hidden">
-                        <div className="absolute top-0 left-0 w-32 h-32 bg-indigo-100 rounded-full blur-3xl opacity-50 -translate-y-1/2 -translate-x-1/2" />
-                        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
-                            <TrendingDown className="w-6 h-6 text-indigo-400" />
-                            Histórico de Gastos
-                            <span className="text-xs font-normal bg-slate-100 text-slate-500 px-2 py-1 rounded-full ml-auto">{historyPeriodLabel}</span>
-                        </h2>
+                    {/* HISTÓRICO DE GASTOS CON SCROLL Y VALORES VISIBLES */}
+                    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-100 relative">
+                        <div className="absolute top-0 left-0 w-32 h-32 bg-indigo-100 rounded-full blur-3xl opacity-50 -translate-y-1/2 -translate-x-1/2 pointer-events-none" />
+                        <div className="flex items-center justify-between gap-4 mb-1">
+                            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                <TrendingDown className="w-6 h-6 text-indigo-400" />
+                                Histórico de Gastos
+                            </h2>
+                            <span className="text-xs font-semibold bg-slate-100 text-slate-600 px-3 py-1 rounded-full">{historyPeriodLabel}</span>
+                        </div>
+                        <p className="text-xs text-slate-400 mb-6">
+                            Evolución mensual de egresos. Desplaza horizontalmente para comparar todos los meses o posa el cursor para ver el monto exacto.
+                        </p>
 
-                        <div className="h-64 flex items-end gap-2 md:gap-4 mt-8 pb-6 border-b border-slate-100">
-                            {(() => {
-                                const history = dashboard.expenses_history || [];
-                                if (history.length === 0) return <p className="text-slate-500 text-center w-full pb-10">No hay datos suficientes para graficar</p>;
-                                
-                                const maxTotal = Math.max(...history.map(h => h.total));
-                                
-                                return history.map(item => {
-                                    const pct = maxTotal > 0 ? (item.total / maxTotal) * 100 : 0;
-                                    return (
-                                        <div key={item.month} className="flex-1 flex flex-col items-center justify-end h-full group relative">
-                                            {/* Tooltip / Valor formateado */}
-                                            <div className="absolute -top-8 bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10 shadow-lg">
-                                                {formatCurrency(item.total)}
+                        <div className="overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-200 hover:scrollbar-thumb-slate-300">
+                            <div className="min-w-[650px] sm:min-w-[740px] h-72 flex items-end gap-2.5 sm:gap-3.5 pt-12 pb-4 border-b border-slate-100">
+                                {(() => {
+                                    const history = dashboard.expenses_history || [];
+                                    if (history.length === 0) return <p className="text-slate-500 text-center w-full pb-10">No hay datos suficientes para graficar</p>;
+                                    
+                                    const maxTotal = Math.max(...history.map(h => h.total));
+                                    
+                                    return history.map(item => {
+                                        const pct = maxTotal > 0 ? Math.max((item.total / maxTotal) * 100, 3) : 0;
+                                        return (
+                                            <div key={item.month} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                                                {/* Tooltip / Valor completo en Hover */}
+                                                <div className="absolute -top-10 bg-slate-900 text-white text-[11px] font-bold py-1.5 px-3 rounded-xl opacity-0 group-hover:opacity-100 transition-all whitespace-nowrap pointer-events-none z-30 shadow-xl border border-slate-700">
+                                                    <div className="text-slate-300 font-medium">{item.month}</div>
+                                                    <div className="text-emerald-400 font-black">{formatCurrency(item.total)}</div>
+                                                </div>
+
+                                                {/* Valor compacto SIEMPRE visible arriba de la barra */}
+                                                <div className="text-[10px] sm:text-[11px] font-bold text-slate-500 mb-1.5 text-center truncate w-full group-hover:text-indigo-600 transition-colors">
+                                                    {formatCompactCurrency(item.total)}
+                                                </div>
+                                                
+                                                {/* Barra contenedor (fondo claro) */}
+                                                <div className="w-full max-w-[48px] bg-slate-50 rounded-t-xl h-full relative flex items-end justify-center transition-all group-hover:bg-slate-100">
+                                                    <div 
+                                                        className="w-full bg-slate-800 rounded-t-xl transition-all duration-500 ease-out group-hover:bg-indigo-600 shadow-sm"
+                                                        style={{ height: `${pct}%` }}
+                                                    />
+                                                </div>
+                                                
+                                                {/* Etiqueta del Mes */}
+                                                <div className="mt-3 text-xs font-semibold text-slate-500 text-center whitespace-nowrap group-hover:text-indigo-600 transition-colors">
+                                                    {item.month}
+                                                </div>
                                             </div>
-                                            
-                                            {/* Barra contenedor (fondo claro) */}
-                                            <div className="w-full max-w-[48px] bg-slate-50 rounded-t-xl h-full relative flex items-end justify-center transition-all group-hover:bg-slate-100">
-                                                <div 
-                                                    className="w-full bg-slate-800 rounded-t-xl transition-all duration-700 ease-out group-hover:bg-indigo-600"
-                                                    style={{ height: `${pct}%` }}
-                                                />
-                                            </div>
-                                            
-                                            {/* Etiqueta del Mes */}
-                                            <div className="mt-3 text-xs font-semibold text-slate-500 text-center whitespace-nowrap">
-                                                {item.month}
-                                            </div>
-                                        </div>
-                                    );
-                                });
-                            })()}
+                                        );
+                                    });
+                                })()}
+                            </div>
                         </div>
                     </div>
 
@@ -470,86 +533,131 @@ export default function AdminAudits() {
 
                 </div>
 
-                {/* COLUMNA DERECHA: BUZÓN DE ALERTAS */}
-                <div className="lg:col-span-1">
-                    <div className="bg-slate-900 rounded-3xl p-6 md:p-8 shadow-xl shadow-slate-900/10 sticky top-6">
-                        <h2 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
-                            <BellIcon className="w-6 h-6 text-red-400" />
-                            Buzón de Alertas
-                        </h2>
-                        <p className="text-slate-400 text-sm mb-6">
-                            Notificaciones automáticas sobre variaciones de precios o frecuencias inusuales detectadas en los repuestos.
-                        </p>
+                {/* COLUMNA DERECHA: BUZÓN DE ALERTAS (COLAPSABLE) */}
+                {showAlerts && (
+                    <div className="lg:col-span-1 animate-in fade-in zoom-in-95 duration-200">
+                        <div className="bg-slate-900 rounded-3xl p-6 md:p-8 shadow-xl shadow-slate-900/10 sticky top-6">
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                    <BellIcon className="w-6 h-6 text-red-400" />
+                                    Buzón de Alertas
+                                    <span className="bg-red-500 text-white text-xs font-black px-2 py-0.5 rounded-full ml-1 shadow-sm">
+                                        {activeAlertsCount}
+                                    </span>
+                                </h2>
+                                <button
+                                    onClick={() => {
+                                        setShowAlerts(false);
+                                        try { localStorage.setItem("audits_show_alerts", "false"); } catch {}
+                                    }}
+                                    className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors text-xs flex items-center gap-1 font-semibold"
+                                    title="Ocultar buzón"
+                                >
+                                    <X className="w-4 h-4" />
+                                    <span>Ocultar</span>
+                                </button>
+                            </div>
+                            <p className="text-slate-400 text-sm mb-6">
+                                Notificaciones automáticas sobre variaciones de precios o frecuencias inusuales detectadas en los repuestos.
+                            </p>
 
-                        <div className="space-y-4">
-                            {dashboard.active_alerts.length === 0 ? (
-                                <div className="bg-slate-800/50 rounded-2xl p-6 text-center border border-slate-700/50">
-                                    <div className="w-12 h-12 bg-emerald-500/10 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-3">
-                                        <CheckCircle className="w-6 h-6" />
-                                    </div>
-                                    <p className="text-slate-300 font-medium">Buzón vacío</p>
-                                    <p className="text-slate-500 text-xs mt-1">Todo parece estar en orden esta semana.</p>
-                                </div>
-                            ) : (
-                                dashboard.active_alerts.map(alert => (
-                                    <div key={alert.id} className="bg-white rounded-2xl p-4 shadow-sm relative group">
-
-                                        {/* Cabecera de Alerta */}
-                                        <div className="flex justify-between items-start mb-2">
-                                            <div className="flex items-center gap-2">
-                                                {alert.alert_type === 'PRICE_HIGH' ? (
-                                                    <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide flex items-center gap-1">
-                                                        <TrendingDown className="w-3 h-3" /> Precio Elevado
-                                                    </span>
-                                                ) : (
-                                                    <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide flex items-center gap-1">
-                                                        <AlertCircle className="w-3 h-3" /> Frecuencia Anormal
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <span className="text-xs text-slate-400 font-medium">
-                                                {new Date(alert.created_at).toLocaleDateString()}
-                                            </span>
+                            <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-700">
+                                {dashboard.active_alerts.length === 0 ? (
+                                    <div className="bg-slate-800/50 rounded-2xl p-6 text-center border border-slate-700/50">
+                                        <div className="w-12 h-12 bg-emerald-500/10 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-3">
+                                            <CheckCircle className="w-6 h-6" />
                                         </div>
-
-                                        {/* Info de la alerta */}
-                                        <p className="font-bold text-slate-800 text-lg mb-1">{alert.vehicle_plate}</p>
-                                        <p className="text-sm text-slate-600 leading-snug">
-                                            {alert.message}
-                                        </p>
-
-                                        {/* Valores de comparación */}
-                                        <div className="mt-3 p-3 bg-slate-50 rounded-xl flex justify-between items-center border border-slate-100">
-                                            <div className="text-center">
-                                                <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Registrado</p>
-                                                <p className="font-semibold text-slate-700">
-                                                    {alert.alert_type === 'PRICE_HIGH' ? formatCurrency(alert.actual_value) : `${alert.actual_value} días`}
-                                                </p>
-                                            </div>
-                                            <div className="h-6 w-px bg-slate-200" />
-                                            <div className="text-center">
-                                                <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Esperado</p>
-                                                <p className="font-semibold text-emerald-600">
-                                                    {alert.alert_type === 'PRICE_HIGH' ? formatCurrency(alert.expected_value) : `${alert.expected_value} días mín.`}
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        {/* Acción */}
-                                        <button
-                                            onClick={() => resolveAlert(alert.id)}
-                                            className="mt-3 w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold uppercase tracking-wider rounded-xl transition-colors"
-                                        >
-                                            Marcar Revisado
-                                        </button>
+                                        <p className="text-slate-300 font-medium">Buzón vacío</p>
+                                        <p className="text-slate-500 text-xs mt-1">Todo parece estar en orden esta semana.</p>
                                     </div>
-                                ))
-                            )}
+                                ) : (
+                                    <>
+                                        {dashboard.active_alerts.map(alert => (
+                                            <div key={alert.id} className="bg-white rounded-2xl p-4 shadow-sm relative group">
+
+                                                {/* Cabecera de Alerta */}
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <div className="flex items-center gap-2">
+                                                        {alert.alert_type === 'PRICE_HIGH' ? (
+                                                            <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide flex items-center gap-1">
+                                                                <TrendingDown className="w-3 h-3" /> Precio Elevado
+                                                            </span>
+                                                        ) : (
+                                                            <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide flex items-center gap-1">
+                                                                <AlertCircle className="w-3 h-3" /> Frecuencia Anormal
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <span className="text-xs text-slate-400 font-medium">
+                                                        {new Date(alert.created_at).toLocaleDateString()}
+                                                    </span>
+                                                </div>
+
+                                                {/* Info de la alerta */}
+                                                <p className="font-bold text-slate-800 text-lg mb-1">{alert.vehicle_plate}</p>
+                                                <p className="text-sm text-slate-600 leading-snug">
+                                                    {alert.message}
+                                                </p>
+
+                                                {/* Valores de comparación */}
+                                                <div className="mt-3 p-3 bg-slate-50 rounded-xl flex justify-between items-center border border-slate-100">
+                                                    <div className="text-center">
+                                                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Registrado</p>
+                                                        <p className="font-semibold text-slate-700">
+                                                            {alert.alert_type === 'PRICE_HIGH' ? formatCurrency(alert.actual_value) : `${alert.actual_value} días`}
+                                                        </p>
+                                                    </div>
+                                                    <div className="h-6 w-px bg-slate-200" />
+                                                    <div className="text-center">
+                                                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Esperado</p>
+                                                        <p className="font-semibold text-emerald-600">
+                                                            {alert.alert_type === 'PRICE_HIGH' ? formatCurrency(alert.expected_value) : `${alert.expected_value} días mín.`}
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Acción */}
+                                                <button
+                                                    onClick={() => resolveAlert(alert.id)}
+                                                    className="mt-3 w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold uppercase tracking-wider rounded-xl transition-colors"
+                                                >
+                                                    Marcar Revisado
+                                                </button>
+                                            </div>
+                                        ))}
+
+                                        {dashboard.active_alerts.length < activeAlertsCount && (
+                                            <p className="text-[11px] text-slate-400 text-center pt-2">
+                                                Mostrando las {dashboard.active_alerts.length} alertas más recientes de {activeAlertsCount} activas.
+                                            </p>
+                                        )}
+                                    </>
+                                )}
+                            </div>
                         </div>
                     </div>
-                </div>
+                )}
 
             </div>
+
+            {/* Botón flotante para reabrir alertas cuando el buzón está colapsado */}
+            {!showAlerts && activeAlertsCount > 0 && (
+                <div className="fixed bottom-6 right-6 z-40 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                    <button
+                        onClick={() => {
+                            setShowAlerts(true);
+                            try { localStorage.setItem("audits_show_alerts", "true"); } catch {}
+                        }}
+                        className="flex items-center gap-2.5 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-2xl border border-slate-700 hover:bg-slate-800 hover:scale-105 transition-all group"
+                    >
+                        <div className="relative">
+                            <BellIcon className="w-5 h-5 text-amber-400" />
+                            <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-ping" />
+                        </div>
+                        <span className="text-sm font-bold">Ver {activeAlertsCount} {activeAlertsCount === 1 ? "alerta pendiente" : "alertas pendientes"}</span>
+                    </button>
+                </div>
+            )}
         </div>
     );
 }

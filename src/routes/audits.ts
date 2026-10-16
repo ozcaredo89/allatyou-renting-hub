@@ -65,45 +65,111 @@ r.put("/rules/:id", async (req: Request, res: Response) => {
 r.get("/dashboard", async (req: Request, res: Response) => {
     try {
         const yearQuery = req.query.year ? String(req.query.year).trim() : null;
-        // Paginación en bloques de 1000 para superar el límite por defecto de PostgREST / Supabase
         const PAGE_SIZE = 1000;
-        let allExpenses: { item: string; total_amount: number; category: string; date: string }[] = [];
-        let from = 0;
-        let hasMore = true;
 
-        while (hasMore) {
-            let q = supabase
+        // A. Paginación en paralelo de gastos para garantizar 100% de registros en una sola ronda
+        const fetchExpensesPromise = (async () => {
+            let baseQ = supabase
                 .from("expenses")
-                .select("item, total_amount, category, date")
-                .order("id", { ascending: true })
-                .range(from, from + PAGE_SIZE - 1);
+                .select("item, total_amount, category, date", { count: "exact" })
+                .order("id", { ascending: true });
+
+            const oneYearAgo = new Date();
+            oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+            const oneYearAgoStr = oneYearAgo.toISOString().split('T')[0];
 
             if (yearQuery && /^\d{4}$/.test(yearQuery)) {
-                q = q.gte("date", `${yearQuery}-01-01`).lte("date", `${yearQuery}-12-31`);
+                baseQ = baseQ.gte("date", `${yearQuery}-01-01`).lte("date", `${yearQuery}-12-31`);
             } else {
-                // Últimos 12 meses (por defecto)
-                const oneYearAgo = new Date();
-                oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-                q = q.gte("date", oneYearAgo.toISOString().split('T')[0]);
+                baseQ = baseQ.gte("date", oneYearAgoStr);
             }
 
-            const { data, error } = await q;
+            const { data: firstPage, count, error } = await baseQ.range(0, PAGE_SIZE - 1);
             if (error) throw error;
 
-            if (data && data.length > 0) {
-                allExpenses.push(...data);
-                from += PAGE_SIZE;
-                if (data.length < PAGE_SIZE) {
-                    hasMore = false;
+            const all = [...(firstPage || [])];
+            const totalCount = count ?? all.length;
+
+            if (totalCount > PAGE_SIZE) {
+                const remainingPromises = [];
+                for (let from = PAGE_SIZE; from < totalCount; from += PAGE_SIZE) {
+                    let q = supabase
+                        .from("expenses")
+                        .select("item, total_amount, category, date")
+                        .order("id", { ascending: true })
+                        .range(from, from + PAGE_SIZE - 1);
+
+                    if (yearQuery && /^\d{4}$/.test(yearQuery)) {
+                        q = q.gte("date", `${yearQuery}-01-01`).lte("date", `${yearQuery}-12-31`);
+                    } else {
+                        q = q.gte("date", oneYearAgoStr);
+                    }
+                    remainingPromises.push(q);
                 }
-            } else {
-                hasMore = false;
+
+                const results = await Promise.all(remainingPromises);
+                for (const res of results) {
+                    if (res.error) throw res.error;
+                    if (res.data) all.push(...res.data);
+                }
             }
-        }
 
-        const expenses = allExpenses;
+            return all;
+        })();
 
-        // Limpieza básica para el top
+        // B. Paginación en paralelo de expense_vehicles para análisis de flota
+        const fetchEVPromise = (async () => {
+            const { data: firstPage, count, error } = await supabase
+                .from("expense_vehicles")
+                .select("plate, share_amount", { count: "exact" })
+                .order("expense_id", { ascending: true })
+                .range(0, PAGE_SIZE - 1);
+
+            if (error) throw error;
+            const all = [...(firstPage || [])];
+            const totalCount = count ?? all.length;
+
+            if (totalCount > PAGE_SIZE) {
+                const remainingPromises = [];
+                for (let from = PAGE_SIZE; from < totalCount; from += PAGE_SIZE) {
+                    remainingPromises.push(
+                        supabase
+                            .from("expense_vehicles")
+                            .select("plate, share_amount")
+                            .order("expense_id", { ascending: true })
+                            .range(from, from + PAGE_SIZE - 1)
+                    );
+                }
+                const results = await Promise.all(remainingPromises);
+                for (const res of results) {
+                    if (res.error) throw res.error;
+                    if (res.data) all.push(...res.data);
+                }
+            }
+
+            return all;
+        })();
+
+        // C. Alertas activas: traemos las 50 más recientes para agilidad extrema + conteo exacto
+        const fetchAlertsPromise = supabase
+            .from("expense_alerts")
+            .select("*, expense_audit_rules(item_name), expenses(date, total_amount)", { count: "exact" })
+            .eq("is_resolved", false)
+            .order("created_at", { ascending: false })
+            .limit(50);
+
+        // Disparo concurrente con Promise.all
+        const [expenses, evData, alertsRes] = await Promise.all([
+            fetchExpensesPromise,
+            fetchEVPromise,
+            fetchAlertsPromise
+        ]);
+
+        if (alertsRes.error) throw alertsRes.error;
+        const alerts = alertsRes.data || [];
+        const activeAlertsCount = alertsRes.count ?? alerts.length;
+
+        // --- A. TOP INSUMOS ---
         const costMap: Record<string, number> = {};
         let totalExpensesSum = 0;
 
@@ -111,7 +177,6 @@ r.get("/dashboard", async (req: Request, res: Response) => {
             const amount = Number(e.total_amount) || 0;
             totalExpensesSum += amount;
 
-            // Reutilizamos la lógica del normalizador estático para que gráficamente tenga sentido
             let name = e.item?.toLowerCase() || '';
             let group = "Otros";
 
@@ -129,20 +194,12 @@ r.get("/dashboard", async (req: Request, res: Response) => {
             costMap[group] = (costMap[group] || 0) + amount;
         });
 
-        // Ordenar el top de insumos
         const topItems = Object.entries(costMap)
-            .map(([name, amount]) => ({ name, amount, percentage: Math.round((amount / totalExpensesSum) * 100) || 0 }))
+            .map(([name, amount]) => ({ name, amount, percentage: Math.round((amount / (totalExpensesSum || 1)) * 100) || 0 }))
             .sort((a, b) => b.amount - a.amount)
             .slice(0, 10);
 
-        // --- B. TOP VEHÍCULOS "HOYO NEGRO" FINANCIERO (Peor ROI / Más Costosos) ---
-        // Sumar gastos agrupados por placa usando la tabla pivot expense_vehicles
-        const { data: evData, error: evErr } = await supabase
-            .from("expense_vehicles")
-            .select("plate, share_amount");
-
-        if (evErr) throw evErr;
-
+        // --- B. TOP VEHÍCULOS "HOYO NEGRO" FINANCIERO ---
         const vehicleMap: Record<string, number> = {};
         (evData || []).forEach(ev => {
             if (!ev.plate) return;
@@ -152,17 +209,7 @@ r.get("/dashboard", async (req: Request, res: Response) => {
         const worstVehicles = Object.entries(vehicleMap)
             .map(([plate, total_expenses]) => ({ plate, total_expenses }))
             .sort((a, b) => b.total_expenses - a.total_expenses)
-            .slice(0, 8); // Top 8 carros más costosos
-
-
-        // --- C. ALERTAS ACTIVAS ---
-        const { data: alerts, error: alertErr } = await supabase
-            .from("expense_alerts")
-            .select("*, expense_audit_rules(item_name), expenses(date, total_amount)")
-            .eq("is_resolved", false)
-            .order("created_at", { ascending: false });
-
-        if (alertErr) throw alertErr;
+            .slice(0, 8);
 
         // --- D. HISTÓRICO DE GASTOS (POR MESES DEL PERÍODO) ---
         const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
@@ -225,7 +272,7 @@ r.get("/dashboard", async (req: Request, res: Response) => {
         return res.json({
             summary: {
                 total_expenses_year: totalExpensesSum,
-                active_alerts_count: alerts?.length || 0
+                active_alerts_count: activeAlertsCount
             },
             top_expense_items: topItems,
             worst_roi_vehicles: worstVehicles,
