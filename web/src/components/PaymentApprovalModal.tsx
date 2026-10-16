@@ -12,6 +12,7 @@ import {
   FileText,
   AlertTriangle,
   PlusCircle,
+  Pencil,
 } from "lucide-react";
 import { ensureBasicAuth } from "../lib/auth";
 
@@ -58,6 +59,21 @@ export type ApprovalPreviewData = {
     interest: number;
     principal: number;
     total: number;
+  } | null;
+};
+
+type AdjustInfo = {
+  payment_id: number;
+  amount: number;
+  installment_number: number | null;
+  ocr_amount: number | null;
+  canon: number;
+  advance: {
+    id: number;
+    daily_installment: number;
+    installments: number;
+    paid_count: number;
+    next_pending: number | null;
   } | null;
 };
 
@@ -108,6 +124,16 @@ export function PaymentApprovalModal({
   const [mttoCheck, setMttoCheck] = useState<TallerCheck | null>(null);
   const [mttoNote, setMttoNote] = useState("");
 
+  // Ajuste del pago (monto / cuota de anticipo) antes de aprobar
+  const [reloadKey, setReloadKey] = useState(0);
+  const [adjOpen, setAdjOpen] = useState(false);
+  const [adjInfo, setAdjInfo] = useState<AdjustInfo | null>(null);
+  const [adjAmount, setAdjAmount] = useState("");
+  const [adjInst, setAdjInst] = useState("");
+  const [adjNote, setAdjNote] = useState("");
+  const [adjSaving, setAdjSaving] = useState(false);
+  const [adjMsg, setAdjMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
   useEffect(() => {
     if (!isOpen || !paymentId) {
       setData(null);
@@ -117,6 +143,9 @@ export function PaymentApprovalModal({
       setMttoOpen(false);
       setMttoCheck(null);
       setMttoNote("");
+      setAdjOpen(false);
+      setAdjInfo(null);
+      setAdjMsg(null);
       return;
     }
 
@@ -149,7 +178,55 @@ export function PaymentApprovalModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, paymentId]);
+  }, [isOpen, paymentId, reloadKey]);
+
+  async function openAdjust() {
+    if (!paymentId) return;
+    setAdjOpen(true);
+    setAdjMsg(null);
+    try {
+      const res = await fetch(`${API}/reports/payments/${paymentId}/adjust-info`, {
+        headers: { Authorization: ensureBasicAuth() },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Error cargando datos del pago");
+      setAdjInfo(json);
+      setAdjAmount(String(json.amount ?? ""));
+      setAdjInst(json.installment_number != null ? String(json.installment_number) : "");
+      setAdjNote("");
+    } catch (err) {
+      setAdjMsg({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  async function saveAdjust() {
+    if (!paymentId) return;
+    setAdjSaving(true);
+    setAdjMsg(null);
+    try {
+      const res = await fetch(`${API}/reports/payments/${paymentId}/adjust`, {
+        method: "POST",
+        headers: { Authorization: ensureBasicAuth(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: Number(adjAmount.replace(/[^\d]/g, "")),
+          installment_number: adjInst.trim() ? Number(adjInst) : null,
+          notes: adjNote.trim(),
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (json.suggested_installment != null) setAdjInst(String(json.suggested_installment));
+        throw new Error(json.error || "Error ajustando el pago");
+      }
+      setAdjMsg({ ok: true, text: json.message || "Pago ajustado." });
+      setAdjOpen(false);
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      setAdjMsg({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setAdjSaving(false);
+    }
+  }
 
   async function handleApprove() {
     if (!paymentId) return;
@@ -520,6 +597,130 @@ export function PaymentApprovalModal({
                   </span>
                 </div>
               </div>
+
+              {/* Ajustar monto / cuota de anticipo */}
+              {adjMsg && (
+                <div className={`p-3 rounded-xl text-xs border ${adjMsg.ok ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-red-50 border-red-200 text-red-700"}`}>
+                  {adjMsg.text}
+                </div>
+              )}
+              {data.status === "pending" && !mttoOpen && !successMsg && (
+                adjOpen ? (
+                  <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-blue-800 flex items-center gap-1.5">
+                      <Pencil className="w-4 h-4" /> Ajustar el pago antes de aprobar
+                    </h3>
+                    {!adjInfo ? (
+                      <div className="flex items-center gap-2 text-xs text-gray-600">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Cargando...
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <label className="text-[11px] font-semibold text-gray-700 block mb-1">Monto</label>
+                          <input
+                            value={adjAmount}
+                            onChange={(e) => setAdjAmount(e.target.value)}
+                            inputMode="numeric"
+                            className="w-full text-sm rounded-lg border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                          />
+                          {adjInfo.ocr_amount != null && adjInfo.ocr_amount !== Number(adjAmount.replace(/[^\d]/g, "")) && (
+                            <button
+                              type="button"
+                              onClick={() => setAdjAmount(String(adjInfo.ocr_amount))}
+                              className="mt-1 text-[11px] font-semibold text-blue-700 underline cursor-pointer"
+                            >
+                              El comprobante dice ${fmtCOP.format(adjInfo.ocr_amount)} · usar ese monto
+                            </button>
+                          )}
+                          <p className="mt-1 text-[11px] text-gray-500">Canon del día: ${fmtCOP.format(adjInfo.canon)}</p>
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-semibold text-gray-700 block mb-1">Cuota del anticipo</label>
+                          {adjInfo.advance ? (
+                            <>
+                              <input
+                                value={adjInst}
+                                onChange={(e) => setAdjInst(e.target.value.replace(/[^\d]/g, ""))}
+                                inputMode="numeric"
+                                placeholder="Sin cuota"
+                                className="w-full text-sm rounded-lg border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                              />
+                              <p className="mt-1 text-[11px] text-gray-500">
+                                Anticipo #{adjInfo.advance.id}: ${fmtCOP.format(adjInfo.advance.daily_installment)} diarios · {adjInfo.advance.paid_count} de{" "}
+                                {adjInfo.advance.installments} pagadas
+                                {adjInfo.advance.next_pending != null && (
+                                  <>
+                                    {" "}·{" "}
+                                    <button
+                                      type="button"
+                                      onClick={() => setAdjInst(String(adjInfo.advance!.next_pending))}
+                                      className="font-semibold text-blue-700 underline cursor-pointer"
+                                    >
+                                      usar la siguiente: {adjInfo.advance.next_pending}
+                                    </button>
+                                  </>
+                                )}
+                              </p>
+                              {adjInst && (
+                                <p className="mt-1 text-[11px] text-gray-600">
+                                  Para abonar la cuota, el monto debe cubrir canon + cuota: $
+                                  {fmtCOP.format(adjInfo.canon + adjInfo.advance.daily_installment)}.
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <p className="text-[11px] text-gray-500">
+                              Esta placa no tiene un anticipo activo. Si se le entregó uno, primero hay que crearlo.
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-semibold text-gray-700 block mb-1">
+                            Nota {Number(adjAmount.replace(/[^\d]/g, "")) < adjInfo.canon ? "(obligatoria: el monto es menor que el canon)" : "(opcional)"}
+                          </label>
+                          <textarea
+                            value={adjNote}
+                            onChange={(e) => setAdjNote(e.target.value)}
+                            rows={2}
+                            placeholder="Ej: el comprobante es de $70.000; el conductor no pagó la cuota este día"
+                            className="w-full text-xs rounded-lg border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setAdjOpen(false)}
+                            className="px-3 py-2 rounded-lg text-xs text-gray-600 hover:bg-gray-100 cursor-pointer"
+                          >
+                            Cancelar ajuste
+                          </button>
+                          <button
+                            type="button"
+                            onClick={saveAdjust}
+                            disabled={adjSaving}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold disabled:opacity-50 cursor-pointer"
+                          >
+                            {adjSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Pencil className="w-4 h-4" />}
+                            Guardar ajuste
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={openAdjust}
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 text-xs font-semibold cursor-pointer"
+                  >
+                    <Pencil className="w-4 h-4" /> Ajustar monto o cuota del anticipo
+                  </button>
+                )
+              )}
 
               {/* Día en mantenimiento */}
               {mttoOpen && (

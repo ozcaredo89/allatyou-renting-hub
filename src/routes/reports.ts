@@ -13,6 +13,7 @@ import {
 } from "../lib/receiptClassification";
 import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
 import { checkVehicleInShop, validateMaintenanceDay, MaintenanceValidation } from "../lib/taller";
+import { checkAdvanceInstallment } from "./payments";
 
 const r = Router();
 
@@ -798,6 +799,189 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
     console.error("[approval-preview] error:", err.message);
     return res.status(500).json({ error: err.message });
   }
+});
+
+// ── Ajuste de un pago pendiente desde la ventana de aprobación ──────────────
+// Canon del día: cuota de leasing de esa fecha (si hay leasing) o vehicles.default_amount / $70.000.
+async function resolveCanonForPayment(plate: string, paymentDate: string) {
+  const contract = await getActiveLeasingContract(plate);
+  if (contract && !contract.start_date_pending_confirmation) {
+    const { data: cuota } = await supabase
+      .from("leasing_schedule")
+      .select("maintenance_expected, admin_expected, interest_expected, principal_expected")
+      .eq("contract_id", contract.id)
+      .eq("due_date", paymentDate)
+      .maybeSingle();
+    if (cuota) {
+      return Math.round(
+        Number(cuota.maintenance_expected) + Number(cuota.admin_expected) +
+        Number(cuota.interest_expected) + Number(cuota.principal_expected)
+      );
+    }
+  }
+  const { data: v } = await supabase.from("vehicles").select("default_amount").eq("plate", plate).maybeSingle();
+  return v?.default_amount ? Number(v.default_amount) : 70000;
+}
+
+async function getAdvanceSummary(plate: string) {
+  const { data: adv } = await supabase
+    .from("operational_advances")
+    .select("id, daily_installment, installments")
+    .eq("plate", plate)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+  if (!adv) return null;
+  const total = Number(adv.installments || 0);
+  const { data: rows } = await supabase
+    .from("operational_advance_schedule")
+    .select("installment_no, status, installment_amount")
+    .eq("advance_id", adv.id)
+    .gte("installment_no", 1)
+    .lte("installment_no", total)
+    .order("installment_no", { ascending: true });
+  const list = rows || [];
+  return {
+    id: adv.id,
+    daily_installment: Number(adv.daily_installment || 0),
+    installments: total,
+    paid_count: list.filter((r: any) => r.status === "paid").length,
+    next_pending: list.find((r: any) => r.status !== "paid")?.installment_no ?? null,
+    rows: list,
+  };
+}
+
+// GET /reports/payments/:id/adjust-info — datos para corregir el pago antes de aprobar
+r.get("/payments/:id/adjust-info", async (req: Request, res: Response) => {
+  const paymentId = parseInt(String(req.params.id || ""), 10);
+  if (isNaN(paymentId)) return res.status(400).json({ error: "ID de pago inválido" });
+
+  const { data: payment } = await supabase
+    .from("payments")
+    .select("id, plate, payment_date, amount, installment_number, status")
+    .eq("id", paymentId)
+    .maybeSingle();
+  if (!payment) return res.status(404).json({ error: "Pago no encontrado" });
+
+  const [{ data: receipt }, advance, canon] = await Promise.all([
+    supabase.from("receipt_uploads").select("amount").eq("linked_payment_id", paymentId).maybeSingle(),
+    getAdvanceSummary(payment.plate),
+    resolveCanonForPayment(payment.plate, payment.payment_date),
+  ]);
+  const ocr = receipt?.amount != null ? Number(receipt.amount) : null;
+
+  return res.json({
+    payment_id: payment.id,
+    amount: Number(payment.amount || 0),
+    installment_number: payment.installment_number ?? null,
+    ocr_amount: ocr && ocr > 0 ? ocr : null,
+    canon,
+    advance: advance && {
+      id: advance.id,
+      daily_installment: advance.daily_installment,
+      installments: advance.installments,
+      paid_count: advance.paid_count,
+      next_pending: advance.next_pending,
+    },
+  });
+});
+
+// POST /reports/payments/:id/adjust — corrige monto y/o cuota de anticipo de un pago pendiente
+// Body: { amount?: number, installment_number?: number | null, notes?: string }
+// Recalcula el reparto con la regla de pagos.md §3 (canon + cuota del cronograma) sin aprobar.
+r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
+  const paymentId = parseInt(String(req.params.id || ""), 10);
+  if (isNaN(paymentId)) return res.status(400).json({ error: "ID de pago inválido" });
+
+  const { data: payment } = await supabase
+    .from("payments")
+    .select("id, plate, payment_date, amount, installment_number, status, receipt_status, notes")
+    .eq("id", paymentId)
+    .maybeSingle();
+  if (!payment) return res.status(404).json({ error: "Pago no encontrado" });
+  if (payment.status !== "pending") return res.status(400).json({ error: "Solo se pueden ajustar pagos pendientes." });
+
+  const body = req.body || {};
+  const amount = body.amount != null ? Math.round(Number(body.amount)) : Number(payment.amount || 0);
+  if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: "El monto no es válido." });
+
+  const instNo: number | null =
+    "installment_number" in body
+      ? (body.installment_number == null || body.installment_number === "" ? null : Number(body.installment_number))
+      : (payment.installment_number ?? null);
+  if (instNo != null && !(Number.isInteger(instNo) && instNo > 0)) {
+    return res.status(400).json({ error: "La cuota debe ser un número entero mayor que 0." });
+  }
+  const userNote = String(body.notes || "").trim();
+
+  // Validar que la cuota exista en el anticipo y no esté pagada
+  let expectedCredit = 0;
+  if (instNo != null) {
+    const issue = await checkAdvanceInstallment(payment.plate, instNo);
+    if (issue) {
+      const sug = issue.suggested_installment != null ? ` Usa la cuota ${issue.suggested_installment}.` : "";
+      const msg =
+        issue.reason === "NO_ACTIVE_ADVANCE" ? `${payment.plate} no tiene anticipo activo; deja la cuota vacía.`
+        : issue.reason === "ALREADY_PAID" ? `La cuota ${instNo} ya está pagada.${sug}`
+        : `La cuota ${instNo} no existe en el anticipo.${sug}`;
+      return res.status(400).json({ error: msg, suggested_installment: issue.suggested_installment });
+    }
+    const advance = await getAdvanceSummary(payment.plate);
+    const row = advance?.rows.find((x: any) => x.installment_no === instNo);
+    expectedCredit = Number(row?.installment_amount || advance?.daily_installment || 0);
+  }
+
+  const canon = await resolveCanonForPayment(payment.plate, payment.payment_date);
+  if (amount < canon && !userNote) {
+    return res.status(400).json({
+      error: `El monto ($${amount}) es menor que el canon ($${canon}). Escribe una nota que explique el motivo.`,
+    });
+  }
+
+  // Reparto: la cuota solo se abona si el monto cubre canon + cuota (pagos.md §3)
+  const coversCredit = instNo != null && amount >= canon + expectedCredit;
+  const credit = coversCredit ? expectedCredit : 0;
+  const rem = amount - credit;
+  const insurance = rem >= 5000 ? 5000 : 0;
+  const maintenance = rem > insurance ? Math.min(6000, rem - insurance) : 0;
+  const delivery = Math.max(0, rem - insurance - maintenance);
+
+  // Si el monto ahora coincide con lo que dice el comprobante, se quita la alerta de monto
+  const { data: receipt } = await supabase.from("receipt_uploads").select("amount").eq("linked_payment_id", paymentId).maybeSingle();
+  const matchesReceipt = receipt?.amount != null && Number(receipt.amount) === amount;
+
+  const changes: string[] = [];
+  if (amount !== Number(payment.amount)) changes.push(`monto $${Number(payment.amount)} → $${amount}`);
+  if (instNo !== (payment.installment_number ?? null)) changes.push(`cuota ${payment.installment_number ?? "—"} → ${instNo ?? "—"}`);
+  const adjustNote = `Ajuste en aprobación (${new Date().toISOString().slice(0, 10)}): ${changes.join(", ") || "sin cambios"}${userNote ? `. ${userNote}` : ""}.`;
+
+  const update: Record<string, any> = {
+    amount,
+    installment_number: instNo,
+    credit_installment_amount: credit,
+    insurance_amount: insurance,
+    maintenance_amount: maintenance,
+    delivery_amount: delivery,
+    installment_status: instNo == null ? null : coversCredit ? "paid" : "pending",
+    installment_shortfall: instNo == null ? null : coversCredit ? 0 : canon + expectedCredit - amount,
+    notes: [payment.notes, adjustNote].filter(Boolean).join(" "),
+    updated_at: new Date().toISOString(),
+  };
+  if (matchesReceipt && payment.receipt_status === "suspicious_amount_mismatch") {
+    update.receipt_status = "verified";
+    update.flagged_for_review = false;
+  }
+
+  const { error } = await supabase.from("payments").update(update).eq("id", paymentId).eq("status", "pending");
+  if (error) return res.status(500).json({ error: `Error ajustando el pago: ${error.message}` });
+
+  return res.json({
+    success: true,
+    message: coversCredit || instNo == null
+      ? "Pago ajustado. Revisa el reparto y apruébalo."
+      : `Pago ajustado, pero el monto no alcanza para canon + cuota ($${canon + expectedCredit}): la cuota quedará pendiente.`,
+    notes: update.notes,
+  });
 });
 
 // ── Día en mantenimiento: validación contra TallerPro ───────────────────────

@@ -199,7 +199,7 @@ async function getActiveAdvanceByPlateOrError(plate: string, paymentDate: string
  * - NOT_IN_SCHEDULE: el número no existe en el cronograma (ej. 4714 = leasing 47 + anticipo 14).
  * - ALREADY_PAID: la cuota ya está pagada.
  */
-async function checkAdvanceInstallment(plate: string, instNo: number) {
+export async function checkAdvanceInstallment(plate: string, instNo: number) {
   const advRes = await getActiveAdvanceByPlateOrError(plate, "", null);
   if (advRes.kind !== "one" && advRes.kind !== "none") return null; // errores se manejan en el flujo normal
 

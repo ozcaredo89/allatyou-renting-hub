@@ -83,6 +83,18 @@ Pantalla Reports: aviso con el conteo global de pendientes, filtro `pending_only
   - **Renting:** respeta el reparto guardado al crear el pago; solo cambia el `status`. Si el pago tiene `installment_number` y `credit_installment_amount > 0`, marca la cuota como `paid` en `operational_advance_schedule`, sincroniza `operational_advances.current_installment = paidCount` y cierra el anticipo si se completaron todas las cuotas.
   - Nunca recalcula ni inventa montos.
 
+### 5.0 Ajustar el pago antes de aprobar (decisión 2026-10-16)
+
+En el modal de aprobación, **"Ajustar monto o cuota del anticipo"** permite corregir un pago `pending` sin aprobarlo:
+
+- `GET /reports/payments/:id/adjust-info` devuelve el monto actual, el que leyó el comprobante (`ocr_amount`), el canon del día y el anticipo activo (cuota diaria, pagadas, siguiente pendiente). El canon del día es la cuota de leasing de esa fecha o, si no hay leasing, `vehicles.default_amount` / $70.000.
+- `POST /reports/payments/:id/adjust` `{ amount?, installment_number?, notes? }`:
+  - La cuota debe existir en el anticipo activo y no estar pagada. Si no, responde 400 con la cuota sugerida. `null` quita la cuota.
+  - Recalcula el reparto (§3): la cuota solo se abona si `amount ≥ canon + cuota`. Si no alcanza, queda `pending` con el faltante.
+  - Si el monto queda **menor que el canon**, la nota es obligatoria.
+  - Si el monto ahora coincide con el comprobante, se quita la alerta `suspicious_amount_mismatch`.
+  - Agrega a `notes` qué cambió (monto y cuota, antes → después). No toca el cronograma: la cuota se marca pagada al **aprobar**.
+
 ### 5.1 Marcar como día en mantenimiento (decisión 2026-10-16)
 
 Botón **"En mantenimiento"** en el modal de aprobación. Sirve cuando el conductor registra un día con soporte de mantenimiento en lugar de una transferencia (ej. imagen "MANTENIMIENTO").
