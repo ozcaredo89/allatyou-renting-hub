@@ -14,6 +14,7 @@ import {
 import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
 import { checkVehicleInShop, validateMaintenanceDay, MaintenanceValidation } from "../lib/taller";
 import { checkAdvanceInstallment } from "./payments";
+import { activeAdvanceForDriver } from "../lib/advanceOwnership";
 
 const r = Router();
 
@@ -712,13 +713,7 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
       }
 
       const creditStored = Number(payment.credit_installment_amount || 0);
-      const { data: activeAdvLeasing } = await supabase
-        .from("operational_advances")
-        .select("id, daily_installment, current_installment, installments")
-        .eq("plate", payment.plate)
-        .eq("status", "active")
-        .limit(1)
-        .maybeSingle();
+      const activeAdvLeasing = await activeAdvanceForDriver(payment.plate, payment.payment_date, "id, daily_installment, current_installment, installments");
 
       const leasingExcess = Math.max(0, amt - qTotal - creditStored);
 
@@ -768,13 +763,7 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
 
     // ── Renting Tradicional ──
     // 🟠 3: Usar la distribución guardada en el pago, sin inventar ni recalcular
-    const { data: activeAdv } = await supabase
-      .from("operational_advances")
-      .select("id, daily_installment, current_installment, installments")
-      .eq("plate", payment.plate)
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle();
+    const activeAdv = await activeAdvanceForDriver(payment.plate, payment.payment_date, "id, daily_installment, current_installment, installments");
 
     // Consultar canon de arrendamiento base configurado o fallback al canon estándar del negocio ($70.000)
     const { data: vRow } = await supabase
@@ -871,14 +860,8 @@ async function resolveCanonForPayment(plate: string, paymentDate: string) {
   return v?.default_amount ? Number(v.default_amount) : 70000;
 }
 
-async function getAdvanceSummary(plate: string) {
-  const { data: adv } = await supabase
-    .from("operational_advances")
-    .select("id, daily_installment, installments")
-    .eq("plate", plate)
-    .eq("status", "active")
-    .limit(1)
-    .maybeSingle();
+async function getAdvanceSummary(plate: string, date = "") {
+  const adv = await activeAdvanceForDriver(plate, date, "id, daily_installment, installments");
   if (!adv) return null;
   const total = Number(adv.installments || 0);
   const { data: rows } = await supabase
@@ -913,7 +896,7 @@ r.get("/payments/:id/adjust-info", async (req: Request, res: Response) => {
 
   const [{ data: receipt }, advance, canon] = await Promise.all([
     supabase.from("receipt_uploads").select("amount").eq("linked_payment_id", paymentId).maybeSingle(),
-    getAdvanceSummary(payment.plate),
+    getAdvanceSummary(payment.plate, payment.payment_date),
     resolveCanonForPayment(payment.plate, payment.payment_date),
   ]);
   const ocr = receipt?.amount != null ? Number(receipt.amount) : null;
@@ -965,7 +948,7 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
   // Validar que la cuota exista en el anticipo y no esté pagada
   let expectedCredit = 0;
   if (instNo != null) {
-    const issue = await checkAdvanceInstallment(payment.plate, instNo);
+    const issue = await checkAdvanceInstallment(payment.plate, instNo, payment.payment_date);
     if (issue) {
       const sug = issue.suggested_installment != null ? ` Usa la cuota ${issue.suggested_installment}.` : "";
       const msg =
@@ -974,7 +957,7 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
         : `La cuota ${instNo} no existe en el anticipo.${sug}`;
       return res.status(400).json({ error: msg, suggested_installment: issue.suggested_installment });
     }
-    const advance = await getAdvanceSummary(payment.plate);
+    const advance = await getAdvanceSummary(payment.plate, payment.payment_date);
     const row = advance?.rows.find((x: any) => x.installment_no === instNo);
     expectedCredit = Number(row?.installment_amount || advance?.daily_installment || 0);
   }
@@ -1198,13 +1181,7 @@ r.post("/payments/:id/approve", async (req: Request, res: Response) => {
 
       // Si el pago de leasing incluía cuota de anticipo y crédito, marcarla pagada
       if (payment.installment_number != null && creditAmt > 0) {
-        const { data: activeAdv } = await supabase
-          .from("operational_advances")
-          .select("id")
-          .eq("plate", payment.plate)
-          .eq("status", "active")
-          .limit(1)
-          .maybeSingle();
+        const activeAdv = await activeAdvanceForDriver(payment.plate, payment.payment_date, "id");
 
         if (activeAdv) {
           await supabase
@@ -1266,13 +1243,7 @@ r.post("/payments/:id/approve", async (req: Request, res: Response) => {
 
       // Si tenía cuota de anticipo asociada y crédito, marcarla pagada
       if (payment.installment_number != null && Number(payment.credit_installment_amount) > 0) {
-        const { data: activeAdv } = await supabase
-          .from("operational_advances")
-          .select("id")
-          .eq("plate", payment.plate)
-          .eq("status", "active")
-          .limit(1)
-          .maybeSingle();
+        const activeAdv = await activeAdvanceForDriver(payment.plate, payment.payment_date, "id");
 
         if (activeAdv) {
           await supabase

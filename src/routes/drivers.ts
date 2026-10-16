@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { sendEmail } from "../lib/email";
 import { getActiveLeasingContract } from "../lib/leasingCascade";
+import { activeAdvanceForDriver } from "../lib/advanceOwnership";
 
 const r = Router();
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
@@ -268,14 +269,9 @@ r.get("/:plate", async (req: Request, res: Response) => {
     }
   }
 
-  // 2) Si el vehículo tiene un anticipo operacional activo, reflejarlo automáticamente
-  const { data: activeAdv } = await supabase
-    .from("operational_advances")
-    .select("id, daily_installment, current_installment, installments")
-    .eq("plate", plate)
-    .eq("status", "active")
-    .limit(1)
-    .maybeSingle();
+  // 2) Si el conductor actual tiene un anticipo activo en esta placa, reflejarlo automáticamente
+  //    (los anticipos de conductores anteriores no se cobran al conductor actual)
+  const activeAdv = await activeAdvanceForDriver(plate, "", "id, daily_installment, current_installment, installments");
 
   if (activeAdv) {
     hasCredit = true;

@@ -1,6 +1,6 @@
 # Spec — Anticipos operativos (préstamos a conductores)
 
-**Estado:** Vigente · **Última revisión:** 2026-10-12
+**Estado:** Vigente · **Última revisión:** 2026-10-16
 **Código principal:** `src/routes/advances.ts`, helpers en `src/routes/payments.ts` (`ensureScheduleRow`, `applyScheduleStatus`, `maybeCloseAdvance`)
 **Tablas:** `operational_advances`, `operational_advance_schedule`
 
@@ -31,6 +31,12 @@ Un **anticipo operativo** es dinero que la empresa presta a un conductor (o cola
 - **Directamente:** `POST /advances/:id/payments` marca una cuota pagada y actualiza `current_installment`.
 - **Pagos que indican cuota sin anticipo activo (decisión 2026-10-12):** Si un pago ingresa con número de cuota pero la placa no tiene ningún anticipo activo en el sistema, el pago no se bloquea, pero el abono a crédito queda en 0 (remanente a canon de entrega) y la pantalla de aprobación (`/approval-preview`) emite una **Alerta de Conciliación** para advertir al administrador que puede existir un anticipo no creado en el sistema.
 - Si hay más de un anticipo activo para la placa, el pago se rechaza con 400 (no debería pasar por la regla del índice único).
+- **El anticipo es del conductor, no del carro (decisión 2026-10-16):** un anticipo activo solo se tiene en cuenta en el pago diario si su dueño es el conductor que tenía el carro el día pagado. Ese conductor se toma de `vehicle_assignments` según la fecha, o de `vehicles.current_driver_id` si no hay historial. El dueño del anticipo es `driver_id` o, si está vacío, el conductor cuyo `full_name` coincide con `person_name`.
+  - Si no coinciden, el anticipo se ignora en la sugerencia de cuota (`GET /drivers/:plate`), en el reparto y cronograma al registrar (`POST /payments`, lotes), y en la vista, ajuste y aprobación (`/reports/payments/:id/...`).
+  - Si no se puede determinar el dueño o el conductor, el anticipo se sigue teniendo en cuenta, para no bloquear.
+  - Código: `src/lib/advanceOwnership.ts`.
+  - Caso que lo originó: en ICV061, los pagos de Bairo Castro (desde el 26-sep) abonaron las cuotas del anticipo #92 de Brayan Luna (hasta el 26-sep).
+  - Cuando el conductor dueño se va, su anticipo se cierra con base en su **liquidación**, no con los pagos del conductor siguiente.
 
 ## 4. Anticipos originados en otros módulos
 

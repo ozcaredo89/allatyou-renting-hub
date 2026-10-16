@@ -1,4 +1,5 @@
 // src/routes/payments.ts
+import { activeAdvancesForDriver, activeAdvanceForDriver } from "../lib/advanceOwnership";
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
@@ -172,7 +173,10 @@ async function getActiveAdvanceByPlateOrError(plate: string, paymentDate: string
     return { kind: "error" as const, error: error.message };
   }
 
-  const list = data ?? [];
+  // Solo cuentan los anticipos del conductor que tenía el carro ese día (anticipos.md)
+  const owned = await activeAdvancesForDriver(plate, paymentDate, "id");
+  const ownedIds = new Set(owned.map((a: any) => a.id));
+  const list = (data ?? []).filter((a: any) => ownedIds.has(a.id));
   if (list.length > 1) {
     await logInconsistency({
       payment_id: paymentIdForLog,
@@ -199,8 +203,8 @@ async function getActiveAdvanceByPlateOrError(plate: string, paymentDate: string
  * - NOT_IN_SCHEDULE: el número no existe en el cronograma (ej. 4714 = leasing 47 + anticipo 14).
  * - ALREADY_PAID: la cuota ya está pagada.
  */
-export async function checkAdvanceInstallment(plate: string, instNo: number) {
-  const advRes = await getActiveAdvanceByPlateOrError(plate, "", null);
+export async function checkAdvanceInstallment(plate: string, instNo: number, date = "") {
+  const advRes = await getActiveAdvanceByPlateOrError(plate, date, null);
   if (advRes.kind !== "one" && advRes.kind !== "none") return null; // errores se manejan en el flujo normal
 
   const closing = "Corrígela con la cuota sugerida o, si estás seguro, guárdala así: el pago se registra pero no abona nada al anticipo.";
@@ -613,12 +617,7 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
   const fallbackDailyInstallment = driverVw?.default_installment ? Number(driverVw.default_installment) : 0;
 
   if (!isLeasing) {
-    const { data: advData } = await supabase
-      .from("operational_advances")
-      .select("id, daily_installment, current_installment, installments, status")
-      .eq("plate", plate)
-      .eq("status", "active")
-      .maybeSingle();
+    const advData = await activeAdvanceForDriver(plate, start_date, "id, daily_installment, current_installment, installments, status");
 
     if (advData) {
       const cuotasPendientes = Math.max(0, (advData.installments ?? 0) - (advData.current_installment ?? 0));
@@ -1247,12 +1246,7 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
 
   // Actualizar current_installment en operational_advances solo si avanzamos cuotas y instNo != null
   if (advanceUpdates.length > 0 && instNo != null) {
-    const { data: advData2 } = await supabase
-      .from("operational_advances")
-      .select("id, current_installment, installments")
-      .eq("plate", upperPlate)
-      .eq("status", "active")
-      .maybeSingle();
+    const advData2 = await activeAdvanceForDriver(upperPlate, batchStartDate, "id, current_installment, installments");
 
     if (advData2) {
       const newCurrent = Math.min(
@@ -1494,7 +1488,7 @@ r.post("/", async (req: Request, res: Response) => {
   // y sin tocar el cronograma (antes se creaban filas falsas como la #4714).
   let installmentInvalid = false;
   if (instNo != null) {
-    const instIssue = await checkAdvanceInstallment(upperPlate, instNo);
+    const instIssue = await checkAdvanceInstallment(upperPlate, instNo, payment_date);
     if (instIssue) {
       if (confirm_installment !== true) {
         return res.status(409).json({
