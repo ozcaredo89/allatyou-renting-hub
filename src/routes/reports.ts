@@ -42,27 +42,43 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
   const twoYearsAgoStr = twoYearsAgo.toISOString().slice(0, 10);
 
-  // ── Total de pagos pendientes en toda la flota para banner de advertencia ──
-  const { count: globalPendingCount } = await supabase
-    .from("payments")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "pending");
+  // ── Consultas independientes en paralelo (cada viaje a Supabase cuesta ~300-500 ms) ──
+  // - Pagos pendientes de toda la flota (pocas filas): conteo global, filtro "solo pendientes"
+  //   e indicador de pendientes por placa.
+  // - Vehículos: filtro de activos y estado de cada placa.
+  // - Auditoría de 2 años: solo si se filtra por sospechosos (es la consulta pesada).
+  const [pendingRes, vehiclesRes, suspiciousAuditRes] = await Promise.all([
+    supabase.from("payments").select("id, plate, payment_date").eq("status", "pending").order("payment_date", { ascending: true }),
+    supabase.from("vehicles").select("plate, status"),
+    suspiciousOnly
+      ? supabase
+          .from("payments")
+          .select("plate, receipt_status, flagged_for_review, flag_reason, status")
+          .gte("payment_date", twoYearsAgoStr)
+          .order("payment_date", { ascending: false })
+          .order("created_at",   { ascending: false })
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  if (pendingRes.error) return res.status(500).json({ error: pendingRes.error.message });
+  if (vehiclesRes.error) return res.status(500).json({ error: vehiclesRes.error.message });
+
+  const pendingByPlate = new Map<string, number[]>();
+  for (const p of pendingRes.data ?? []) {
+    pendingByPlate.set(p.plate, [...(pendingByPlate.get(p.plate) ?? []), p.id]);
+  }
+  const globalPendingCount = (pendingRes.data ?? []).length;
+  const statusMap = new Map((vehiclesRes.data ?? []).map((v: any) => [v.plate, v.status]));
 
   // ── Paso 1: resolver qué placas son sospechosas o pendientes ANTES de paginar ────────
   // Cuando suspicious_only=true o pending_only=true, la condición debe aplicarse sobre el conjunto
   // COMPLETO antes de recortar con range().
   let suspiciousPlates: Set<string> | null = null;
-  let pendingPlates: Set<string> | null = null;
+  // Placas con CUALQUIER pago pendiente (no solo el último): un pendiente viejo
+  // no debe desaparecer porque llegó un pago nuevo ya confirmado.
+  const pendingPlates: Set<string> | null = pendingOnly ? new Set(pendingByPlate.keys()) : null;
 
-  if (suspiciousOnly || pendingOnly) {
-    // Traemos las columnas necesarias para clasificar y saber el status del último pago
-    const { data: allAudit, error: auditErr } = await supabase
-      .from("payments")
-      .select("plate, receipt_status, flagged_for_review, flag_reason, status")
-      .gte("payment_date", twoYearsAgoStr)
-      .order("payment_date", { ascending: false })
-      .order("created_at",   { ascending: false });
-
+  if (suspiciousOnly) {
+    const { data: allAudit, error: auditErr } = suspiciousAuditRes as { data: any[] | null; error: { message: string } | null };
     if (auditErr) return res.status(500).json({ error: auditErr.message });
 
     // Reducir a "último pago por placa" (primero que aparece en el orden desc)
@@ -78,22 +94,11 @@ r.get("/last-payments", async (req: Request, res: Response) => {
       }
     }
 
-    if (suspiciousOnly) {
-      suspiciousPlates = new Set<string>();
-      for (const [plate, audit] of latestByPlate) {
-        const cls = classifyReceipt(audit.receipt_status, audit.flagged_for_review, audit.flag_reason);
-        if (cls.is_suspicious || cls.is_technical_failure) {
-          suspiciousPlates.add(plate);
-        }
-      }
-    }
-
-    if (pendingOnly) {
-      pendingPlates = new Set<string>();
-      for (const [plate, audit] of latestByPlate) {
-        if (audit.status === "pending") {
-          pendingPlates.add(plate);
-        }
+    suspiciousPlates = new Set<string>();
+    for (const [plate, audit] of latestByPlate) {
+      const cls = classifyReceipt(audit.receipt_status, audit.flagged_for_review, audit.flag_reason);
+      if (cls.is_suspicious || cls.is_technical_failure) {
+        suspiciousPlates.add(plate);
       }
     }
   }
@@ -102,13 +107,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   let allowedPlates: string[] | null = null;
 
   if (!includeInactive) {
-    const { data: vRows, error: vErr } = await supabase
-      .from("vehicles")
-      .select("plate, status");
-
-    if (vErr) return res.status(500).json({ error: vErr.message });
-
-    allowedPlates = (vRows ?? [])
+    allowedPlates = (vehiclesRes.data ?? [])
       .filter((v: any) => v.status !== "sold" && v.status !== "inactive")
       .map((v: any) => v.plate);
   }
@@ -163,22 +162,15 @@ r.get("/last-payments", async (req: Request, res: Response) => {
   // ── Paso 3: JOIN de enriquecimiento sobre la página resultante ────────────
   if (items.length > 0) {
     const plates = items.map((row: any) => row.plate);
-
-    // Estado del vehículo
-    const { data: vData } = await supabase
-      .from("vehicles")
-      .select("plate, status")
-      .in("plate", plates);
-    const statusMap = new Map((vData || []).map((v: any) => [v.plate, v.status]));
+    // Solo interesa el último pago de cada placa: basta traer los pagos de esas fechas
+    // (la vista ya trae payment_date), en vez de 2 años de pagos que además se cortaban en 1.000 filas.
+    const lastDates = [...new Set(items.map((row: any) => row.payment_date).filter(Boolean))] as string[];
 
     // Datos de auditoría del último pago, SOLO para las placas de esta página.
     // Replicamos el criterio de la vista: ORDER BY payment_date DESC, created_at DESC,
-    // sin filtrar por status (la vista tampoco lo hace). Usamos la misma ventana de
-    // 2 años que el Paso 1 (en vez de un límite fijo de filas): un límite como
-    // "N filas por placa" aplicado sobre el resultado GLOBAL puede dejar fuera el
-    // pago más reciente de una placa si las demás placas de la página acumulan más
-    // filas recientes — eso desalinea esta reclasificación con la del Paso 1 y hace
-    // que el badge nunca aparezca aunque suspicious_only sí haya incluido la placa.
+    // sin filtrar por status (la vista tampoco lo hace). Como la fecha del último pago
+    // de cada placa está en lastDates, el primer registro por placa en este orden es
+    // siempre su último pago.
     const auditBaseColumns = "plate, receipt_status, flagged_for_review, flag_reason, payment_date, created_at, status";
     let auditPage: any[] | null;
     let auditPageErr: { message: string } | null;
@@ -186,7 +178,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
       .from("payments")
       .select(`${auditBaseColumns}, flag_details, proof_url, amount, reference_number, id, bank_transaction_id`)
       .in("plate", plates)
-      .gte("payment_date", twoYearsAgoStr)
+      .in("payment_date", lastDates)
       .order("payment_date", { ascending: false })
       .order("created_at",   { ascending: false }));
 
@@ -200,7 +192,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
         .from("payments")
         .select(auditBaseColumns)
         .in("plate", plates)
-        .gte("payment_date", twoYearsAgoStr)
+        .in("payment_date", lastDates)
         .order("payment_date", { ascending: false })
         .order("created_at",   { ascending: false });
       auditPage = retry.data;
@@ -232,22 +224,24 @@ r.get("/last-payments", async (req: Request, res: Response) => {
       }
     }
 
-    // Resolver en 1 query batch los pagos duplicados referenciados en flag_details
-    // de esta página, para evitar N+1 queries.
+    // Resolver en paralelo (1 query batch cada uno, sin N+1):
+    // - los pagos duplicados referenciados en flag_details de esta página;
+    // - el movimiento bancario con el que se concilió cada pago (ver POST /reconcile-bank).
     const duplicateIds = collectDuplicateIds([...auditMap.values()].map((a) => a.flag_details));
-    const duplicateResolver = new Map<number, DuplicatePaymentSummary>();
-    if (duplicateIds.size > 0) {
-      const { data: dupRows } = await supabase
-        .from("payments")
-        .select("id, plate, payment_date, amount, reference_number, proof_url")
-        .in("id", [...duplicateIds]);
-      for (const row of dupRows ?? []) duplicateResolver.set(row.id, row as DuplicatePaymentSummary);
-    }
-
-    // Resolver en 1 query batch el movimiento bancario exacto con el que se
-    // concilio cada pago de esta pagina (ver POST /reconcile-bank).
     const bankTransactionIds = new Set<number>();
     for (const a of auditMap.values()) if (a.bank_transaction_id) bankTransactionIds.add(a.bank_transaction_id);
+
+    const [dupRes, bankRes] = await Promise.all([
+      duplicateIds.size > 0
+        ? supabase.from("payments").select("id, plate, payment_date, amount, reference_number, proof_url").in("id", [...duplicateIds])
+        : Promise.resolve({ data: [] as any[] }),
+      bankTransactionIds.size > 0
+        ? supabase.from("transacciones_entrantes").select("id, fecha, descripcion, referencia, monto_entrada, sucursal").in("id", [...bankTransactionIds])
+        : Promise.resolve({ data: [] as any[] }),
+    ]);
+
+    const duplicateResolver = new Map<number, DuplicatePaymentSummary>();
+    for (const row of dupRes.data ?? []) duplicateResolver.set(row.id, row as DuplicatePaymentSummary);
     const bankMatchResolver = new Map<number, {
       id: number;
       fecha: string | null;
@@ -256,13 +250,7 @@ r.get("/last-payments", async (req: Request, res: Response) => {
       monto_entrada: number | null;
       sucursal: string | null;
     }>();
-    if (bankTransactionIds.size > 0) {
-      const { data: bankRows } = await supabase
-        .from("transacciones_entrantes")
-        .select("id, fecha, descripcion, referencia, monto_entrada, sucursal")
-        .in("id", [...bankTransactionIds]);
-      for (const row of bankRows ?? []) bankMatchResolver.set(row.id, row);
-    }
+    for (const row of bankRes.data ?? []) bankMatchResolver.set(row.id, row);
 
     items = items.map((row: any) => {
       const audit = auditMap.get(row.plate);
@@ -289,59 +277,12 @@ r.get("/last-payments", async (req: Request, res: Response) => {
         bank_match: audit?.bank_transaction_id ? bankMatchResolver.get(audit.bank_transaction_id) ?? null : null,
         receipt_status: audit?.receipt_status ?? null,
         flag_details: audit?.flag_details ?? null,
+        pending_payment_ids: pendingByPlate.get(row.plate) ?? [],
       };
     });
   }
 
   return res.json({ items, total: count ?? 0, limit, offset, pending_approval_count: globalPendingCount ?? 0 });
-});
-
-// ── GET /reports/pending-payments ─────────────────────────────────────────────
-// Todos los pagos en estado 'pending' (uno por fila, no uno por placa), para la vista
-// "Solo pendientes" de Reportes. Ordenados por placa y fecha pagada.
-r.get("/pending-payments", async (_req: Request, res: Response) => {
-  const { data, error } = await supabase
-    .from("payments")
-    .select("id, plate, payer_name, payment_date, amount, installment_number, credit_installment_amount, proof_url, receipt_status, flagged_for_review, flag_reason, flag_details, notes, created_at")
-    .eq("status", "pending")
-    .order("plate", { ascending: true })
-    .order("payment_date", { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-
-  const plates = [...new Set((data ?? []).map((p: any) => p.plate))];
-  const { data: vehicles } = plates.length
-    ? await supabase.from("vehicles").select("plate, owner_name").in("plate", plates)
-    : { data: [] as any[] };
-  const ownerByPlate = new Map((vehicles ?? []).map((v: any) => [v.plate, v.owner_name]));
-
-  // Monto leído del comprobante (OCR), para mostrar cuando no coincide con lo registrado
-  const ids = (data ?? []).map((p: any) => p.id);
-  const { data: receipts } = ids.length
-    ? await supabase.from("receipt_uploads").select("linked_payment_id, amount").in("linked_payment_id", ids)
-    : { data: [] as any[] };
-  const ocrByPayment = new Map((receipts ?? []).map((u: any) => [u.linked_payment_id, Number(u.amount || 0)]));
-
-  const items = (data ?? []).map((p: any) => {
-    const cls = classifyReceipt(p.receipt_status, p.flagged_for_review, p.flag_reason);
-    const ocr = ocrByPayment.get(p.id);
-    return {
-      ocr_amount: ocr && ocr > 0 ? ocr : null,
-      id: p.id,
-      plate: p.plate,
-      owner_name: ownerByPlate.get(p.plate) ?? p.payer_name ?? null,
-      payment_date: p.payment_date,
-      amount: Number(p.amount || 0),
-      installment_number: p.installment_number,
-      credit_installment_amount: Number(p.credit_installment_amount || 0),
-      proof_url: p.proof_url,
-      notes: p.notes ?? null,
-      created_at: p.created_at,
-      inconsistency_reasons: cls.inconsistency_reasons,
-      amount_mismatch: buildAmountMismatch(p.flag_details),
-    };
-  });
-
-  return res.json({ items, total: items.length });
 });
 
 // ── POST /reports/reconcile-bank ──────────────────────────────────────────────
