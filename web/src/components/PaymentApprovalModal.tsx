@@ -143,6 +143,9 @@ export function PaymentApprovalModal({
   const [adjNote, setAdjNote] = useState("");
   const [adjSaving, setAdjSaving] = useState(false);
   const [adjMsg, setAdjMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Diferencia con el comprobante: monto leído por OCR para ajustar con un clic
+  const [ocrInfo, setOcrInfo] = useState<AdjustInfo | null>(null);
+  const [quickAdjusting, setQuickAdjusting] = useState(false);
 
   useEffect(() => {
     if (!isOpen || !paymentId) {
@@ -156,6 +159,7 @@ export function PaymentApprovalModal({
       setAdjOpen(false);
       setAdjInfo(null);
       setAdjMsg(null);
+      setOcrInfo(null);
       return;
     }
 
@@ -176,6 +180,14 @@ export function PaymentApprovalModal({
 
         const json = await res.json();
         if (isMounted) setData(json);
+
+        // Si el pago está pendiente, trae el monto del comprobante para avisar la diferencia
+        setOcrInfo(null);
+        if (json.status === "pending") {
+          const r2 = await fetch(`${API}/reports/payments/${paymentId}/adjust-info`, { headers: { Authorization: auth } });
+          const info = await r2.json().catch(() => null);
+          if (isMounted && r2.ok && info) setOcrInfo(info);
+        }
       } catch (err: any) {
         if (isMounted) setErrorMsg(err.message || "Error al cargar datos del pago");
       } finally {
@@ -206,6 +218,40 @@ export function PaymentApprovalModal({
       setAdjNote("");
     } catch (err) {
       setAdjMsg({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  // Ajuste de un clic al monto del comprobante. Mantiene la cuota; el backend recalcula el reparto (§5.0).
+  // Si el ajuste necesita nota (monto menor al canon) o la cuota no es válida, abre el formulario con el monto ya puesto.
+  async function quickAdjustToOcr() {
+    if (!paymentId || !ocrInfo?.ocr_amount) return;
+    setQuickAdjusting(true);
+    setAdjMsg(null);
+    try {
+      const res = await fetch(`${API}/reports/payments/${paymentId}/adjust`, {
+        method: "POST",
+        headers: { Authorization: ensureBasicAuth(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: ocrInfo.ocr_amount,
+          installment_number: ocrInfo.installment_number,
+          notes: "", // sin nota: si queda menor al canon, el backend la pide y se abre el formulario
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAdjOpen(true);
+        setAdjInfo(ocrInfo);
+        setAdjAmount(String(ocrInfo.ocr_amount));
+        setAdjInst(json.suggested_installment != null ? String(json.suggested_installment) : ocrInfo.installment_number != null ? String(ocrInfo.installment_number) : "");
+        setAdjNote("");
+        throw new Error(json.error || "No se pudo ajustar el pago");
+      }
+      setAdjMsg({ ok: true, text: json.message || `Pago ajustado a ${fmtCOP.format(ocrInfo.ocr_amount)}.` });
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      setAdjMsg({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setQuickAdjusting(false);
     }
   }
 
@@ -377,6 +423,28 @@ export function PaymentApprovalModal({
             </div>
           ) : data ? (
             <>
+              {/* Diferencia con el comprobante: ajuste de un clic */}
+              {data.status === "pending" && ocrInfo?.ocr_amount != null && ocrInfo.ocr_amount !== Number(data.amount) && (
+                <div className="p-3.5 rounded-xl border border-red-200 bg-red-50 flex flex-col sm:flex-row sm:items-center gap-3">
+                  <div className="flex items-start gap-2 flex-1 text-xs text-red-800">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
+                    <p>
+                      El comprobante dice <strong>${fmtCOP.format(ocrInfo.ocr_amount)}</strong> y el pago está registrado por{" "}
+                      <strong>${fmtCOP.format(Number(data.amount))}</strong>.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={quickAdjustToOcr}
+                    disabled={quickAdjusting || approving}
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-semibold whitespace-nowrap cursor-pointer"
+                  >
+                    {quickAdjusting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pencil className="w-3.5 h-3.5" />}
+                    Ajustar a ${fmtCOP.format(ocrInfo.ocr_amount)}
+                  </button>
+                </div>
+              )}
+
               {/* Tarjeta de Resumen del Pago */}
               <div className="p-4 rounded-xl border border-gray-200 bg-gray-50/70 space-y-3">
                 <div className="flex items-center justify-between">

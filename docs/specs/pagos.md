@@ -106,6 +106,9 @@ En el modal de aprobación, **"Ajustar monto o cuota del anticipo"** permite cor
   - Si el monto queda **menor que el canon**, la nota es obligatoria.
   - Si el monto ahora coincide con el comprobante, se quita la alerta `suspicious_amount_mismatch`.
   - Agrega a `notes` qué cambió (monto y cuota, antes → después). No toca el cronograma: la cuota se marca pagada al **aprobar**.
+- **Ajuste de un clic (decisión 2026-10-17):** si el pago `pending` tiene un monto distinto al del comprobante (`ocr_amount`), el modal de aprobación lo avisa arriba con el botón **"Ajustar a $X"**.
+  - El botón llama a `adjust` con el monto del comprobante, la misma cuota y sin nota.
+  - Si el ajuste necesita nota (monto menor que el canon) o la cuota no es válida, abre el formulario de ajuste con el monto ya puesto y el motivo del error.
 
 ### 5.1 Marcar como día en mantenimiento (decisión 2026-10-16)
 
