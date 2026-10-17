@@ -879,7 +879,7 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
 
   const { data: payment } = await supabase
     .from("payments")
-    .select("id, plate, payment_date, amount, installment_number, status, receipt_status, notes, late_fee_amount")
+    .select("id, plate, payment_date, amount, installment_number, status, receipt_status, notes, late_fee_amount, flag_details")
     .eq("id", paymentId)
     .maybeSingle();
   if (!payment) return res.status(404).json({ error: "Pago no encontrado" });
@@ -938,9 +938,10 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
     delivery,
   });
 
-  // Si el monto ahora coincide con lo que dice el comprobante, se quita la alerta de monto
-  const { data: receipt } = await supabase.from("receipt_uploads").select("amount").eq("linked_payment_id", paymentId).maybeSingle();
-  const matchesReceipt = receipt?.amount != null && Number(receipt.amount) === amount;
+  // Comparación con el comprobante enlazado a ESTE pago (un pago = un día; no se reparte).
+  const { data: rec } = await supabase.from("receipt_uploads").select("amount").eq("linked_payment_id", paymentId).maybeSingle();
+  const receiptAmount: number | null = rec?.amount != null ? Number(rec.amount) : null;
+  const matchesReceipt = receiptAmount != null && receiptAmount > 0 && receiptAmount === amount;
 
   const changes: string[] = [];
   if (amount !== Number(payment.amount)) changes.push(`monto $${Number(payment.amount)} → $${amount}`);
@@ -963,6 +964,14 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
   if (matchesReceipt && payment.receipt_status === "suspicious_amount_mismatch") {
     update.receipt_status = "verified";
     update.flagged_for_review = false;
+  }
+  // La comparación guardada (flag_details) se actualiza con el monto nuevo: si coincide con el
+  // comprobante se borra (antes quedaba vieja y el aviso seguía); si no, queda la diferencia actual.
+  if (receiptAmount != null && receiptAmount > 0 && (payment.flag_details?.ocr_amount != null || !matchesReceipt)) {
+    const { db_amount: _db, ocr_amount: _ocr, difference: _diff, ...rest } = (payment.flag_details ?? {}) as Record<string, any>;
+    update.flag_details = matchesReceipt
+      ? (Object.keys(rest).length ? rest : null)
+      : { ...rest, db_amount: amount, ocr_amount: receiptAmount, difference: amount - receiptAmount };
   }
 
   const { error } = await supabase.from("payments").update(update).eq("id", paymentId).eq("status", "pending");

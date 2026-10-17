@@ -154,7 +154,8 @@ export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onAppro
                       </td>
                       <td className="px-3 py-2 text-right font-semibold whitespace-nowrap">${fmtCOP.format(Number(p.amount || 0))}</td>
                       <td className="px-3 py-2 text-xs">
-                        {mismatch ? (
+                        {/* Solo avisa si el comprobante no coincide con el monto ACTUAL del pago */}
+                        {mismatch && Number(mismatch.ocr_amount) !== Number(p.amount) ? (
                           <span className="inline-flex items-center gap-1 text-red-700 font-medium">
                             <AlertTriangle className="w-3.5 h-3.5" /> Dice ${fmtCOP.format(mismatch.ocr_amount)}
                           </span>
