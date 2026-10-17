@@ -1,7 +1,7 @@
 # Spec — Pagos diarios de conductores
 
-**Estado:** Vigente · **Última revisión:** 2026-10-16
-**Código principal:** `src/routes/payments.ts`, `src/routes/reports.ts` (aprobación), `src/lib/receiptClassification.ts`, `web/src/pages/Pay.tsx`, `web/src/pages/Reports.tsx`, `web/src/components/PaymentApprovalModal.tsx`
+**Estado:** Vigente · **Última revisión:** 2026-10-17
+**Código principal:** `src/routes/payments.ts`, `src/routes/reports.ts` (aprobación), `src/lib/receiptClassification.ts`, `web/src/pages/Pay.tsx`, `web/src/pages/Reports.tsx`, `web/src/components/PaymentApprovalModal.tsx`, `src/lib/pendingDays.ts` + `web/src/components/ResolveDaysModal.tsx` (resolver días)
 **Relacionado:** `leasing.md` (cascada), `anticipos.md`
 
 ---
@@ -133,18 +133,35 @@ Botón **"En mantenimiento"** en el modal de aprobación. Sirve cuando el conduc
   2. **Sin conductor:** el carro no tenía quién lo manejara.
      - Si el día no tiene conductor asignado en `vehicle_assignments`, se excluye **solo** de la mora y no hay que registrar nada.
      - Si el sistema todavía tiene un conductor asignado ese día, la ventana pide **quitar primero la asignación** del conductor, y entonces el día queda sin conductor.
-  3. **Descuento en liquidación:** el día lo debe el conductor que tenía el carro y se cobra o descuenta en **su** liquidación. El día deja de contar como mora de la placa y queda como deuda de ese conductor.
+  3. **Descuento en liquidación:** el día lo debe el conductor que tenía el carro y se cobra o descuenta en **su** liquidación. El día deja de contar como mora de la placa y queda como deuda de ese conductor. **Monto (decisión 2026-10-17):** canon del día + recargo máximo de $15.000, como un día sin pagar (§3). En leasing no hay recargo. Si el conductor ya tiene una liquidación cerrada, la deuda queda aparte: no se suma a esa liquidación.
   4. **Pago con anticipo:** el flujo actual (`pay-with-advance`), sin cambios.
   - La mora de la placa no se le cobra al conductor actual por días de un conductor anterior: esos días se resuelven con alguna de estas opciones, normalmente "descuento en liquidación".
   - Caso que lo originó: en UGP771, Juan Camilo Millán tuvo el carro hasta el 16-oct a las 7 PM y dejó sin pagar del 12 al 16-oct. Santiago Londoño lo recibió ese día y solo debe desde el 17-oct.
+  - **Cómo se calcula (código):**
+    - Mora en SQL: `get_payable_days` excluye los días sin conductor (`supabase/migrations/20261017_mora_sin_conductor.sql`). Un día D tiene conductor si alguna fila de `vehicle_assignments` de la placa cubre D: `start_date ≤ D` y `end_date` vacío o `≥ D`, en días de hora Colombia. Si la placa no tiene ninguna fila en `vehicle_assignments`, se usa `vehicles.current_driver_id` para todos los días, el mismo criterio de `driverOnDate`.
+    - Días pendientes: `src/lib/pendingDays.ts`, con el mismo criterio. Los días van del último `payment_date` (o la creación del vehículo) hasta hoy, con un máximo de 120.
+    - **Día de entrega:** cuenta para los dos conductores. Lo debe el que **entregó** el carro: el 16-oct de UGP771 es de Juan Camilo.
+  - **Orden:** los días se resuelven desde el más antiguo y sin saltos. La mora se cuenta desde el último `payment_date`, así que resolver un día posterior dejaría fuera de la mora días anteriores sin resolver.
+  - **Endpoints** (`src/routes/reports.ts`, con Basic Auth):
+    - `GET /reports/plates/:plate/pending-days`: cada día con `payable`, `drivers`, `responsible` y `counts_as_mora`. Trae además la tarifa diaria y el anticipo activo.
+    - `GET /reports/plates/:plate/pending-days/maintenance-check?dates=…`: validación contra TallerPro de cada día (§5.1).
+    - `POST /reports/plates/:plate/resolve-days` `{ dates, reason, notes?, advance_id? }`, con `reason`:
+      - `maintenance`: un pago confirmado de $0 por día, con `receipt_status = 'maintenance_day'` y la nota de §5.1. Si hay warnings, la nota es obligatoria (mín. 10 caracteres; sin ella responde 422).
+      - `no_driver`: si los días tienen conductor, responde **409 `DRIVER_ASSIGNED`** con los conductores. Si no tienen, no registra nada.
+      - `advance`: `payDaysWithAdvance` con esas fechas. Es el mismo flujo de `POST /payments/pay-with-advance`, que ahora también acepta `dates`.
+      - `liquidation`: un pago **marcador** por día. Va `confirmed`, con `amount = 0` y todo el reparto en 0, así que no suma a ingresos ni a utilidad.
+        - `receipt_status = 'liquidation_debt'` y `driver_id` = el conductor que debe el día.
+        - `liquidation_debt_amount` = canon + recargo. El desglose va en `flag_details` (`canon`, `late_fee`).
+        - `late_fee_amount = 0`, para no contar dos veces el recargo.
+  - **Liquidación** (`src/routes/liquidations.ts`):
+    - `GET /liquidations/:driverId/data` devuelve `pendingRentDebt` y `pendingRentDebtDetails`: los marcadores del conductor con `liquidation_id` vacío. El modal los agrega como deducción "DÍAS EN MORA (N)".
+    - Al guardar (`POST /liquidations` con `liquidation_debt_ids`), esos marcadores reciben el `liquidation_id` y quedan saldados. Si se quita la línea de la liquidación, siguen pendientes.
+    - Con una liquidación ya cerrada, el modal muestra la deuda aparte.
+  - **UI:** `web/src/components/ResolveDaysModal.tsx`. Se abre desde Reportes y queda sobre el menú lateral; en celular ocupa toda la pantalla. Al tocar un día se seleccionan todos desde el más antiguo hasta ese día.
 - **Deshacer último pago:** `DELETE /payments/last/:plate` (revierte también el estado de la cuota de anticipo asociada).
 - **Tarifa diaria** (`resolveDailyRentRate`): `drivers_vw.default_amount` → cuota pendiente de leasing → último pago → contrato pendiente → $70.000 por defecto.
 
 ## 7. Pendientes de desarrollo (brechas entre la regla y el código)
-
-- **Resolver días en mora (§6):** no existe la ventana "Resolver días". Hoy solo está "Pagar con anticipo", y la mora (`get_payable_days` / `vehicle_last_payment`) no excluye los días sin conductor asignado. Falta además:
-  - definir cómo se registra un día "descuento en liquidación": por ejemplo, un pago marcador con `receipt_status` propio y el monto adeudado, que el módulo de liquidaciones sume como deuda del conductor;
-  - mostrar ese saldo en la liquidación.
 
 - **Saldo de recargos por pago tardío (§3):** cada pago registra su recargo causado y lo abonado, pero no hay un saldo acumulado por placa (`late_fee_amount - late_fee_paid`) ni se muestra en mora. Tampoco se pueden abonar recargos de días anteriores con un pago posterior, y los días que nunca se registran no generan fila con recargo.
 

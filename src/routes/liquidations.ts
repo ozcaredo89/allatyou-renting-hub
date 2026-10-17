@@ -117,6 +117,26 @@ r.get("/:driverId/data", async (req: Request, res: Response) => {
       }
     }
 
+    // D2. Días en mora que se descuentan en la liquidación (pagos.md §6, "descuento en liquidación"):
+    // marcadores con receipt_status = 'liquidation_debt' aún sin liquidar (liquidation_id NULL).
+    // Si el conductor ya tiene una liquidación cerrada, la deuda queda aparte y se sigue mostrando aquí.
+    const { data: debtRows } = await supabase
+      .from("payments")
+      .select("id, plate, payment_date, liquidation_debt_amount, notes")
+      .eq("driver_id", driverId)
+      .eq("receipt_status", "liquidation_debt")
+      .eq("status", "confirmed")
+      .is("liquidation_id", null)
+      .order("payment_date", { ascending: true });
+    const pendingRentDebtDetails = (debtRows ?? []).map((p: any) => ({
+      id: p.id,
+      plate: p.plate,
+      payment_date: p.payment_date,
+      amount: Number(p.liquidation_debt_amount || 0),
+      notes: p.notes ?? null,
+    }));
+    const pendingRentDebt = pendingRentDebtDetails.reduce((s, p) => s + p.amount, 0);
+
     // E. Get recent repairs if plate exists
     let repairs: any[] = [];
     if (plate) {
@@ -156,6 +176,8 @@ r.get("/:driverId/data", async (req: Request, res: Response) => {
       initialDeposit,
       pendingInstallments,
       pendingDetails,
+      pendingRentDebt,
+      pendingRentDebtDetails,
       repairs,
       existingLiquidation: existingLiquidation && existingLiquidation.length > 0 ? existingLiquidation[0] : null
     });
@@ -170,7 +192,7 @@ r.get("/:driverId/data", async (req: Request, res: Response) => {
 r.post("/", async (req: Request, res: Response) => {
   const { 
     driver_id, plate, total_incomes, total_deductions, final_balance, items_detail, 
-    created_by, mark_installments_paid 
+    created_by, mark_installments_paid, liquidation_debt_ids
   } = req.body;
 
   try {
@@ -236,6 +258,18 @@ r.post("/", async (req: Request, res: Response) => {
         .from("vehicles")
         .update({ current_driver_id: null, owner_name: "SIN CONDUCTOR ASIGNADO", updated_at: new Date().toISOString() })
         .eq("plate", plate);
+    }
+
+    // 4b. Días en mora descontados en esta liquidación: quedan saldados (liquidation_id)
+    const debtIds = Array.isArray(liquidation_debt_ids) ? liquidation_debt_ids.map(Number).filter((n: number) => n > 0) : [];
+    if (debtIds.length) {
+      await supabase
+        .from("payments")
+        .update({ liquidation_id: liquidation.id, updated_at: new Date().toISOString() })
+        .in("id", debtIds)
+        .eq("driver_id", driver_id)
+        .eq("receipt_status", "liquidation_debt")
+        .is("liquidation_id", null);
     }
 
     // 5. Handle pending installments if requested

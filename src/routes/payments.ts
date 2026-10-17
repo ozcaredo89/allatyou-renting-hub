@@ -438,7 +438,7 @@ async function maybeCloseAdvance(advance_id: number) {
 }
 
 // Helper para determinar la tarifa diaria de renta de un vehículo (drivers_vw, leasing o historial)
-async function resolveDailyRentRate(plate: string, queryAmount = 0): Promise<{
+export async function resolveDailyRentRate(plate: string, queryAmount = 0): Promise<{
   dailyRate: number;
   isLeasing: boolean;
   driverName: string | null;
@@ -733,26 +733,42 @@ r.get("/advance-payment-info", async (req: Request, res: Response) => {
 // -------------------- POST /payments/pay-with-advance --------------------
 // Permite saldar días de mora cruzándolos contra un anticipo activo
 r.post("/pay-with-advance", async (req: Request, res: Response) => {
-  const {
-    plate,
-    advance_id,
-    days_count,
-    notes,
-  } = req.body || {};
+  const out = await payDaysWithAdvance(req.body || {});
+  return res.status(out.status).json(out.body);
+});
+
+/**
+ * Paga días de mora con un anticipo activo (pagos.md §6). Lo usa POST /payments/pay-with-advance
+ * y "Resolver días" (POST /reports/plates/:plate/resolve-days, motivo "advance").
+ * - Sin `dates`: paga `days_count` días pagables desde el último pago.
+ * - Con `dates`: paga exactamente esas fechas (ya validadas por quien llama).
+ */
+export async function payDaysWithAdvance(input: {
+  plate?: unknown;
+  advance_id?: unknown;
+  days_count?: unknown;
+  notes?: unknown;
+  dates?: unknown;
+}): Promise<{ status: number; body: any }> {
+  const { plate, advance_id, notes } = input;
+  const explicitDates = Array.isArray(input.dates)
+    ? [...new Set(input.dates.map(String).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort()
+    : null;
+  const days_count = explicitDates ? explicitDates.length : input.days_count;
 
   const upperPlate = String(plate || "").toUpperCase().trim();
   if (!PLATE_RE.test(upperPlate)) {
-    return res.status(400).json({ error: "plate must be ABC123 format" });
+    return { status: 400, body: { error: "plate must be ABC123 format" } };
   }
 
   const days = parseInt(String(days_count || ""), 10);
   if (!Number.isInteger(days) || days < 1 || days > 31) {
-    return res.status(400).json({ error: "days_count must be an integer between 1 and 31" });
+    return { status: 400, body: { error: "days_count must be an integer between 1 and 31" } };
   }
 
   const advId = Number(advance_id);
   if (!advId || advId <= 0) {
-    return res.status(400).json({ error: "advance_id is required" });
+    return { status: 400, body: { error: "advance_id is required" } };
   }
 
   // 1. Verificar anticipo activo
@@ -765,10 +781,10 @@ r.post("/pay-with-advance", async (req: Request, res: Response) => {
     .maybeSingle();
 
   if (advErr) {
-    return res.status(500).json({ error: advErr.message });
+    return { status: 500, body: { error: advErr.message } };
   }
   if (!advance) {
-    return res.status(400).json({ error: `No se encontró un anticipo activo (#${advId}) para la placa ${upperPlate}.` });
+    return { status: 400, body: { error: `No se encontró un anticipo activo (#${advId}) para la placa ${upperPlate}.` } };
   }
 
   // 2. Calcular tarifa diaria y monto total
@@ -777,9 +793,9 @@ r.post("/pay-with-advance", async (req: Request, res: Response) => {
 
   // Validación requerida: que el anticipo cubra el monto total
   if (totalAmount > advance.amount) {
-    return res.status(400).json({
+    return { status: 400, body: {
       error: `El total a cubrir ($${totalAmount.toLocaleString("es-CO")}) excede el valor del anticipo ($${advance.amount.toLocaleString("es-CO")}).`,
-    });
+    } };
   }
 
   // 3. Obtener último pago o fecha de referencia para arrancar
@@ -803,15 +819,19 @@ r.post("/pay-with-advance", async (req: Request, res: Response) => {
   // 4. Calcular próximas fechas pagables
   let payableDates: string[] = [];
   try {
-    const { nextDate } = await nextPayableDate(upperPlate, refDate, false);
-    const { dates } = await getAmortizationDates(upperPlate, nextDate, days);
-    payableDates = dates;
+    if (explicitDates) {
+      payableDates = explicitDates;
+    } else {
+      const { nextDate } = await nextPayableDate(upperPlate, refDate, false);
+      const { dates } = await getAmortizationDates(upperPlate, nextDate, days);
+      payableDates = dates;
+    }
   } catch (e: any) {
-    return res.status(500).json({ error: `Error calculando fechas pagables: ${e.message}` });
+    return { status: 500, body: { error: `Error calculando fechas pagables: ${e.message}` } };
   }
 
   if (payableDates.length === 0) {
-    return res.status(400).json({ error: "No se pudieron generar fechas de pago hábiles." });
+    return { status: 400, body: { error: "No se pudieron generar fechas de pago hábiles." } };
   }
 
   // 5. Preparar filas para inserción atómica con create_payment_batch
@@ -858,7 +878,7 @@ r.post("/pay-with-advance", async (req: Request, res: Response) => {
   });
 
   if (rpcErr) {
-    return res.status(500).json({ error: `Error creando lote de pagos: ${rpcErr.message}` });
+    return { status: 500, body: { error: `Error creando lote de pagos: ${rpcErr.message}` } };
   }
 
   // 7. Si es leasing, aplicar cascada
@@ -896,15 +916,15 @@ r.post("/pay-with-advance", async (req: Request, res: Response) => {
     },
   });
 
-  return res.status(201).json({
+  return { status: 201, body: {
     success: true,
     batch_id: batchId,
     days_count: payableDates.length,
     total_amount: totalAmount,
     advance_id: advance.id,
     payable_dates: payableDates,
-  });
-});
+  } };
+}
 
 // -------------------- handleBatchPayment (lote multi-día) --------------------
 // Maneja POST /payments cuando batch_mode === true.

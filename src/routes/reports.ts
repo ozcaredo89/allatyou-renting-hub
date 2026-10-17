@@ -12,10 +12,11 @@ import {
   DuplicatePaymentSummary,
 } from "../lib/receiptClassification";
 import { getActiveLeasingContract, applyLeasingPayment } from "../lib/leasingCascade";
-import { checkVehicleInShop, validateMaintenanceDay, MaintenanceValidation } from "../lib/taller";
-import { checkAdvanceInstallment } from "./payments";
+import { checkVehicleInShop, validateMaintenanceDay, MaintenanceValidation, TallerCheck } from "../lib/taller";
+import { checkAdvanceInstallment, payDaysWithAdvance, resolveDailyRentRate } from "./payments";
+import { listPendingDays, validateDatesToResolve, PendingDaysResult } from "../lib/pendingDays";
 import { activeAdvanceForDriver } from "../lib/advanceOwnership";
-import { lateFeePaidFromExcess } from "../lib/lateFee";
+import { lateFeePaidFromExcess, LATE_FEE_MAX } from "../lib/lateFee";
 
 const r = Router();
 
@@ -989,20 +990,36 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
 // ── Día en mantenimiento: validación contra TallerPro ───────────────────────
 // Consulta el taller y valida el payment_date contra las estadías (entrada → salida).
 // Si TallerPro no responde, taller.available = false y no hay validación (best-effort).
-async function buildMaintenanceCheck(payment: { id: number; plate: string; payment_date: string }) {
-  const taller = await checkVehicleInShop(payment.plate);
+async function buildMaintenanceCheck(payment: { id?: number; plate: string; payment_date: string }, taller?: TallerCheck) {
+  taller = taller ?? (await checkVehicleInShop(payment.plate));
   if (!taller.available) return { taller, validation: null as MaintenanceValidation | null };
 
-  const { data: sameDay } = await supabase
+  let q = supabase
     .from("payments")
     .select("id, amount, status")
     .eq("plate", payment.plate)
     .eq("payment_date", payment.payment_date)
-    .neq("status", "rejected")
-    .neq("id", payment.id);
+    .neq("status", "rejected");
+  if (payment.id != null) q = q.neq("id", payment.id);
+  const { data: sameDay } = await q;
 
   const validation = validateMaintenanceDay(payment.payment_date, taller, (sameDay || []) as any[]);
   return { taller, validation };
+}
+
+/** Nota de un día en mantenimiento: la estadía del taller que lo cubre, o el motivo si está fuera del taller. */
+function maintenanceNote(validation: MaintenanceValidation | null, userNote: string): string {
+  const s = validation?.covering_stay;
+  if (s) {
+    return `Día en mantenimiento (taller): ingreso ${s.id} · entrada ${s.entrada} · salida ${s.salida ?? "sigue en taller"}` +
+      (s.salida_fuente === "estimada" ? " (estimada)" : "") +
+      (s.motivo_visita ? ` · ${s.motivo_visita.trim()}` : "") +
+      (userNote ? ` — ${userNote}` : "");
+  }
+  if (validation) {
+    return `Día en mantenimiento FUERA del taller: ${userNote} [${validation.warnings.map((w) => w.code).join(", ")}]`;
+  }
+  return `Día en mantenimiento${userNote ? `: ${userNote}` : ""}`;
 }
 
 // ── GET /reports/payments/:id/maintenance-check ─────────────────────────────
@@ -1059,18 +1076,7 @@ r.post("/payments/:id/mark-maintenance", async (req: Request, res: Response) => 
     });
   }
 
-  let notes: string;
-  const s = validation?.covering_stay;
-  if (s) {
-    notes = `Día en mantenimiento (taller): ingreso ${s.id} · entrada ${s.entrada} · salida ${s.salida ?? "sigue en taller"}` +
-      (s.salida_fuente === "estimada" ? " (estimada)" : "") +
-      (s.motivo_visita ? ` · ${s.motivo_visita.trim()}` : "") +
-      (userNote ? ` — ${userNote}` : "");
-  } else if (validation) {
-    notes = `Día en mantenimiento FUERA del taller: ${userNote} [${warnings.map((w) => w.code).join(", ")}]`;
-  } else {
-    notes = `Día en mantenimiento${userNote ? `: ${userNote}` : ""}`;
-  }
+  let notes = maintenanceNote(validation, userNote);
   notes += ` (monto original registrado: $${Number(payment.amount || 0)})`;
 
   const { error: upErr } = await supabase
@@ -1264,6 +1270,200 @@ r.post("/payments/:id/approve", async (req: Request, res: Response) => {
     console.error("[approve payment] error:", err.message);
     return res.status(500).json({ error: err.message });
   }
+});
+
+// ══ Resolver días en mora (pagos.md §6) ═════════════════════════════════════
+const PLATE_RE = /^[A-Z]{3}\d{3}$/;
+const RESOLVE_REASONS = ["maintenance", "no_driver", "liquidation", "advance"] as const;
+type ResolveReason = (typeof RESOLVE_REASONS)[number];
+
+const parseDates = (v: unknown): string[] =>
+  [...new Set((Array.isArray(v) ? v : String(v || "").split(",")).map((d) => String(d).trim()).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort();
+
+// ── GET /reports/plates/:plate/pending-days ─────────────────────────────────
+// Días desde el último pago hasta hoy, con el conductor de cada día y si cuentan como mora.
+// Incluye la tarifa diaria y el anticipo activo para el motivo "pago con anticipo".
+r.get("/plates/:plate/pending-days", async (req: Request, res: Response) => {
+  const plate = String(req.params.plate || "").toUpperCase().trim();
+  if (!PLATE_RE.test(plate)) return res.status(400).json({ error: "Placa inválida (formato ABC123)" });
+
+  try {
+    const [pending, rate, { data: advance }] = await Promise.all([
+      listPendingDays(plate),
+      resolveDailyRentRate(plate),
+      supabase
+        .from("operational_advances")
+        .select("id, person_name, driver_id, amount, daily_installment, status")
+        .eq("plate", plate)
+        .eq("status", "active")
+        .maybeSingle(),
+    ]);
+    return res.json({
+      ...pending,
+      days_in_mora: pending.days.filter((d) => d.counts_as_mora).length,
+      daily_rate: rate.dailyRate,
+      is_leasing: rate.isLeasing,
+      active_advance: advance ?? null,
+    });
+  } catch (e: any) {
+    return res.status(500).json({ error: `Error listando días pendientes: ${e.message}` });
+  }
+});
+
+// ── GET /reports/plates/:plate/pending-days/maintenance-check?dates=a,b ─────
+// Valida cada día contra TallerPro (§5.1). Si TallerPro no responde, taller.available = false.
+r.get("/plates/:plate/pending-days/maintenance-check", async (req: Request, res: Response) => {
+  const plate = String(req.params.plate || "").toUpperCase().trim();
+  if (!PLATE_RE.test(plate)) return res.status(400).json({ error: "Placa inválida (formato ABC123)" });
+  const dates = parseDates(req.query.dates);
+  if (!dates.length) return res.status(400).json({ error: "Indique las fechas (dates=YYYY-MM-DD,...)" });
+
+  const taller = await checkVehicleInShop(plate);
+  const days = await Promise.all(
+    dates.map(async (date) => ({ date, validation: (await buildMaintenanceCheck({ plate, payment_date: date }, taller)).validation }))
+  );
+  return res.json({ plate, taller, days, has_warnings: days.some((d) => (d.validation?.warnings.length ?? 0) > 0) });
+});
+
+// ── POST /reports/plates/:plate/resolve-days ────────────────────────────────
+// Body: { dates: string[], reason: "maintenance" | "no_driver" | "liquidation" | "advance", notes?, advance_id? }
+// - maintenance: un pago confirmado de $0 por día (receipt_status = 'maintenance_day'), validado contra TallerPro.
+//   Con warnings la nota es obligatoria (mín. 10 caracteres), igual que /payments/:id/mark-maintenance.
+// - no_driver: si el día no tiene conductor ya está fuera de la mora; si tiene, 409 pidiendo quitar la asignación.
+// - liquidation: un marcador de $0 por día (receipt_status = 'liquidation_debt') con la deuda del conductor
+//   (canon + recargo máximo) que se descuenta en su liquidación (src/routes/liquidations.ts).
+// - advance: pagos con anticipo de esas fechas (payDaysWithAdvance, mismo flujo de /payments/pay-with-advance).
+// Los días se resuelven en orden desde el más antiguo (validateDatesToResolve).
+r.post("/plates/:plate/resolve-days", async (req: Request, res: Response) => {
+  const plate = String(req.params.plate || "").toUpperCase().trim();
+  if (!PLATE_RE.test(plate)) return res.status(400).json({ error: "Placa inválida (formato ABC123)" });
+  const reason = String(req.body?.reason || "") as ResolveReason;
+  if (!RESOLVE_REASONS.includes(reason)) return res.status(400).json({ error: "Motivo inválido" });
+  const dates = parseDates(req.body?.dates);
+  if (!dates.length) return res.status(400).json({ error: "Seleccione al menos un día." });
+  const userNote = String(req.body?.notes || "").trim();
+
+  let pending: PendingDaysResult;
+  try {
+    pending = await listPendingDays(plate);
+  } catch (e: any) {
+    return res.status(500).json({ error: `Error listando días pendientes: ${e.message}` });
+  }
+
+  // Sin conductor: no se registra nada; solo se verifica que el día no tenga conductor asignado
+  if (reason === "no_driver") {
+    const byDate = new Map(pending.days.map((d) => [d.date, d]));
+    const unknown = dates.filter((d) => !byDate.has(d));
+    if (unknown.length) return res.status(400).json({ error: `Días fuera del rango pendiente: ${unknown.join(", ")}` });
+    const assigned = dates.map((d) => byDate.get(d)!).filter((d) => d.drivers.length > 0);
+    if (assigned.length) {
+      return res.status(409).json({
+        code: "DRIVER_ASSIGNED",
+        error:
+          "Estos días tienen conductor asignado. Quite primero la asignación del conductor (historial de asignaciones del vehículo) y el día quedará sin conductor.",
+        days: assigned.map((d) => ({ date: d.date, drivers: d.drivers })),
+      });
+    }
+    return res.json({ success: true, message: "Los días no tienen conductor asignado: ya no cuentan como mora.", dates });
+  }
+
+  const orderError = validateDatesToResolve(pending, dates);
+  if (orderError) return res.status(400).json({ error: orderError });
+
+  // Descuento en liquidación: el día lo debe el conductor que tenía el carro (canon + recargo máximo).
+  // Fila marcador de $0 que liquidations.ts suma como deuda del conductor mientras liquidation_id sea NULL.
+  if (reason === "liquidation") {
+    const { dailyRate, isLeasing } = await resolveDailyRentRate(plate);
+    const lateFee = isLeasing ? 0 : LATE_FEE_MAX; // el recargo no aplica en leasing (§3)
+    const dayInfo = new Map(pending.days.map((d) => [d.date, d]));
+    const rows = dates.map((date) => {
+      const resp = dayInfo.get(date)!.responsible!;
+      return {
+        payer_name: resp.driver_name || `Conductor #${resp.driver_id}`,
+        plate,
+        driver_id: resp.driver_id,
+        payment_date: date,
+        amount: 0,
+        status: "confirmed",
+        insurance_amount: 0,
+        maintenance_amount: 0,
+        delivery_amount: 0,
+        credit_installment_amount: 0,
+        late_fee_amount: 0,
+        late_fee_paid: 0,
+        installment_number: null,
+        receipt_status: "liquidation_debt",
+        reference_number: `LIQ-${plate}-${date}`,
+        receipt_date: date,
+        liquidation_debt_amount: dailyRate + lateFee,
+        flag_details: { payment_type: "liquidation_debt", canon: dailyRate, late_fee: lateFee },
+        notes:
+          `Descuento en liquidación de ${resp.driver_name || `#${resp.driver_id}`}: canon $${dailyRate}` +
+          (lateFee ? ` + recargo $${lateFee}` : "") +
+          (userNote ? ` — ${userNote}` : ""),
+      };
+    });
+    const { data: inserted, error: insErr } = await supabase.from("payments").insert(rows).select("id, payment_date, driver_id, liquidation_debt_amount");
+    if (insErr) return res.status(500).json({ error: `Error registrando el descuento en liquidación: ${insErr.message}` });
+    const total = rows.reduce((s, r) => s + r.liquidation_debt_amount, 0);
+    return res.status(201).json({
+      success: true,
+      message: `${rows.length} día(s) quedan como deuda en la liquidación del conductor ($${total.toLocaleString("es-CO")}).`,
+      payments: inserted ?? [],
+    });
+  }
+
+  if (reason === "advance") {
+    const out = await payDaysWithAdvance({ plate, advance_id: req.body?.advance_id, dates, notes: userNote || undefined });
+    return res.status(out.status).json(out.body);
+  }
+
+  // Mantenimiento
+  const taller = await checkVehicleInShop(plate);
+  const checks = await Promise.all(dates.map(async (date) => ({ date, ...(await buildMaintenanceCheck({ plate, payment_date: date }, taller)) })));
+  const withWarnings = checks.filter((c) => (c.validation?.warnings.length ?? 0) > 0);
+  if (withWarnings.length && userNote.length < 10) {
+    return res.status(422).json({
+      error: "Hay días que no concuerdan con el taller. Escriba qué tipo de mantenimiento es y por qué no se hace en el taller.",
+      requires_note: true,
+      taller,
+      days: checks.map((c) => ({ date: c.date, validation: c.validation })),
+    });
+  }
+
+  const { dailyRate } = await resolveDailyRentRate(plate);
+  const dayInfo = new Map(pending.days.map((d) => [d.date, d]));
+  const rows = checks.map((c) => {
+    const resp = dayInfo.get(c.date)?.responsible ?? null;
+    return {
+      payer_name: resp?.driver_name || "Mantenimiento",
+      plate,
+      driver_id: resp?.driver_id ?? null,
+      payment_date: c.date,
+      amount: 0,
+      status: "confirmed",
+      insurance_amount: 0,
+      maintenance_amount: 0,
+      delivery_amount: 0,
+      credit_installment_amount: 0,
+      late_fee_amount: 0,
+      late_fee_paid: 0,
+      installment_number: null,
+      receipt_status: "maintenance_day",
+      reference_number: `MANT-${plate}-${c.date}`,
+      receipt_date: c.date,
+      notes: `${maintenanceNote(c.validation, userNote)} (resuelto desde "Resolver días"; canon del día: $${dailyRate})`,
+    };
+  });
+
+  const { data: inserted, error: insErr } = await supabase.from("payments").insert(rows).select("id, payment_date");
+  if (insErr) return res.status(500).json({ error: `Error registrando días en mantenimiento: ${insErr.message}` });
+
+  return res.status(201).json({
+    success: true,
+    message: `${rows.length} día(s) registrados en mantenimiento.`,
+    payments: inserted ?? [],
+  });
 });
 
 export default r;

@@ -69,7 +69,11 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
           { id: "entregas", concept: `ENTREGAS PENDIENTES (${json.pendingInstallments > 0 ? "!" : ""})`, amount: json.pendingInstallments },
           { id: "prestamo", concept: "PRESTAMO", amount: 0 },
           { id: "comparendo", concept: "COMPARENDO", amount: 0 },
-          { id: "reparaciones", concept: "REPARACIONES", amount: totalRepairs }
+          { id: "reparaciones", concept: "REPARACIONES", amount: totalRepairs },
+          // Días en mora resueltos como "descuento en liquidación" (pagos.md §6)
+          ...(json.pendingRentDebt > 0
+            ? [{ id: "dias_mora", concept: `DÍAS EN MORA (${json.pendingRentDebtDetails.length})`, amount: json.pendingRentDebt }]
+            : [])
         ]);
       }
     } catch (err) {
@@ -127,7 +131,12 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
         items_detail: { incomes, deductions },
         created_by: "Admin", // Should be actual logged in user
         edited_by: liquidationId ? "Admin" : undefined,
-        mark_installments_paid: markInstallmentsPaid
+        mark_installments_paid: markInstallmentsPaid,
+        // Si la línea de días en mora sigue en la liquidación, esos días quedan saldados
+        liquidation_debt_ids:
+          !liquidationId && deductions.some(d => d.id === "dias_mora")
+            ? (data?.pendingRentDebtDetails || []).map((p: any) => p.id)
+            : undefined
       };
 
       const res = await fetch(url, {
@@ -195,6 +204,18 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
                 <div className="bg-yellow-50 text-yellow-800 p-4 rounded-lg flex gap-3 text-sm">
                   <AlertTriangle className="w-5 h-5 shrink-0" />
                   <p>Este conductor no tiene un vehículo asignado actualmente. Las reparaciones u otros gastos ligados al vehículo no se cargarán automáticamente, pero puedes agregarlos manualmente si es necesario.</p>
+                </div>
+              )}
+
+              {/* Deuda de días en mora posterior a una liquidación cerrada: queda aparte */}
+              {data?.existingLiquidation && data?.pendingRentDebt > 0 && (
+                <div className="bg-red-50 text-red-800 p-4 rounded-lg flex gap-3 text-sm">
+                  <AlertTriangle className="w-5 h-5 shrink-0" />
+                  <p>
+                    Deuda aparte: {data.pendingRentDebtDetails.length} día(s) en mora por descontar, $
+                    {Number(data.pendingRentDebt).toLocaleString("es-CO")} (
+                    {data.pendingRentDebtDetails.map((p: any) => `${p.plate} ${p.payment_date}`).join(", ")}). No se suma a la liquidación ya cerrada.
+                  </p>
                 </div>
               )}
 

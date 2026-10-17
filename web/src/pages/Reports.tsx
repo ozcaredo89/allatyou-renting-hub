@@ -16,7 +16,7 @@ import {
   RotateCcw,
   Landmark,
   CheckCircle2,
-  CreditCard,
+  CalendarClock,
   History,
 } from "lucide-react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
@@ -29,7 +29,7 @@ import {
 } from "../components/ReceiptBadge";
 import { BankReconciliationModal } from "../components/BankReconciliationModal";
 import { ReconciliationBadge, type BankMatch } from "../components/ReconciliationBadge";
-import { AdvancePaymentModal } from "../components/AdvancePaymentModal";
+import { ResolveDaysModal } from "../components/ResolveDaysModal";
 import { PaymentApprovalModal } from "../components/PaymentApprovalModal";
 import { PaymentHistoryModal } from "../components/PaymentHistoryModal";
 
@@ -119,7 +119,7 @@ export default function Reports() {
   const [offset, setOffset] = useState(0);
   const [showBankModal, setShowBankModal] = useState(false);
   const [bankModalQuery, setBankModalQuery] = useState<string | null>(null);
-  const [advanceModalRow, setAdvanceModalRow] = useState<Row | null>(null);
+  const [resolveDaysRow, setResolveDaysRow] = useState<Row | null>(null);
   const [approvalModalRow, setApprovalModalRow] = useState<Row | null>(null);
   // Historial de pagos por placa (columna Acciones)
   const [historyRow, setHistoryRow] = useState<Row | null>(null);
@@ -469,15 +469,12 @@ export default function Reports() {
           initialQuery={bankModalQuery}
         />
 
-        <AdvancePaymentModal
-          isOpen={!!advanceModalRow}
-          onClose={() => setAdvanceModalRow(null)}
-          plate={advanceModalRow?.plate ?? null}
-          ownerName={advanceModalRow?.owner_name}
-          onSuccess={() => {
-            setAdvanceModalRow(null);
-            load(offset);
-          }}
+        <ResolveDaysModal
+          isOpen={!!resolveDaysRow}
+          onClose={() => setResolveDaysRow(null)}
+          plate={resolveDaysRow?.plate ?? null}
+          ownerName={resolveDaysRow?.owner_name}
+          onResolved={() => load(offset)}
         />
 
         <PaymentApprovalModal
@@ -808,12 +805,12 @@ export default function Reports() {
                             </span>
                             <button
                               type="button"
-                              onClick={() => setAdvanceModalRow(r)}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all cursor-pointer whitespace-nowrap"
-                              title={`Pagar mora con anticipo para la placa ${r.plate}`}
+                              onClick={() => setResolveDaysRow(r)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-black hover:bg-gray-800 text-white shadow-xs transition-all cursor-pointer whitespace-nowrap"
+                              title={`Resolver los días en mora de la placa ${r.plate}`}
                             >
-                              <CreditCard className="w-3.5 h-3.5" />
-                              <span>Pagar con anticipo</span>
+                              <CalendarClock className="w-3.5 h-3.5" />
+                              <span>Resolver días</span>
                             </button>
                           </>
                         ) : (

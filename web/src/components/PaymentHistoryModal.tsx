@@ -165,6 +165,8 @@ export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onAppro
                           </span>
                         ) : p.receipt_status === "maintenance_day" ? (
                           <span className="text-amber-700">🔧 Mantenimiento</span>
+                        ) : p.receipt_status === "liquidation_debt" ? (
+                          <span className="text-red-700" title={p.notes ?? undefined}>📋 Descuento en liquidación</span>
                         ) : (
                           <span className="text-gray-400">OK</span>
                         )}
