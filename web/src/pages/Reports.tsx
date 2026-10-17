@@ -123,6 +123,8 @@ export default function Reports() {
   const [approvalModalRow, setApprovalModalRow] = useState<Row | null>(null);
   // Historial de pagos por placa (columna Acciones)
   const [historyRow, setHistoryRow] = useState<Row | null>(null);
+  // true: el historial abre mostrando solo los pendientes (desde el indicador "N pendientes")
+  const [historyPendingOnly, setHistoryPendingOnly] = useState(false);
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const [reconciling, setReconciling] = useState(false);
   const limit = 20;
@@ -497,6 +499,7 @@ export default function Reports() {
           plate={historyRow?.plate ?? null}
           ownerName={historyRow?.owner_name}
           refreshKey={historyRefresh}
+          pendingOnly={historyPendingOnly}
           onApprove={(paymentId) => historyRow && setApprovalModalRow({ ...historyRow, payment_id: paymentId })}
         />
 
@@ -765,11 +768,18 @@ export default function Reports() {
                     </td>
                     <td className="px-4 py-3">
                       {/* Único indicador de pendientes: cuántos pagos de la placa faltan por aprobar.
-                          Al hacer clic se abre el historial para revisarlos uno por uno. */}
+                          1 pendiente → abre directo la aprobación; varios → la lista de pendientes de la placa. */}
                       {(r.pending_payment_ids?.length ?? 0) > 0 ? (
                         <button
                           type="button"
-                          onClick={() => setHistoryRow(r)}
+                          onClick={() => {
+                            if (r.pending_payment_ids!.length === 1) {
+                              setApprovalModalRow({ ...r, payment_id: r.pending_payment_ids![0] });
+                            } else {
+                              setHistoryPendingOnly(true);
+                              setHistoryRow(r);
+                            }
+                          }}
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 cursor-pointer whitespace-nowrap"
                           title={`Revisar los pagos pendientes de ${r.plate}`}
                         >
@@ -817,7 +827,10 @@ export default function Reports() {
                       <div className="flex items-center justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => setHistoryRow(r)}
+                          onClick={() => {
+                            setHistoryPendingOnly(false);
+                            setHistoryRow(r);
+                          }}
                           className="p-1.5 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
                           title={`Ver historial de pagos de ${r.plate}`}
                         >

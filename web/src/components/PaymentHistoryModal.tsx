@@ -27,6 +27,8 @@ interface PaymentHistoryModalProps {
   onApprove: (paymentId: number) => void;
   /** Cambia cuando se aprueba un pago, para recargar el historial */
   refreshKey?: number;
+  /** Abrir mostrando solo los pagos pendientes (con opción de ver el historial completo) */
+  pendingOnly?: boolean;
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -40,10 +42,16 @@ const STATUS_LABEL: Record<string, string> = {
   rejected: "Rechazado",
 };
 
-export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onApprove, refreshKey = 0 }: PaymentHistoryModalProps) {
+export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onApprove, refreshKey = 0, pendingOnly = false }: PaymentHistoryModalProps) {
   const [items, setItems] = useState<HistoryPayment[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPendingOnly, setShowPendingOnly] = useState(pendingOnly);
+
+  // Cada vez que se abre, arranca en el modo pedido (solo pendientes o historial completo)
+  useEffect(() => {
+    if (isOpen) setShowPendingOnly(pendingOnly);
+  }, [isOpen, plate, pendingOnly]);
 
   useEffect(() => {
     if (!isOpen || !plate) return;
@@ -66,6 +74,7 @@ export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onAppro
   if (!isOpen) return null;
 
   const pendingCount = items.filter((p) => p.status === "pending").length;
+  const rows = showPendingOnly ? items.filter((p) => p.status === "pending") : items;
 
   return (
     // z-[60]: por encima del menú lateral (z-50). En celular ocupa toda la pantalla.
@@ -82,17 +91,30 @@ export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onAppro
             <div>
               <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
                 <span className="px-2 py-0.5 bg-black text-white font-mono text-xs rounded-md">{plate}</span>
-                Historial de pagos
+                {showPendingOnly ? "Pagos pendientes" : "Historial de pagos"}
               </h2>
               <p className="text-xs text-gray-500">
-                {ownerName || "Conductor"} · últimos {items.length} pagos
-                {pendingCount > 0 ? ` · ${pendingCount} pendiente${pendingCount > 1 ? "s" : ""}` : ""}
+                {ownerName || "Conductor"} ·{" "}
+                {showPendingOnly
+                  ? `${pendingCount} por revisar`
+                  : `últimos ${items.length} pagos${pendingCount > 0 ? ` · ${pendingCount} pendiente${pendingCount > 1 ? "s" : ""}` : ""}`}
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl cursor-pointer">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {(showPendingOnly || pendingCount > 0) && (
+              <button
+                type="button"
+                onClick={() => setShowPendingOnly(!showPendingOnly)}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer whitespace-nowrap"
+              >
+                {showPendingOnly ? "Ver historial completo" : "Ver solo pendientes"}
+              </button>
+            )}
+            <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl cursor-pointer">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="overflow-auto">
@@ -102,8 +124,10 @@ export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onAppro
             </div>
           ) : error ? (
             <div className="m-5 p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>
-          ) : items.length === 0 ? (
-            <div className="py-14 text-center text-sm text-gray-500">Sin pagos registrados.</div>
+          ) : rows.length === 0 ? (
+            <div className="py-14 text-center text-sm text-gray-500">
+              {showPendingOnly ? "No quedan pagos pendientes en esta placa. 🎉" : "Sin pagos registrados."}
+            </div>
           ) : (
             <table className="w-full min-w-[620px] text-sm">
               <thead className="bg-gray-50 text-left text-xs text-gray-600 sticky top-0">
@@ -118,7 +142,7 @@ export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onAppro
                 </tr>
               </thead>
               <tbody>
-                {items.map((p) => {
+                {rows.map((p) => {
                   const mismatch = p.amount_mismatch;
                   const suspicious = (p.inconsistency_reasons?.length ?? 0) > 0;
                   const credit = Number(p.credit_installment_amount || 0);
