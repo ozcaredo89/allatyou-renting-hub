@@ -330,9 +330,10 @@ export function PaymentApprovalModal({
     : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
+    // z-[70]: por encima del menú lateral (z-50) y del historial (z-[60]). En celular ocupa toda la pantalla.
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
       <div
-        className="bg-white rounded-2xl shadow-2xl max-w-xl w-full border border-gray-100 overflow-hidden flex flex-col max-h-[90vh]"
+        className="bg-white sm:rounded-2xl shadow-2xl max-w-xl w-full border border-gray-100 overflow-hidden flex flex-col h-full sm:h-auto sm:max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

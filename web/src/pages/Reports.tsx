@@ -32,7 +32,6 @@ import { ReconciliationBadge, type BankMatch } from "../components/Reconciliatio
 import { AdvancePaymentModal } from "../components/AdvancePaymentModal";
 import { PaymentApprovalModal } from "../components/PaymentApprovalModal";
 import { PaymentHistoryModal } from "../components/PaymentHistoryModal";
-import { PendingPaymentsTable } from "../components/PendingPaymentsTable";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
@@ -57,6 +56,8 @@ type Row = {
   match_context?: MatchContext | null;
   amount_mismatch?: AmountMismatchDetails | null;
   payment_id?: number | null;
+  /** Todos los pagos pendientes de aprobación de la placa (no solo el último) */
+  pending_payment_ids?: number[];
   bank_match?: BankMatch | null;
   receipt_status?: string | null;
   flag_details?: any | null;
@@ -499,37 +500,6 @@ export default function Reports() {
           onApprove={(paymentId) => historyRow && setApprovalModalRow({ ...historyRow, payment_id: paymentId })}
         />
 
-        {/* Banner de aviso cuando hay pagos pendientes de aprobación */}
-        {pendingApprovalCount > 0 && (
-          <div className="mb-5 rounded-2xl border border-amber-300 bg-gradient-to-r from-amber-50 via-amber-50/70 to-orange-50/50 p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-amber-100 text-amber-800 rounded-xl shrink-0">
-                <AlertTriangle className="w-5 h-5 text-amber-600 animate-pulse" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-amber-950 leading-tight">
-                  Hay {pendingApprovalCount} pago{pendingApprovalCount === 1 ? "" : "s"} pendiente{pendingApprovalCount === 1 ? "" : "s"} de aprobación
-                </h3>
-                <p className="text-xs text-amber-800/90 mt-0.5">
-                  Revisa los comprobantes y aprueba los pagos para aplicar los abonos a leasing, anticipos y cuotas diarias.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setOnlyPending(!onlyPending)}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                onlyPending
-                  ? "bg-amber-600 text-white shadow-xs hover:bg-amber-700"
-                  : "bg-white text-amber-950 border border-amber-300 hover:bg-amber-100 shadow-2xs"
-              }`}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
-              <span>{onlyPending ? "Mostrando todos los pagos" : "Ver solo pendientes"}</span>
-            </button>
-          </div>
-        )}
-
         {/* Barra principal de búsqueda y filtros interactivos */}
         <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-xs">
           <div className="flex flex-col lg:flex-row lg:items-center gap-3">
@@ -676,16 +646,6 @@ export default function Reports() {
           </div>
         )}
 
-        {onlyPending ? (
-          // Vista "Solo pendientes": un pago pendiente por fila (no uno por placa)
-          <PendingPaymentsTable
-            query={q}
-            refreshKey={historyRefresh}
-            onReview={(p) => setApprovalModalRow({ plate: p.plate, owner_name: p.owner_name, payment_id: p.id } as Row)}
-            onHistory={(p) => setHistoryRow({ plate: p.plate, owner_name: p.owner_name } as Row)}
-          />
-        ) : (
-        <>
         {/* Tabla (sigue siendo “último pago por placa”) */}
         <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
           <table className="min-w-full text-sm">
@@ -804,11 +764,20 @@ export default function Reports() {
                       {r.installment_number != null ? `#${r.installment_number}` : "—"}
                     </td>
                     <td className="px-4 py-3">
-                      {r.payment_status === "pending" ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 animate-pulse">
+                      {/* Único indicador de pendientes: cuántos pagos de la placa faltan por aprobar.
+                          Al hacer clic se abre el historial para revisarlos uno por uno. */}
+                      {(r.pending_payment_ids?.length ?? 0) > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setHistoryRow(r)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 cursor-pointer whitespace-nowrap"
+                          title={`Revisar los pagos pendientes de ${r.plate}`}
+                        >
                           <Clock className="w-3 h-3 text-amber-600" />
-                          <span>Pendiente</span>
-                        </span>
+                          <span>
+                            {r.pending_payment_ids!.length} pendiente{r.pending_payment_ids!.length === 1 ? "" : "s"}
+                          </span>
+                        </button>
                       ) : r.payment_status === "rejected" ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
                           <span>Rechazado</span>
@@ -854,17 +823,6 @@ export default function Reports() {
                         >
                           <History size={18} />
                         </button>
-                        {r.payment_status === "pending" && r.payment_id && (
-                          <button
-                            type="button"
-                            onClick={() => setApprovalModalRow(r)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs hover:shadow transition-all cursor-pointer whitespace-nowrap"
-                            title={`Aprobar pago de la placa ${r.plate}`}
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Aprobar</span>
-                          </button>
-                        )}
                         {r.payment_date && (
                           <button
                             onClick={() => handleDeleteLastPayment(r.plate)}
@@ -931,8 +889,6 @@ export default function Reports() {
             </button>
           </div>
         </div>
-        </>
-        )}
       </div>
     </div>
   );

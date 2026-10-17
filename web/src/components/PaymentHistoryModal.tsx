@@ -68,9 +68,10 @@ export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onAppro
   const pendingCount = items.filter((p) => p.status === "pending").length;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+    // z-[60]: por encima del menú lateral (z-50). En celular ocupa toda la pantalla.
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-0 sm:p-4 bg-black/50" onClick={onClose}>
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+        className="bg-white sm:rounded-2xl shadow-2xl w-full max-w-4xl h-full sm:h-auto sm:max-h-[90vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-4 border-b flex items-center justify-between">
@@ -104,7 +105,7 @@ export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onAppro
           ) : items.length === 0 ? (
             <div className="py-14 text-center text-sm text-gray-500">Sin pagos registrados.</div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[620px] text-sm">
               <thead className="bg-gray-50 text-left text-xs text-gray-600 sticky top-0">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Fecha</th>
@@ -112,7 +113,7 @@ export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onAppro
                   <th className="px-3 py-2 font-semibold">Comprobante</th>
                   <th className="px-3 py-2 font-semibold">Anticipo</th>
                   <th className="px-3 py-2 font-semibold">Estado</th>
-                  <th className="px-3 py-2 font-semibold">Nota</th>
+                  <th className="hidden md:table-cell px-3 py-2 font-semibold">Nota</th>
                   <th className="px-3 py-2 font-semibold text-right">Acciones</th>
                 </tr>
               </thead>
@@ -158,7 +159,7 @@ export function PaymentHistoryModal({ isOpen, onClose, plate, ownerName, onAppro
                           {STATUS_LABEL[p.status] ?? p.status}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-xs text-gray-600 max-w-[220px]">
+                      <td className="hidden md:table-cell px-3 py-2 text-xs text-gray-600 max-w-[220px]">
                         {p.notes ? <span className="line-clamp-2" title={p.notes}>{p.notes}</span> : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-2">
