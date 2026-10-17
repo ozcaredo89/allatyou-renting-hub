@@ -1202,7 +1202,7 @@ export default function App() {
 
               {!leasingInfo && (
                 <div className="mt-1 text-xs text-gray-500">
-                  El canon del día se paga antes de las 4:00 PM (hora del comprobante). Desde las 4 PM hay recargo de $5.000 + $5.000 por hora, máx. $15.000.
+                  El canon de cada día se paga a día vencido, hasta las 4:00 PM del día siguiente (hora del comprobante). Desde esa hora hay recargo de $5.000 + $5.000 por hora, máx. $15.000.
                 </div>
               )}
             </div>

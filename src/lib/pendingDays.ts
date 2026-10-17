@@ -1,5 +1,5 @@
 // Días pendientes de una placa ("Resolver días en mora", pagos.md §6).
-// Lista cada día desde el último payment_date hasta hoy (hora Colombia) con:
+// Lista cada día desde el último payment_date hasta el corte de mora (pagos.md §1, hora Colombia) con:
 // - si es pagable (Pico y Placa / calendario de no pago),
 // - quién tenía el carro ese día según vehicle_assignments,
 // - si cuenta como mora. Mismo criterio que get_payable_days
@@ -67,8 +67,15 @@ export async function listPendingDays(plate: string): Promise<PendingDaysResult>
   const lastPaymentDate: string | null = lastPayment?.payment_date ?? null;
   const refDate = lastPaymentDate || (vehicle?.created_at ? String(vehicle.created_at).slice(0, 10) : today);
 
+  // Se paga el día D durante D+1 hasta las 4 PM: el día D es mora desde D+1 16:00 (hora Colombia).
+  // Mismo corte que mora_cutoff_date() en SQL (supabase/migrations/20261017_mora_pago_dia_vencido.sql).
+  const bogotaHour = Number(
+    new Intl.DateTimeFormat("en-GB", { timeZone: "America/Bogota", hour: "2-digit", hour12: false }).format(new Date())
+  ) % 24;
+  const cutoff = addDays(today, bogotaHour >= 16 ? -1 : -2);
+
   const all: string[] = [];
-  for (let d = addDays(refDate, 1); d <= today; d = addDays(d, 1)) all.push(d);
+  for (let d = addDays(refDate, 1); d <= cutoff; d = addDays(d, 1)) all.push(d);
   const truncated = all.length > MAX_PENDING_DAYS;
   const range = all.slice(0, MAX_PENDING_DAYS);
 

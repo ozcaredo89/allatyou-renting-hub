@@ -1,7 +1,8 @@
 // src/lib/lateFee.ts
 // Recargo por pago tardío (docs/specs/pagos.md §3).
-// El canon de cada día se paga antes de las 4:00 PM según la hora de la transferencia.
-// Desde las 4 PM: $5.000, +$5.000 por cada hora adicional, máximo $15.000 por día.
+// Se paga a día vencido: el canon del día D se paga hasta las 4:00 PM del día D+1,
+// según la fecha y hora de la transferencia (mismo plazo que la mora, pagos.md §1).
+// Desde D+1 4 PM: $5.000, +$5.000 por cada hora adicional, máximo $15.000 por día.
 // No aplica a leasing (lo decide quien llama).
 
 export const LATE_FEE_START_HOUR = 16;
@@ -9,10 +10,10 @@ export const LATE_FEE_STEP = 5000;
 export const LATE_FEE_MAX = 15000;
 
 export type LateFeeReason =
-  | "ON_TIME"        // transferencia antes de las 4 PM del día pagado
-  | "EARLY"          // transferencia de un día anterior al día pagado (pago adelantado)
-  | "LATE_SAME_DAY"  // transferencia el mismo día desde las 4 PM
-  | "LATE_DAY"       // transferencia de un día posterior: el día no se pagó → recargo máximo
+  | "ON_TIME"        // transferencia el día siguiente al día pagado, antes de las 4 PM
+  | "EARLY"          // transferencia el mismo día pagado o antes (pago adelantado)
+  | "LATE_SAME_DAY"  // transferencia el día siguiente al día pagado, desde las 4 PM
+  | "LATE_DAY"       // transferencia de dos días o más después: el día no se pagó → recargo máximo
   | "NO_RECEIPT_DATE"
   | "NO_RECEIPT_TIME";
 
@@ -28,8 +29,12 @@ export interface LateFeeResult {
  */
 export function computeLateFee(paymentDate: string, receiptDate: string | null, receiptTime: string | null): LateFeeResult {
   if (!receiptDate) return { amount: null, reason: "NO_RECEIPT_DATE" };
-  if (receiptDate < paymentDate) return { amount: 0, reason: "EARLY" };
-  if (receiptDate > paymentDate) return { amount: LATE_FEE_MAX, reason: "LATE_DAY" };
+  // Día límite de pago: D+1 (hasta las 4 PM)
+  const due = new Date(`${paymentDate}T00:00:00Z`);
+  due.setUTCDate(due.getUTCDate() + 1);
+  const dueDate = due.toISOString().slice(0, 10);
+  if (receiptDate < dueDate) return { amount: 0, reason: "EARLY" };
+  if (receiptDate > dueDate) return { amount: LATE_FEE_MAX, reason: "LATE_DAY" };
 
   const m = receiptTime ? String(receiptTime).match(/^(\d{1,2}):(\d{2})/) : null;
   if (!m) return { amount: null, reason: "NO_RECEIPT_TIME" };

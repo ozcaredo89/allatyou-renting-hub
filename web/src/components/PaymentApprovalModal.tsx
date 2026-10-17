@@ -670,7 +670,7 @@ export function PaymentApprovalModal({
                           ? "⚠️ No se pudo leer la fecha u hora del comprobante: el recargo no se calculó. Revísalo en la imagen."
                           : `Transferencia: ${data.late_fee.receipt_date ?? "—"}${data.late_fee.receipt_time ? ` ${data.late_fee.receipt_time}` : ""}.`
                             + (data.late_fee.amount === 0
-                              ? " Pagado antes de las 4:00 PM, sin recargo."
+                              ? " Pagado a tiempo (antes de las 4:00 PM del día siguiente), sin recargo."
                               : data.late_fee.pending > 0
                                 ? ` Queda debiendo $${fmtCOP.format(data.late_fee.pending)}.`
                                 : " Recargo pagado completo con el excedente.")}
