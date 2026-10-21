@@ -192,6 +192,9 @@ export default function AdminVehicles() {
   const [items, setItems] = useState<Vehicle[]>([]);
   const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'leasing'>('active');
   const [plateFilter, setPlateFilter] = useState('');
+  // Cancelación de leasing en curso (confirmación visual, sin montos)
+  const [cancelLeasingTarget, setCancelLeasingTarget] = useState<{ contractId: number; plate: string } | null>(null);
+  const [cancellingLeasing, setCancellingLeasing] = useState(false);
 
   // Auto-switch tab if the current tab has 0 matches for the search query, but another tab does
   useEffect(() => {
@@ -641,8 +644,61 @@ export default function AdminVehicles() {
 
   const autoMileageData = getFilteredAutoMileage();
 
+  async function confirmCancelActiveLeasing() {
+    if (!cancelLeasingTarget) return;
+    setCancellingLeasing(true);
+    try {
+      const auth = ensureBasicAuth();
+      const rs = await fetch(`${API}/leasing/contracts/${cancelLeasingTarget.contractId}/cancel-active`, {
+        method: 'POST',
+        headers: { Authorization: auth }
+      });
+      if (!rs.ok) {
+        let msg = await rs.text();
+        try { msg = JSON.parse(msg).error || msg; } catch {}
+        throw new Error(msg);
+      }
+      setCancelLeasingTarget(null);
+      await loadData();
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    } finally {
+      setCancellingLeasing(false);
+    }
+  }
+
   return (
     <div className="h-full flex flex-col p-6 bg-slate-50">
+      {cancelLeasingTarget && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-bold text-slate-900">Cancelar leasing {cancelLeasingTarget.plate}</h3>
+            <ul className="mt-3 space-y-2 text-sm text-slate-600 list-disc pl-5">
+              <li>La información del contrato quedará <b>archivada</b>.</li>
+              <li>El conductor cambiará a estado <b>inactivo</b>.</li>
+              <li>El vehículo quedará <b>disponible</b> nuevamente.</li>
+            </ul>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelLeasingTarget(null)}
+                disabled={cancellingLeasing}
+                className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100"
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                onClick={confirmCancelActiveLeasing}
+                disabled={cancellingLeasing}
+                className="px-4 py-2 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
+              >
+                {cancellingLeasing ? 'Cancelando...' : 'Confirmar cancelación'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="mx-auto max-w-[1400px] w-full flex-1 flex flex-col min-h-0">
         {/* HEADER */}
         <div className="mb-4 flex items-end justify-between shrink-0">
@@ -909,6 +965,20 @@ export default function AdminVehicles() {
                             status={v.status}
                             onClick={v.status === 'leasing' ? () => openLeasingDrawer(v.plate) : undefined}
                           />
+                          {v.status === 'leasing' && (() => {
+                            const runningContract = v.leasing_contracts?.find((c: any) => c.status === 'active');
+                            if (!runningContract) return null;
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => setCancelLeasingTarget({ contractId: runningContract.id, plate: v.plate })}
+                                className="mt-1 text-[9px] text-red-600 underline hover:text-red-800"
+                                title="Cancelar leasing en curso"
+                              >
+                                Cancelar Leasing
+                              </button>
+                            );
+                          })()}
                           {v.status === 'reserved' && (() => {
                             const pendingContract = v.leasing_contracts?.find((c: any) => c.status === 'pending');
                             if (pendingContract) {

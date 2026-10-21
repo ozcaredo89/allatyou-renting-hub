@@ -25,7 +25,8 @@ Los valores reales salen del contrato (`daily_maintenance`, `daily_admin`, `dail
 
 ```
 simulación → pending → active → closed (solo manual, ver §7)
-                 │         └──→ default (incumplimiento)
+                 │         ├──→ default (incumplimiento)
+                 │         └──→ cancelled (cancel-active, archiva y libera el vehículo)
                  ├──→ cancelled (cancel-pending, libera el vehículo)
                  └──→ superseded (se generó otro pending para la misma placa)
 ```
@@ -41,6 +42,12 @@ simulación → pending → active → closed (solo manual, ver §7)
    Genera el cronograma y activa todo en una sola RPC (`activate_leasing_contract`).
 4. **Default / ejecutar pagaré**: bloqueado si pasaron **>72h** desde la creación sin documento firmado adjunto.
 5. `POST /leasing/contracts` es **legacy/deprecated**: no usarlo en flujos nuevos.
+6. **Cancelar un leasing en curso** (`POST /leasing/contracts/:id/cancel-active`, solo desde `active`): transición `active → cancelled` (decisión 2026-10-20). Botón en `AdminVehicles` (estado `leasing`) y en `AdminAmortization` (pestaña activos), con confirmación visual **sin montos**. Efectos:
+   - El contrato pasa a `cancelled` y queda **archivado**: no se borra cronograma, pagos ni distribuciones. Sale de `leasing_contracts_summary_vw` (solo lista `active`).
+   - El conductor pasa a `inactive` y se llena `terminated_at` (igual que la liquidación). Se cierra su `vehicle_assignments` (`end_date`).
+   - El vehículo vuelve a `active` (disponible), sin conductor (`current_driver_id = null`, `owner_name = 'SIN CONDUCTOR ASIGNADO'`).
+   - No liquida fondo de mantenimiento ni depósitos del conductor: eso sigue siendo el flujo de liquidación (`liquidations.ts`).
+   - No es atómico (mismo patrón que `cancel-pending`): si falla el paso de conductor/asignación/vehículo, el contrato ya quedó `cancelled` y el error solo se registra en log.
 
 `start_date_pending_confirmation = true` ⇒ el contrato existe pero **ningún pago se aplica** al cronograma hasta confirmarlo.
 

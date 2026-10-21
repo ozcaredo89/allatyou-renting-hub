@@ -766,6 +766,71 @@ r.post("/contracts/:id/cancel-pending", async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// POST /leasing/contracts/:id/cancel-active
+// Cancela un leasing EN CURSO. No borra nada: cronograma, pagos y distribuciones
+// quedan archivados (el contrato pasa a 'cancelled' y sale de leasing_contracts_summary_vw,
+// que solo lista contratos 'active'). El conductor pasa a 'inactive', se cierra su
+// asignación y el vehículo vuelve a quedar disponible ('active').
+// ============================================================================
+r.post("/contracts/:id/cancel-active", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const now = new Date().toISOString();
+
+  const { data: contract, error: cErr } = await supabase
+    .from("leasing_contracts")
+    .select("status, plate, driver_id")
+    .eq("id", Number(id))
+    .single();
+
+  if (cErr || !contract) return res.status(404).json({ error: "Contrato no encontrado" });
+  if (contract.status !== "active") {
+    return res.status(400).json({ error: "Solo se pueden cancelar contratos en estado 'active'" });
+  }
+
+  // 1. Archivar el contrato (la condición de estado evita doble cancelación)
+  const { data: updated, error: updErr } = await supabase
+    .from("leasing_contracts")
+    .update({ status: "cancelled" })
+    .eq("id", Number(id))
+    .eq("status", "active")
+    .select("id");
+
+  if (updErr) return res.status(500).json({ error: updErr.message });
+  if (!updated?.length) return res.status(409).json({ error: "El contrato ya fue modificado" });
+
+  // 2. Conductor -> inactivo y cierre de su asignación al vehículo
+  if (contract.driver_id) {
+    const { error: dErr } = await supabase
+      .from("drivers")
+      .update({ status: "inactive", terminated_at: now, updated_at: now })
+      .eq("id", contract.driver_id);
+    if (dErr) console.error("Error inactivando conductor:", dErr.message);
+
+    const { error: aErr } = await supabase
+      .from("vehicle_assignments")
+      .update({ end_date: now, updated_at: now })
+      .eq("driver_id", contract.driver_id)
+      .eq("plate", contract.plate)
+      .is("end_date", null);
+    if (aErr) console.error("Error cerrando asignación:", aErr.message);
+  }
+
+  // 3. Vehículo disponible y sin conductor
+  const { error: vErr } = await supabase
+    .from("vehicles")
+    .update({
+      status: "active",
+      current_driver_id: null,
+      owner_name: "SIN CONDUCTOR ASIGNADO",
+      updated_at: now,
+    })
+    .eq("plate", contract.plate);
+  if (vErr) console.error("Error liberando vehículo:", vErr.message);
+
+  return res.json({ ok: true, message: "Leasing cancelado y archivado. Conductor inactivo y vehículo disponible." });
+});
+
+// ============================================================================
 // SIMULACIONES — CRUD ligero (solo guarda los inputs, no el cronograma)
 // ============================================================================
 
