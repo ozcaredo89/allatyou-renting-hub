@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
+import { requestCancelActiveLeasing } from "../lib/leasingCancel";
 import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search, FileText, ExternalLink, Settings2, Satellite, Rocket } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useSortableData } from "../hooks/useSortableData";
@@ -195,6 +196,7 @@ export default function AdminVehicles() {
   // Cancelación de leasing en curso (confirmación visual, sin montos)
   const [cancelLeasingTarget, setCancelLeasingTarget] = useState<{ contractId: number; plate: string } | null>(null);
   const [cancellingLeasing, setCancellingLeasing] = useState(false);
+  const [cancelLeasingError, setCancelLeasingError] = useState<{ message: string; final: boolean } | null>(null);
 
   // Auto-switch tab if the current tab has 0 matches for the search query, but another tab does
   useEffect(() => {
@@ -238,6 +240,7 @@ export default function AdminVehicles() {
   const [drivers, setDrivers] = useState<DriverSimple[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<{ field: 'ownership_card_front' | 'ownership_card_back' | 'soat_url'; message: string } | null>(null);
 
   // Estado del Modal y Edición
   const [editing, setEditing] = useState<Vehicle | null>(null);
@@ -483,18 +486,28 @@ export default function AdminVehicles() {
   async function performUpload(file: File, field: 'ownership_card_front' | 'ownership_card_back' | 'soat_url') {
     if (!editing) return;
     setUploading(true);
+    setUploadError(null);
     try {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("folder", "vehicles");
       const res = await fetch(`${API}/uploads`, { method: "POST", body: fd });
-      if (!res.ok) throw new Error("Error subiendo archivo");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Error del servidor (${res.status}) al subir el archivo.`);
+      }
       const data = await res.json();
 
       setEditing(prev => prev ? ({ ...prev, [field]: data.url }) : null);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert("No se pudo subir el archivo.");
+      const isNetworkError =
+        error instanceof TypeError || /failed to fetch|network|load failed/i.test(String(error?.message || ""));
+      const userMessage = isNetworkError
+        ? "Se interrumpió la conexión al subir el archivo. Verifica tu internet e intenta nuevamente."
+        : (error?.message || "No se pudo subir el archivo. Intenta nuevamente.");
+      setUploadError({ field, message: userMessage });
+      alert(userMessage);
     } finally {
       setUploading(false);
       setActiveField(null); // Cerrar menú si estaba abierto
@@ -549,18 +562,22 @@ export default function AdminVehicles() {
   };
 
   // Manejador del input de archivo para Tarjetas de Propiedad
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0] && activeField) {
-      performUpload(e.target.files[0], activeField);
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.target;
+    const file = input.files?.[0];
+    if (file && activeField) {
+      await performUpload(file, activeField);
+      input.value = '';
     }
   };
 
   // Manejador directo de 1-clic para PDF de SOAT
-  const handleSoatFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handleSoatFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.target;
+    const file = input.files?.[0];
     if (file) {
-      performUpload(file, 'soat_url');
-      e.target.value = '';
+      await performUpload(file, 'soat_url');
+      input.value = '';
     }
   };
 
@@ -644,24 +661,31 @@ export default function AdminVehicles() {
 
   const autoMileageData = getFilteredAutoMileage();
 
+  function closeCancelLeasing() {
+    setCancelLeasingTarget(null);
+    setCancelLeasingError(null);
+  }
+
   async function confirmCancelActiveLeasing() {
     if (!cancelLeasingTarget) return;
     setCancellingLeasing(true);
+    setCancelLeasingError(null);
     try {
-      const auth = ensureBasicAuth();
-      const rs = await fetch(`${API}/leasing/contracts/${cancelLeasingTarget.contractId}/cancel-active`, {
-        method: 'POST',
-        headers: { Authorization: auth }
-      });
-      if (!rs.ok) {
-        let msg = await rs.text();
-        try { msg = JSON.parse(msg).error || msg; } catch {}
-        throw new Error(msg);
+      const outcome = await requestCancelActiveLeasing(
+        `${API}/leasing/contracts/${cancelLeasingTarget.contractId}/cancel-active`,
+        ensureBasicAuth()
+      );
+      if (outcome.ok) closeCancelLeasing();
+      else setCancelLeasingError({ message: outcome.message, final: outcome.final });
+
+      // El refresco va aparte: si falla, no debe pisar el resultado de la cancelación.
+      if (outcome.ok || outcome.final) {
+        try {
+          await loadData();
+        } catch {
+          if (outcome.ok) alert("El leasing fue cancelado, pero no se pudo actualizar la lista. Recarga la página.");
+        }
       }
-      setCancelLeasingTarget(null);
-      await loadData();
-    } catch (e: any) {
-      alert("Error: " + e.message);
     } finally {
       setCancellingLeasing(false);
     }
@@ -678,23 +702,30 @@ export default function AdminVehicles() {
               <li>El conductor cambiará a estado <b>inactivo</b>.</li>
               <li>El vehículo quedará <b>disponible</b> nuevamente.</li>
             </ul>
+            {cancelLeasingError && (
+              <div role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {cancelLeasingError.message}
+              </div>
+            )}
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setCancelLeasingTarget(null)}
+                onClick={closeCancelLeasing}
                 disabled={cancellingLeasing}
                 className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100"
               >
-                Volver
+                {cancelLeasingError?.final ? 'Cerrar' : 'Volver'}
               </button>
-              <button
-                type="button"
-                onClick={confirmCancelActiveLeasing}
-                disabled={cancellingLeasing}
-                className="px-4 py-2 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
-              >
-                {cancellingLeasing ? 'Cancelando...' : 'Confirmar cancelación'}
-              </button>
+              {!cancelLeasingError?.final && (
+                <button
+                  type="button"
+                  onClick={confirmCancelActiveLeasing}
+                  disabled={cancellingLeasing}
+                  className="px-4 py-2 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
+                >
+                  {cancellingLeasing ? 'Cancelando...' : 'Confirmar cancelación'}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1310,6 +1341,9 @@ export default function AdminVehicles() {
                       )}
                     </div>
                   </div>
+                  {uploadError && (uploadError.field === 'ownership_card_front' || uploadError.field === 'ownership_card_back') && (
+                    <p className="text-xs text-red-600 mt-1 font-medium">❌ {uploadError.message}</p>
+                  )}
 
                   <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-200 bg-slate-50/50 p-3 rounded-lg">
                     <div className="col-span-2">
@@ -1481,6 +1515,9 @@ export default function AdminVehicles() {
                       className="hidden"
                       onChange={handleSoatFileSelect}
                     />
+                    {uploadError?.field === 'soat_url' && (
+                      <p className="text-xs text-red-600 mt-1.5 font-medium">❌ {uploadError.message}</p>
+                    )}
                   </div>
 
                   <div>

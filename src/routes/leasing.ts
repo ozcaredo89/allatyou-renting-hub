@@ -678,6 +678,14 @@ r.patch("/contracts/:id", async (req: Request, res: Response) => {
     return res.status(404).json({ error: "Contrato no encontrado" });
   }
 
+  // REGLA: un contrato cancelado está archivado; no se edita ni se reactiva
+  if (currentContract.status === "cancelled") {
+    return res.status(409).json({
+      code: "CONTRACT_CANCELLED",
+      error: "El contrato está cancelado (archivado) y no se puede modificar.",
+    });
+  }
+
   // REGLA: Bloqueo de Declarar Incumplimiento si >72h sin contrato firmado
   if (status === "default" && !currentContract.signed_contract_url) {
     const hrs = (new Date().getTime() - new Date(currentContract.created_at).getTime()) / (1000 * 60 * 60);
@@ -772,31 +780,83 @@ r.post("/contracts/:id/cancel-pending", async (req: Request, res: Response) => {
 // que solo lista contratos 'active'). El conductor pasa a 'inactive', se cierra su
 // asignación y el vehículo vuelve a quedar disponible ('active').
 // ============================================================================
+
+// Lee el contrato con lo necesario para cancelarlo. `cancelled_at` viene de la migración
+// 20261020_leasing_cancelled_at.sql; si aún no se aplicó, se lee sin esa columna.
+async function readContractForCancel(contractId: number) {
+  const full = await supabase
+    .from("leasing_contracts")
+    .select("status, plate, driver_id, cancelled_at")
+    .eq("id", contractId)
+    .single();
+  if (full.error && /cancelled_at/.test(full.error.message)) {
+    const basic = await supabase
+      .from("leasing_contracts")
+      .select("status, plate, driver_id")
+      .eq("id", contractId)
+      .single();
+    return { data: basic.data ? { ...basic.data, cancelled_at: null as string | null } : null, error: basic.error };
+  }
+  return { data: full.data, error: full.error };
+}
+
+// Responde 409 según el estado REAL del contrato (no siempre "ya fue cancelado").
+function respondCancelConflict(
+  res: Response,
+  contract: { status: string; cancelled_at?: string | null } | null
+) {
+  if (!contract) {
+    return res.status(409).json({
+      code: "STATE_CHANGED",
+      error: "El contrato fue modificado desde otra sesión. Actualizamos la lista para mostrar el estado actual.",
+    });
+  }
+  if (contract.status === "cancelled") {
+    return res.status(409).json({
+      code: "ALREADY_CANCELLED",
+      cancelled_at: contract.cancelled_at ?? null,
+      error: "Este leasing ya fue cancelado (probablemente desde otra sesión). Actualizamos la lista para mostrar el estado actual.",
+    });
+  }
+  return res.status(409).json({
+    code: "NOT_ACTIVE",
+    status: contract.status,
+    error: `El contrato está en estado '${contract.status}' y ya no se puede cancelar como leasing en curso. Actualizamos la lista para mostrar el estado actual.`,
+  });
+}
+
 r.post("/contracts/:id/cancel-active", async (req: Request, res: Response) => {
   const { id } = req.params;
   const now = new Date().toISOString();
 
-  const { data: contract, error: cErr } = await supabase
-    .from("leasing_contracts")
-    .select("status, plate, driver_id")
-    .eq("id", Number(id))
-    .single();
+  const { data: contract, error: cErr } = await readContractForCancel(Number(id));
 
   if (cErr || !contract) return res.status(404).json({ error: "Contrato no encontrado" });
-  if (contract.status !== "active") {
-    return res.status(400).json({ error: "Solo se pueden cancelar contratos en estado 'active'" });
-  }
+  if (contract.status !== "active") return respondCancelConflict(res, contract);
 
   // 1. Archivar el contrato (la condición de estado evita doble cancelación)
-  const { data: updated, error: updErr } = await supabase
+  let upd = await supabase
     .from("leasing_contracts")
-    .update({ status: "cancelled" })
+    .update({ status: "cancelled", cancelled_at: now })
     .eq("id", Number(id))
     .eq("status", "active")
     .select("id");
+  if (upd.error && /cancelled_at/.test(upd.error.message)) {
+    // Migración 20261020_leasing_cancelled_at.sql aún sin aplicar: cancelar sin la fecha
+    upd = await supabase
+      .from("leasing_contracts")
+      .update({ status: "cancelled" })
+      .eq("id", Number(id))
+      .eq("status", "active")
+      .select("id");
+  }
 
-  if (updErr) return res.status(500).json({ error: updErr.message });
-  if (!updated?.length) return res.status(409).json({ error: "El contrato ya fue modificado" });
+  if (upd.error) return res.status(500).json({ error: upd.error.message });
+  if (!upd.data?.length) {
+    // Otra sesión lo cambió entre la lectura y la actualización (carrera simultánea)
+    const { data: latest } = await readContractForCancel(Number(id));
+    return respondCancelConflict(res, latest);
+  }
 
   // 2. Conductor -> inactivo y cierre de su asignación al vehículo
   if (contract.driver_id) {

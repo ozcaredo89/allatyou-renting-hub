@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
+import { requestCancelActiveLeasing } from "../lib/leasingCancel";
 import {
   Calculator, Save, X, Calendar as CalendarIcon, Loader2, Info,
   ChevronDown, ChevronUp, Download, Rocket, Trash2, ClipboardList,
@@ -259,6 +260,7 @@ export default function AdminAmortization() {
   // Cancelación de leasing en curso (confirmación visual, sin montos)
   const [cancelActiveTarget, setCancelActiveTarget] = useState<{ contractId: number; plate: string } | null>(null);
   const [cancellingActive, setCancellingActive] = useState(false);
+  const [cancelActiveError, setCancelActiveError] = useState<{ message: string; final: boolean } | null>(null);
 
   const filteredPending = useMemo(() => {
     if (!pendingFilterPlate.trim()) return pendingContracts;
@@ -782,25 +784,40 @@ export default function AdminAmortization() {
   };
 
   // ── CANCEL ACTIVE LEASING (archiva contrato, conductor inactivo, vehículo disponible) ──
+  const closeCancelActive = () => {
+    setCancelActiveTarget(null);
+    setCancelActiveError(null);
+  };
+
+  const refreshAfterCancelActive = async () => {
+    await loadActiveContracts();
+    const vRs = await fetch(`${API}/vehicles?status=all`, { headers: { Authorization: authHeader } });
+    if (vRs.ok) {
+      const vData = await vRs.json();
+      setVehicles(Array.isArray(vData) ? vData : []);
+    }
+  };
+
   const confirmCancelActive = async () => {
     if (!cancelActiveTarget) return;
     setCancellingActive(true);
+    setCancelActiveError(null);
     try {
-      const rs = await fetch(`${API}/leasing/contracts/${cancelActiveTarget.contractId}/cancel-active`, {
-        method: "POST",
-        headers: { Authorization: authHeader },
-      });
-      const data = await rs.json().catch(() => ({}));
-      if (!rs.ok) throw new Error(data.error || "Error al cancelar el leasing");
-      setCancelActiveTarget(null);
-      await loadActiveContracts();
-      const vRs = await fetch(`${API}/vehicles?status=all`, { headers: { Authorization: authHeader } });
-      if (vRs.ok) {
-        const vData = await vRs.json();
-        setVehicles(Array.isArray(vData) ? vData : []);
+      const outcome = await requestCancelActiveLeasing(
+        `${API}/leasing/contracts/${cancelActiveTarget.contractId}/cancel-active`,
+        authHeader
+      );
+      if (outcome.ok) closeCancelActive();
+      else setCancelActiveError({ message: outcome.message, final: outcome.final });
+
+      // El refresco va aparte: si falla, no debe pisar el resultado de la cancelación.
+      if (outcome.ok || outcome.final) {
+        try {
+          await refreshAfterCancelActive();
+        } catch {
+          if (outcome.ok) alert("El leasing fue cancelado, pero no se pudo actualizar la lista. Recarga la página.");
+        }
       }
-    } catch (err: any) {
-      alert(err.message || "Error al cancelar el leasing");
     } finally {
       setCancellingActive(false);
     }
@@ -1650,23 +1667,30 @@ export default function AdminAmortization() {
                 <li>El conductor cambiará a estado <b>inactivo</b>.</li>
                 <li>El vehículo quedará <b>disponible</b> nuevamente.</li>
               </ul>
+              {cancelActiveError && (
+                <div role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  {cancelActiveError.message}
+                </div>
+              )}
               <div className="mt-6 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setCancelActiveTarget(null)}
+                  onClick={closeCancelActive}
                   disabled={cancellingActive}
                   className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100"
                 >
-                  Volver
+                  {cancelActiveError?.final ? "Cerrar" : "Volver"}
                 </button>
-                <button
-                  type="button"
-                  onClick={confirmCancelActive}
-                  disabled={cancellingActive}
-                  className="px-4 py-2 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
-                >
-                  {cancellingActive ? "Cancelando..." : "Confirmar cancelación"}
-                </button>
+                {!cancelActiveError?.final && (
+                  <button
+                    type="button"
+                    onClick={confirmCancelActive}
+                    disabled={cancellingActive}
+                    className="px-4 py-2 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {cancellingActive ? "Cancelando..." : "Confirmar cancelación"}
+                  </button>
+                )}
               </div>
             </div>
           </div>
