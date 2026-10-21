@@ -2,11 +2,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import PlateField from "../components/PlateField";
+import { DEFAULT_ADVANCE_RATE, roundUpTo100, dailyFromRate, rateFromDaily, checkAdvanceRate, confirmZeroRate } from "../lib/advanceRate";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
 const parseCOP = (s: string) => Number((s || "").replace(/[^\d]/g, "")) || 0;
-const roundUpTo100 = (n: number) => Math.ceil((n || 0) / 100) * 100;
 
 type Advance = {
   id: number;
@@ -72,7 +72,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
     driver_id: "",
     plate: initialPlate,
     amountStr: fmtCOP.format(300000),
-    rate_percent: "15",
+    rate_percent: String(DEFAULT_ADVANCE_RATE),
     installments: "21",
     start_date: today,
     daily_installmentStr: "", // <- formateado (como amountStr)
@@ -85,42 +85,24 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
   // Indica cuál campo fue editado por el usuario para sincronizar el otro
   const [lastEdited, setLastEdited] = useState<"rate" | "daily" | null>(null);
 
-  function computeDailyFromRate(amount: number, ratePercent: number, installments: number) {
-    const a = Math.max(0, amount || 0);
-    const n = Math.max(1, installments || 1);
-    const r = Math.max(0, ratePercent || 0);
-    const totalToPay = a * (1 + r / 100);
-    const raw = Math.round(totalToPay / n) || 0;
-    return roundUpTo100(raw);
-  }
-
-  function computeRateFromDaily(amount: number, daily: number, installments: number) {
-    const a = Math.max(1, amount || 0); // evita división por 0
-    const n = Math.max(1, installments || 1);
-    const d = Math.max(0, daily || 0);
-
-    const totalToPay = d * n;
-    const rate = ((totalToPay / a) - 1) * 100;
-
-    return Math.max(0, rate);
-  }
-
   // ===== Derivados numéricos base =====
   const amountN = useMemo(() => parseCOP(f.amountStr), [f.amountStr]);
   const installmentsN = useMemo(() => Math.max(1, Number(f.installments) || 1), [f.installments]);
   const rateN = useMemo(() => Math.max(0, Number(f.rate_percent) || 0), [f.rate_percent]);
 
   // ===== Cuota sugerida (depende de amount/rate/installments) =====
-  const dailyQuotaSuggested = useMemo(() => {
-    const totalToPay = amountN * (1 + rateN / 100);
-    const raw = Math.round(totalToPay / installmentsN) || 0;
-    return roundUpTo100(raw);
-  }, [amountN, rateN, installmentsN]);
+  const dailyQuotaSuggested = useMemo(
+    () => dailyFromRate(amountN, rateN, installmentsN),
+    [amountN, rateN, installmentsN]
+  );
 
   // ===== Cuota diaria efectiva (manual si el usuario escribió; si no, sugerida) =====
   const dailyN = useMemo(() => {
     return roundUpTo100(f.daily_installmentStr ? parseCOP(f.daily_installmentStr) : dailyQuotaSuggested);
   }, [f.daily_installmentStr, dailyQuotaSuggested]);
+
+  // Desglose y validación de tasa (negativa bloquea, 0% pide confirmación)
+  const rateCheck = useMemo(() => checkAdvanceRate(amountN, dailyN, installmentsN), [amountN, dailyN, installmentsN]);
 
   // ===== Sincronización bidireccional (% <-> cuota) =====
   useEffect(() => {
@@ -129,7 +111,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
 
     // Si el usuario tocó el %, recalcular cuota diaria
     if (lastEdited === "rate") {
-      const newDaily = computeDailyFromRate(amountN, rateN, installmentsN);
+      const newDaily = dailyFromRate(amountN, rateN, installmentsN);
       const currentDaily = dailyN;
 
       if (newDaily !== currentDaily) {
@@ -140,7 +122,7 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
 
     // Si el usuario tocó cuota diaria, recalcular %
     if (lastEdited === "daily") {
-      const newRate = computeRateFromDaily(amountN, dailyN, installmentsN);
+      const newRate = rateFromDaily(amountN, dailyN, installmentsN);
 
       // redondeo a 1 decimal
       const newRateStr = (Math.round(newRate * 10) / 10).toFixed(1);
@@ -158,9 +140,14 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
     setErr(null);
     setOk(null);
+    if (rateCheck.error) {
+      setErr(rateCheck.error);
+      return;
+    }
+    if (rateCheck.zero && !confirmZeroRate(amountN, dailyN, installmentsN)) return;
+    setLoading(true);
     try {
       const auth = ensureBasicAuth();
       const payload: any = {
@@ -340,9 +327,26 @@ function CreateAdvanceForm({ onCreated }: { onCreated: (a: Advance) => void }) {
             required
           />
           <div className="mt-1 text-xs text-gray-500">
-            Sugerida: ${fmtCOP.format(dailyQuotaSuggested)} (puedes editarla).
+            Sugerida: ${fmtCOP.format(dailyQuotaSuggested)} (puedes editarla; la tasa se ajusta).
           </div>
         </div>
+
+        {amountN > 0 && (
+          <div
+            className={`md:col-span-3 rounded-xl border px-3 py-2 text-sm ${
+              rateCheck.error
+                ? "border-red-300 bg-red-50 text-red-700"
+                : rateCheck.zero
+                ? "border-amber-300 bg-amber-50 text-amber-800"
+                : "border-gray-200 bg-gray-50 text-gray-700"
+            }`}
+          >
+            {installmentsN} cuotas de <strong>${fmtCOP.format(dailyN)}</strong> = ${fmtCOP.format(rateCheck.total)} · interés $
+            {fmtCOP.format(Math.max(0, rateCheck.interest))} (<strong>{rateCheck.rate.toFixed(1)}%</strong>)
+            {rateCheck.error && <div className="mt-1 font-medium">{rateCheck.error}</div>}
+            {rateCheck.zero && <div className="mt-1 font-medium">⚠️ Sin interés: se pedirá confirmación antes de crear.</div>}
+          </div>
+        )}
 
         <div className="md:col-span-3">
           <label className="mb-1 block text-sm font-medium">Notas</label>

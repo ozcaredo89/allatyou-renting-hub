@@ -2,6 +2,7 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { getAmortizationDates } from "../lib/noPay";
+import { advanceRateError } from "../lib/advanceRate";
 
 const r = Router();
 
@@ -55,6 +56,8 @@ r.post("/", async (req: Request, res: Response) => {
     if (!(Number(installments) >= 1)) return res.status(400).json({ error: "installments >= 1 required" });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(start_date))) return res.status(400).json({ error: "start_date must be YYYY-MM-DD" });
     if (!(daily_installment > 0)) return res.status(400).json({ error: "daily_installment > 0 required" });
+    const rateErr = advanceRateError(Math.round(Number(amount)), Math.round(daily_installment), Number(installments), Number(rate_percent));
+    if (rateErr) return res.status(400).json({ error: rateErr });
 
     // Validar existencia de placa/driver
     if (!(await plateExists(plate))) return res.status(400).json({ error: "plate not found or invalid" });

@@ -48,7 +48,7 @@ El usuario elige cómo se cubre:
 | Método | Efecto |
 |---|---|
 | `cash` | El conductor paga la diferencia de contado. Solo queda registrado en la nota. |
-| `advance` | Se crea un **anticipo operativo** a 0% por el excedente, con N cuotas diarias (por defecto 10) que suman exactamente el excedente (ver `anticipos.md`). |
+| `advance` | Se crea un **anticipo operativo** por el excedente, con N cuotas diarias (por defecto 10) y tasa por defecto 15%, con las mismas reglas de tasa/cuota de `anticipos.md` §2.1 (decisión 2026-10-21; antes era 0% fijo). |
 | `none` | No hubo excedente. |
 
 ### Garantías de consistencia

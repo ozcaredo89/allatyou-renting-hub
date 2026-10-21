@@ -1,6 +1,6 @@
 # Spec — Anticipos operativos (préstamos a conductores)
 
-**Estado:** Vigente · **Última revisión:** 2026-10-16
+**Estado:** Vigente · **Última revisión:** 2026-10-21
 **Código principal:** `src/routes/advances.ts`, helpers en `src/routes/payments.ts` (`ensureScheduleRow`, `applyScheduleStatus`, `maybeCloseAdvance`)
 **Tablas:** `operational_advances`, `operational_advance_schedule`
 
@@ -16,6 +16,18 @@ Un **anticipo operativo** es dinero que la empresa presta a un conductor (o cola
 - Estados: `active` → `closed` (todas las cuotas pagadas) o `cancelled`.
 
 ## 2. Cronograma
+
+### 2.1 Tasa y cuota (decisión 2026-10-21)
+
+- Interés simple sobre el monto: total a pagar = `amount × (1 + rate_percent/100)`, repartido en N cuotas iguales. Cuota sugerida = total / N redondeado hacia arriba a 100.
+- Tasa por defecto **15%** en todos los orígenes (incluido el excedente de Nota Débito).
+- La cuota se puede ajustar a mano (redondear por comodidad); la tasa se recalcula a partir de ella: `rate = (cuota × N / amount − 1) × 100`.
+- **Tasa negativa prohibida:** si cuota × N < monto, no se crea (front bloquea; API responde 400 — `src/lib/advanceRate.ts`).
+- **Tasa 0% permitida con advertencia:** antes de crear se muestra cuánto queda cada cuota (y cuánto sería con 15%) y se pide confirmación para dar chance de corregir (`web/src/lib/advanceRate.ts`).
+- El formulario muestra siempre el desglose: N cuotas de $X = total · interés $Y (Z%).
+- Hoy el cronograma guarda cada cuota completa en `principal_amount` con `interest_amount = 0` (no se separa el interés por cuota; pendiente de definir).
+
+### 2.2 Generación
 
 - Se genera al crear el anticipo: una cuota por día calendario desde `start_date` (`installment_no` 1..N).
 - Si falla el cronograma, se borra el anticipo (no quedan anticipos sin cuotas).
@@ -42,7 +54,7 @@ Un **anticipo operativo** es dinero que la empresa presta a un conductor (o cola
 
 | Origen | Características |
 |---|---|
-| Excedente de una Nota Débito de mantenimiento (`gastos-fondo-mantenimiento.md`) | Tasa 0%, N cuotas (default 10) que suman exactamente el excedente, nota "Excedente de mantenimiento por gasto(s): …" |
+| Excedente de una Nota Débito de mantenimiento (`gastos-fondo-mantenimiento.md`) | Monto = excedente, tasa por defecto 15% con las reglas de §2.1, N cuotas iguales (default 10), nota "Excedente de mantenimiento por gasto(s): …". Si el cliente no envía cuota (versión vieja), se crea a 0% con cuotas que suman exactamente el excedente. |
 | Pago de mora con anticipo (`pagos.md` §6) | Usa un anticipo existente para cubrir días de renta atrasados (crea pagos con `receipt_status = 'advance_offset'`). **Aclaración clave:** estos pagos saldan la deuda de renta del vehículo, pero **no** son abonos del conductor al anticipo. La amortización del conductor ocurre cuando este paga sus cuotas diarias de recuperación (ej. $30.000) junto con su canon. |
 
 **No hay saldo de anticipo.** El anticipo es dinero que se entrega al conductor; parte puede destinarse a pagar entregas atrasadas y el excedente queda en manos del conductor. No se registra cuánto se usó ni cuánto sobró (decisión 2026-10-12). Lo único que se controla es que lo pagado con el anticipo no supere su monto.
@@ -54,5 +66,5 @@ Un **anticipo operativo** es dinero que la empresa presta a un conductor (o cola
 
 ## 6. Preguntas abiertas
 
-- ¿Cómo se calcula `daily_installment` cuando hay tasa (15%)? Hoy viene del frontend; documentar la fórmula oficial.
+- ¿Cómo se reparte cada cuota entre interés y capital en `operational_advance_schedule`? Hoy `interest_amount = 0`.
 - ¿Las cuotas de anticipo deben respetar días no pagables (Pico y Placa) como las de leasing? Hoy son días calendario.

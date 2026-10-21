@@ -5,6 +5,7 @@ import { ImageViewer } from "../components/ImageViewer";
 import { requestWithBasicAuth } from "../lib/auth";
 import { resolveSubmission, normalizePlate, parseServerError, type FleetVehicle } from "../lib/resolveSubmission";
 import { generateDebitNotePDF } from "../utils/debitNotePdf";
+import { DEFAULT_ADVANCE_RATE, roundUpTo100, dailyFromRate, rateFromDaily, checkAdvanceRate, confirmZeroRate } from "../lib/advanceRate";
 
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
@@ -308,6 +309,18 @@ export default function Expenses() {
   const [excessMethod, setExcessMethod] = useState<"cash" | "advance">("cash");
   const [advanceInstallments, setAdvanceInstallments] = useState(10);
   const [advanceStartDate, setAdvanceStartDate] = useState(getTodayBogota());
+  const [advanceRateStr, setAdvanceRateStr] = useState(String(DEFAULT_ADVANCE_RATE));
+  const [advanceDailyStr, setAdvanceDailyStr] = useState(""); // vacío = cuota sugerida por la tasa
+
+  // Cuota y tasa del anticipo por excedente: si se escribió la cuota, la tasa se deriva de ella
+  const advanceTerms = (excessAmount: number) => {
+    const manualDaily = Number(advanceDailyStr.replace(/[^\d]/g, "")) || 0;
+    const daily = manualDaily
+      ? roundUpTo100(manualDaily)
+      : dailyFromRate(excessAmount, Number(advanceRateStr) || 0, advanceInstallments);
+    const rate = manualDaily ? rateFromDaily(excessAmount, daily, advanceInstallments) : Number(advanceRateStr) || 0;
+    return { daily, rate, check: checkAdvanceRate(excessAmount, daily, advanceInstallments) };
+  };
   const [createdDebitNote, setCreatedDebitNote] = useState<any>(null);
   const [debitNoteError, setDebitNoteError] = useState<string | null>(null);
 
@@ -418,6 +431,19 @@ export default function Expenses() {
       showToast(`✓ ${finalCart[0].item} — $${fmtCOP.format(finalCart[0].amount)} incluido`);
     }
 
+    // Anticipo por excedente de Nota Débito: tasa negativa bloquea, 0% pide confirmación
+    const willApplyLeasing = Boolean(applyToLeasing && leasingSummary?.has_leasing && finalPlates.length === 1);
+    const fundAvail = Number(leasingSummary?.maintenance_fund_available ?? leasingSummary?.maintenance_fund_accumulated ?? 0);
+    const excessAtSubmit = Math.max(0, finalCart.reduce((sum, c) => sum + c.amount, 0) - fundAvail);
+    const advTerms = advanceTerms(excessAtSubmit);
+    if (willApplyLeasing && excessAtSubmit > 0 && excessMethod === "advance") {
+      if (advTerms.check.error) {
+        setSubmitError(advTerms.check.error);
+        return;
+      }
+      if (advTerms.check.zero && !confirmZeroRate(excessAtSubmit, advTerms.daily, advanceInstallments)) return;
+    }
+
     setLoading(true);
     try {
       const evUrls = await uploadMany(evidenceFiles);
@@ -429,7 +455,7 @@ export default function Expenses() {
 
       const finalTotal = finalCart.reduce((sum, c) => sum + c.amount, 0);
       // description: cadena vacía en lugar de null para respetar el NOT NULL constraint de la DB
-      const shouldApplyLeasing = Boolean(applyToLeasing && leasingSummary?.has_leasing && finalPlates.length === 1);
+      const shouldApplyLeasing = willApplyLeasing;
       const body = {
         date,
         description: description || "",
@@ -440,6 +466,8 @@ export default function Expenses() {
         leasing_excess_method: excessMethod,
         leasing_advance_installments: advanceInstallments,
         leasing_advance_start_date: advanceStartDate,
+        leasing_advance_rate_percent: Math.max(0, Math.round(advTerms.rate * 100) / 100),
+        leasing_advance_daily_installment: advTerms.daily,
       };
       const rs = await requestWithBasicAuth(`${API}/expenses`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -466,6 +494,7 @@ export default function Expenses() {
       // Reset form
       setCart([]); setItem(""); setCategory("Mantenimiento"); setDescription(""); setAmountStr(""); setPlates([]); setPlateInput(""); setEvidenceFiles([]); setInvoiceFiles([]);
       setApplyToLeasing(false); setLeasingSummary(null); setExcessMethod("cash");
+      setAdvanceRateStr(String(DEFAULT_ADVANCE_RATE)); setAdvanceDailyStr("");
       setSubmitError(null); setFieldErrors({});
 
     } catch (err) {
@@ -1114,7 +1143,7 @@ export default function Expenses() {
 
                             {/* Configuración del Anticipo si se selecciona opción 2 */}
                             {excessMethod === "advance" && (
-                              <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-3 bg-blue-50/60 p-3 rounded-xl border border-blue-200">
+                              <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-4 gap-3 bg-blue-50/60 p-3 rounded-xl border border-blue-200">
                                 <div>
                                   <label className="block text-[11px] font-bold text-slate-700 mb-1"># Cuotas Diarias</label>
                                   <input
@@ -1137,12 +1166,52 @@ export default function Expenses() {
                                   />
                                 </div>
 
-                                <div>
-                                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Cuota Diaria Estimada</label>
-                                  <div className="bg-white border border-blue-200 rounded-lg px-2.5 py-1.5 text-xs font-black text-blue-700">
-                                    ${fmtCOP.format(Math.round(excess / advanceInstallments))}/día
-                                  </div>
-                                </div>
+                                {(() => {
+                                  const adv = advanceTerms(excess);
+                                  return (
+                                    <>
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-700 mb-1">Tasa (%)</label>
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="0.1"
+                                          value={advanceDailyStr ? (Math.round(adv.rate * 10) / 10).toString() : advanceRateStr}
+                                          onChange={e => { setAdvanceRateStr(e.target.value); setAdvanceDailyStr(""); }}
+                                          className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-700 mb-1">Cuota Diaria (editable)</label>
+                                        <input
+                                          inputMode="numeric"
+                                          value={advanceDailyStr || fmtCOP.format(adv.daily)}
+                                          onChange={e => {
+                                            const n = Number(e.target.value.replace(/[^\d]/g, "")) || 0;
+                                            setAdvanceDailyStr(n ? fmtCOP.format(n) : "");
+                                          }}
+                                          className="w-full bg-white border border-blue-200 rounded-lg px-2.5 py-1.5 text-xs font-black text-blue-700"
+                                        />
+                                      </div>
+
+                                      <div
+                                        className={`sm:col-span-4 rounded-lg border px-2.5 py-1.5 text-[11px] ${
+                                          adv.check.error
+                                            ? "border-red-300 bg-red-50 text-red-700"
+                                            : adv.check.zero
+                                            ? "border-amber-300 bg-amber-50 text-amber-800"
+                                            : "border-blue-200 bg-white text-slate-700"
+                                        }`}
+                                      >
+                                        {advanceInstallments} cuotas de <strong>${fmtCOP.format(adv.daily)}</strong> = ${fmtCOP.format(adv.check.total)} · interés $
+                                        {fmtCOP.format(Math.max(0, adv.check.interest))} (<strong>{adv.check.rate.toFixed(1)}%</strong>)
+                                        {adv.check.error && <div className="mt-0.5 font-bold">{adv.check.error}</div>}
+                                        {adv.check.zero && <div className="mt-0.5 font-bold">⚠️ Sin interés: se pedirá confirmación antes de crear.</div>}
+                                      </div>
+                                    </>
+                                  );
+                                })()}
                               </div>
                             )}
                           </div>

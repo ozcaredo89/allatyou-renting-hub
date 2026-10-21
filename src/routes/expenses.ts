@@ -1,6 +1,7 @@
 // src/routes/expenses.ts
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
+import { advanceRateError } from "../lib/advanceRate";
 
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
 const r = Router();
@@ -200,6 +201,9 @@ r.post("/", async (req: Request, res: Response) => {
     const leasingExcessMethod = req.body?.leasing_excess_method as "cash" | "advance" | "none" | undefined;
     const leasingAdvanceInstallments = Math.max(1, Number(req.body?.leasing_advance_installments) || 10);
     const leasingAdvanceStartDate = String(req.body?.leasing_advance_start_date || date);
+    // Tasa y cuota del anticipo por excedente (si no vienen: clientes viejos, 0% repartido exacto)
+    const leasingAdvanceRate = Number(req.body?.leasing_advance_rate_percent ?? 0);
+    const leasingAdvanceDaily = Math.round(Number(req.body?.leasing_advance_daily_installment) || 0);
 
     let leasingSummary: any = null;
     let targetPlate: string | null = null;
@@ -224,6 +228,11 @@ r.post("/", async (req: Request, res: Response) => {
 
           // Si hay excedente y se eligió abrir anticipo operativo, validar ANTES de escribir en la DB
           if (excess > 0 && leasingExcessMethod === "advance") {
+            if (leasingAdvanceDaily > 0) {
+              const rateErr = advanceRateError(Math.round(excess), leasingAdvanceDaily, leasingAdvanceInstallments, leasingAdvanceRate);
+              if (rateErr) return res.status(400).json({ error: rateErr });
+            }
+
             const { data: existingAdv } = await supabase
               .from("operational_advances")
               .select("id")
@@ -311,8 +320,10 @@ r.post("/", async (req: Request, res: Response) => {
             if (drv?.full_name) driverName = drv.full_name;
           }
 
-          // Prorrateo exacto en centavos/pesos para que la suma de cuotas coincida al 100%
-          const exactInstallments = splitEven(Math.round(excess), leasingAdvanceInstallments);
+          // Con cuota explícita: N cuotas iguales (incluyen interés). Sin ella: prorrateo exacto del excedente al 0%
+          const exactInstallments = leasingAdvanceDaily > 0
+            ? Array.from({ length: leasingAdvanceInstallments }, () => leasingAdvanceDaily)
+            : splitEven(Math.round(excess), leasingAdvanceInstallments);
           const dailyInst = exactInstallments[0] || Math.round(excess / leasingAdvanceInstallments);
 
           const { data: advIns, error: advErr } = await supabase
@@ -323,7 +334,7 @@ r.post("/", async (req: Request, res: Response) => {
               driver_id: leasingSummary.driver_id ?? null,
               plate: targetPlate,
               amount: Math.round(excess),
-              rate_percent: 0,
+              rate_percent: leasingAdvanceDaily > 0 ? leasingAdvanceRate : 0,
               installments: leasingAdvanceInstallments,
               start_date: leasingAdvanceStartDate,
               status: "active",
