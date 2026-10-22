@@ -1,19 +1,39 @@
-import { useEffect, useState } from "react";
-import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import CompanyLock from "../components/CompanyLock"; // <--- 1. IMPORTAR
-import { ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { requestWithBasicAuth, clearBasicAuth } from "../lib/auth";
+import CompanyLock from "../components/CompanyLock";
+import { ArrowUp, ArrowDown, ChevronsUpDown, TrendingUp } from "lucide-react";
 import { useSortableData } from "../hooks/useSortableData";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  Legend,
+  ResponsiveContainer,
+  ReferenceLine,
+} from "recharts";
+
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
 
+/** Fecha actual en Colombia (UTC-5) en formato YYYY-MM-DD */
+function todayCol(): string {
+  return new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+type VehicleStatus = "active" | "maintenance" | "sold" | "inactive" | "leasing" | "reserved";
+
 type ProfitRow = {
   plate: string;
-  status?: 'active' | 'maintenance' | 'sold' | 'inactive';
+  status?: VehicleStatus;
   month: string;
   pure_income: number;
   deposits_total: number;
   advances_total: number;
   maintenance_provision: number;
+  maintenance_fund_available?: number | null;
   expense: number;
   adjustments: number;
   profit: number;
@@ -32,6 +52,7 @@ type ProfitResp = {
     deposits_total: number;
     advances_total: number;
     maintenance_provision: number;
+    maintenance_fund_available: number;
     expense: number;
     adjustments: number;
     profit: number;
@@ -46,6 +67,7 @@ type PaymentDetail = {
   plate: string;
   payment_date: string;
   amount: number;
+  delivery_amount?: number;
   installment_number: number | null;
   proof_url: string | null;
   status: "pending" | "confirmed" | "rejected";
@@ -93,35 +115,135 @@ type DailyResp = {
   };
 };
 
+type ProfitabilityPeriod = "day" | "week" | "month";
+
+type ProfitabilitySeriesPoint = {
+  date: string;
+  pure_income: number;
+  expense: number;
+  adjustments: number;
+  net_profit: number;
+  active_pure_income: number;
+  active_expense: number;
+  active_adjustments: number;
+  active_net_profit: number;
+};
+
+type ProfitabilityRow = {
+  plate: string;
+  status?: VehicleStatus;
+  maintenance_fund_available: number | null;
+  pure_income: number;
+  expense: number;
+  adjustments: number;
+  net_profit: number;
+};
+
+type ProfitabilityResp = {
+  period: ProfitabilityPeriod;
+  start_date: string;
+  end_date: string;
+  chart_start_date: string;
+  chart_end_date: string;
+  series: ProfitabilitySeriesPoint[];
+  items: ProfitabilityRow[];
+  totals: {
+    pure_income: number;
+    expense: number;
+    adjustments: number;
+    net_profit: number;
+    maintenance_fund_available: number;
+  };
+};
+
 function fmtDayLabel(iso: string): string {
   const d = new Date(iso + "T12:00:00");
   const days = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
   return `${days[d.getDay()]} ${d.getDate()}`;
 }
 
+function fmtShortDate(iso: string): string {
+  const d = new Date(iso + "T12:00:00");
+  const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  return `${d.getDate()} ${months[d.getMonth()]}`;
+}
+
+function fmtCompactCOP(val: number): string {
+  const abs = Math.abs(val);
+  const sign = val < 0 ? "-" : "";
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(0)}k`;
+  return `${sign}$${abs}`;
+}
+
 const StatusBadge = ({ status }: { status?: string }) => {
-  if (status === 'maintenance') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200">Mantenimiento</span>;
-  if (status === 'sold') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700 border border-slate-300">Vendido</span>;
-  if (status === 'inactive') return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">Inactivo</span>;
-  return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Activo</span>;
+  if (status === "leasing") {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
+        🚗 En Leasing
+      </span>
+    );
+  }
+  if (status === "reserved") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">
+        Reservado
+      </span>
+    );
+  }
+  if (status === "maintenance") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200">
+        Mantenimiento
+      </span>
+    );
+  }
+  if (status === "sold") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700 border border-slate-300">
+        Vendido
+      </span>
+    );
+  }
+  if (status === "inactive") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">
+        Inactivo
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">
+      Activo
+    </span>
+  );
 };
 
 export default function AdminProfit() {
-  const todayYm = new Date().toISOString().slice(0, 7);
+  const todayIso = todayCol();
+  const todayYm = todayIso.slice(0, 7);
+
   const [month, setMonth] = useState(todayYm);
   const [plate, setPlate] = useState("");
   const [data, setData] = useState<ProfitResp | null>(null);
   const [loading, setLoading] = useState(false);
   const [showInactive, setShowInactive] = useState(true);
 
-  // View mode & daily data
-  const [viewMode, setViewMode] = useState<"monthly" | "daily">("monthly");
+  // View mode: monthly | daily | profitability
+  const [viewMode, setViewMode] = useState<"monthly" | "daily" | "profitability">("monthly");
   const [dailyData, setDailyData] = useState<DailyResp | null>(null);
   const [dailyLoading, setDailyLoading] = useState(false);
+
+  // Profitability state
+  const [profPeriod, setProfPeriod] = useState<ProfitabilityPeriod>("month");
+  const [profDate, setProfDate] = useState<string>(todayIso);
+  const [profData, setProfData] = useState<ProfitabilityResp | null>(null);
+  const [profLoading, setProfLoading] = useState(false);
 
   // Income/expense detail modal
   const [detailType, setDetailType] = useState<"income" | "expense" | null>(null);
   const [detailPlate, setDetailPlate] = useState<string>("");
+  const [detailLabel, setDetailLabel] = useState<string>("");
   const [detailItems, setDetailItems] = useState<(PaymentDetail | ExpenseDetail)[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -133,7 +255,7 @@ export default function AdminProfit() {
 
   // Ledger form (create/edit)
   const emptyLedger: Partial<LedgerRow> = {
-    date: new Date().toISOString().slice(0, 10),
+    date: todayIso,
     type: "extra_expense",
     amount: 0,
     description: "",
@@ -142,15 +264,31 @@ export default function AdminProfit() {
   const [editRow, setEditRow] = useState<Partial<LedgerRow>>(emptyLedger);
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  async function load() {
+  // Controladores y contadores para evitar respuestas desordenadas al cambiar filtros rápido
+  const loadReqRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
+  const dailyReqRef = useRef(0);
+  const dailyAbortRef = useRef<AbortController | null>(null);
+  const profReqRef = useRef(0);
+  const profAbortRef = useRef<AbortController | null>(null);
+  const detailReqRef = useRef(0);
+  const detailAbortRef = useRef<AbortController | null>(null);
+
+  async function load(overrideMonth?: string, overridePlate?: string) {
+    const activeMonth = overrideMonth ?? month;
+    const activePlate = (overridePlate ?? plate).trim().toUpperCase();
+    const reqId = ++loadReqRef.current;
+    loadAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    loadAbortRef.current = ctrl;
+
     setLoading(true);
     try {
-      const auth = ensureBasicAuth();
-      const params = new URLSearchParams({ month });
-      if (plate) params.set("plate", plate.trim().toUpperCase());
+      const params = new URLSearchParams({ month: activeMonth });
+      if (activePlate) params.set("plate", activePlate);
 
-      const rs = await fetch(`${API}/reports/profit?` + params.toString(), {
-        headers: { Authorization: auth },
+      const rs = await requestWithBasicAuth(`${API}/reports/profit?` + params.toString(), {
+        signal: ctrl.signal,
       });
 
       if (rs.status === 401 || rs.status === 403) {
@@ -160,18 +298,30 @@ export default function AdminProfit() {
 
       if (!rs.ok) throw new Error(await rs.text());
       const json: ProfitResp = await rs.json();
-      setData(json);
+      if (reqId === loadReqRef.current) {
+        setData(json);
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      throw err;
     } finally {
-      setLoading(false);
+      if (reqId === loadReqRef.current) {
+        setLoading(false);
+      }
     }
   }
 
-  async function loadDaily() {
+  async function loadDaily(overrideMonth?: string) {
+    const activeMonth = overrideMonth ?? month;
+    const reqId = ++dailyReqRef.current;
+    dailyAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    dailyAbortRef.current = ctrl;
+
     setDailyLoading(true);
     try {
-      const auth = ensureBasicAuth();
-      const rs = await fetch(`${API}/reports/daily?month=${month}`, {
-        headers: { Authorization: auth },
+      const rs = await requestWithBasicAuth(`${API}/reports/daily?month=${activeMonth}`, {
+        signal: ctrl.signal,
       });
 
       if (rs.status === 401 || rs.status === 403) {
@@ -181,41 +331,155 @@ export default function AdminProfit() {
 
       if (!rs.ok) throw new Error(await rs.text());
       const json: DailyResp = await rs.json();
-      setDailyData(json);
+      if (reqId === dailyReqRef.current) {
+        setDailyData(json);
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      throw err;
     } finally {
-      setDailyLoading(false);
+      if (reqId === dailyReqRef.current) {
+        setDailyLoading(false);
+      }
     }
   }
 
-  function loadCurrent() {
-    if (viewMode === "monthly") load();
-    else loadDaily();
+  async function loadProfitability(
+    overridePeriod?: ProfitabilityPeriod,
+    overrideDate?: string,
+    overrideMonth?: string,
+    overridePlate?: string
+  ) {
+    const activePeriod = overridePeriod ?? profPeriod;
+    const activeDate = overrideDate ?? profDate;
+    const activeMonth = overrideMonth ?? month;
+    const activePlate = (overridePlate ?? plate).trim().toUpperCase();
+    const reqId = ++profReqRef.current;
+    profAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    profAbortRef.current = ctrl;
+
+    setProfLoading(true);
+    try {
+      const params = new URLSearchParams({
+        period: activePeriod,
+        date: activeDate,
+        month: activeMonth,
+      });
+      if (activePlate) params.set("plate", activePlate);
+
+      const rs = await requestWithBasicAuth(`${API}/reports/profitability?` + params.toString(), {
+        signal: ctrl.signal,
+      });
+
+      if (rs.status === 401 || rs.status === 403) {
+        clearBasicAuth();
+        throw new Error("Unauthorized");
+      }
+
+      if (!rs.ok) throw new Error(await rs.text());
+      const json: ProfitabilityResp = await rs.json();
+      if (reqId === profReqRef.current) {
+        setProfData(json);
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      throw err;
+    } finally {
+      if (reqId === profReqRef.current) {
+        setProfLoading(false);
+      }
+    }
   }
 
+  function loadCurrent(overrideMonth?: string, overridePlate?: string) {
+    if (viewMode === "monthly") load(overrideMonth, overridePlate);
+    else if (viewMode === "daily") loadDaily(overrideMonth);
+    else loadProfitability(profPeriod, profDate, overrideMonth, overridePlate);
+  }
+
+  // Solo cargamos la pestaña activa ("monthly") al montar la página;
+  // las demás pestañas se cargan bajo demanda al abrirlas.
   useEffect(() => {
     load();
-    loadDaily();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault();
+    // Invalidar cachés de las otras pestañas para que recarguen al cambiar de tab
+    if (viewMode !== "monthly") setData(null);
+    if (viewMode !== "daily") setDailyData(null);
+    if (viewMode !== "profitability") setProfData(null);
     loadCurrent();
   }
 
+  function handleMonthChange(nextMonth: string) {
+    setMonth(nextMonth);
+    if (!nextMonth || !/^\d{4}-\d{2}$/.test(nextMonth)) return;
+    if (viewMode !== "monthly") setData(null);
+    if (viewMode !== "daily") setDailyData(null);
+    if (viewMode !== "profitability") setProfData(null);
+    loadCurrent(nextMonth, plate);
+  }
+
+  function handlePlateChange(nextPlate: string) {
+    const clean = nextPlate.toUpperCase();
+    setPlate(clean);
+    if (viewMode !== "monthly") setData(null);
+    if (viewMode !== "profitability") setProfData(null);
+    // Si el usuario limpia el filtro o completa los 6 caracteres de una placa, recargar de inmediato
+    if (clean === "" || /^[A-Z]{3}\d{3}$/.test(clean)) {
+      loadCurrent(month, clean);
+    }
+  }
+
+  function handlePeriodChange(nextPeriod: ProfitabilityPeriod) {
+    setProfPeriod(nextPeriod);
+    loadProfitability(nextPeriod, profDate, month, plate);
+  }
+
+  function handleProfDateChange(nextDate: string) {
+    setProfDate(nextDate);
+    if (nextDate && /^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
+      loadProfitability(profPeriod, nextDate, month, plate);
+    }
+  }
+
   // ===== Income/Expense detail =====
-  async function openDetail(kind: "income" | "expense", p: string) {
+  async function openDetail(
+    kind: "income" | "expense",
+    p: string,
+    range?: { from: string; to: string }
+  ) {
+    const reqId = ++detailReqRef.current;
+    detailAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    detailAbortRef.current = ctrl;
+
     setDetailType(kind);
     setDetailPlate(p);
+    setDetailLabel(
+      range
+        ? range.from === range.to
+          ? range.from
+          : `${range.from} a ${range.to}`
+        : month
+    );
     setDetailItems([]);
     setDetailLoading(true);
     try {
-      const auth = ensureBasicAuth();
-      const params = new URLSearchParams({ plate: p, month });
+      const params = new URLSearchParams({ plate: p });
+      if (range) {
+        params.set("from", range.from);
+        params.set("to", range.to);
+      } else {
+        params.set("month", month);
+      }
       const endpoint = kind === "income" ? "income-detail" : "expense-detail";
 
-      const rs = await fetch(`${API}/reports/${endpoint}?` + params.toString(), {
-        headers: { Authorization: auth },
+      const rs = await requestWithBasicAuth(`${API}/reports/${endpoint}?` + params.toString(), {
+        signal: ctrl.signal,
       });
 
       if (rs.status === 401 || rs.status === 403) {
@@ -225,15 +489,24 @@ export default function AdminProfit() {
 
       if (!rs.ok) throw new Error(await rs.text());
       const json = await rs.json();
-      setDetailItems(json.items || []);
+      if (reqId === detailReqRef.current) {
+        setDetailItems(json.items || []);
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      throw err;
     } finally {
-      setDetailLoading(false);
+      if (reqId === detailReqRef.current) {
+        setDetailLoading(false);
+      }
     }
   }
 
   function closeDetail() {
+    detailAbortRef.current?.abort();
     setDetailType(null);
     setDetailPlate("");
+    setDetailLabel("");
     setDetailItems([]);
   }
 
@@ -243,19 +516,16 @@ export default function AdminProfit() {
     setShowLedger(true);
     setLedgerItems([]);
     setEditingId(null);
-    setEditRow({ ...emptyLedger, date: new Date().toISOString().slice(0, 10) });
+    setEditRow({ ...emptyLedger, date: todayIso });
     await loadLedger(p);
   }
 
   async function loadLedger(p: string) {
     setLedgerLoading(true);
     try {
-      const auth = ensureBasicAuth();
       const params = new URLSearchParams({ plate: p, month });
 
-      const rs = await fetch(`${API}/ledger?` + params.toString(), {
-        headers: { Authorization: auth },
-      });
+      const rs = await requestWithBasicAuth(`${API}/ledger?` + params.toString());
 
       if (rs.status === 401 || rs.status === 403) {
         clearBasicAuth();
@@ -281,13 +551,10 @@ export default function AdminProfit() {
     };
     const isEdit = !!editingId;
 
-    const auth = ensureBasicAuth();
-
-    const rs = await fetch(`${API}/ledger` + (isEdit ? `/${editingId}` : ""), {
+    const rs = await requestWithBasicAuth(`${API}/ledger` + (isEdit ? `/${editingId}` : ""), {
       method: isEdit ? "PUT" : "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: auth,
       },
       body: JSON.stringify(body),
     });
@@ -300,18 +567,17 @@ export default function AdminProfit() {
     if (!rs.ok) throw new Error(await rs.text());
     await loadLedger(ledgerPlate);
     await load(); // refresca totales
+    if (viewMode === "profitability") await loadProfitability();
+    else setProfData(null);
     setEditingId(null);
-    setEditRow({ ...emptyLedger, date: new Date().toISOString().slice(0, 10) });
+    setEditRow({ ...emptyLedger, date: todayIso });
   }
 
   async function deleteLedger(id: number) {
     if (!confirm("¿Eliminar este ajuste?")) return;
 
-    const auth = ensureBasicAuth();
-
-    const rs = await fetch(`${API}/ledger/${id}`, {
+    const rs = await requestWithBasicAuth(`${API}/ledger/${id}`, {
       method: "DELETE",
-      headers: { Authorization: auth },
     });
 
     if (rs.status === 401 || rs.status === 403) {
@@ -322,70 +588,168 @@ export default function AdminProfit() {
     if (!rs.ok) throw new Error(await rs.text());
     await loadLedger(ledgerPlate);
     await load();
+    if (viewMode === "profitability") await loadProfitability();
+    else setProfData(null);
   }
 
+  // ===== Datos de Vista Mensual =====
   const rawItems = data?.items || [];
-  const items = showInactive ? rawItems : rawItems.filter(r => r.status !== 'sold' && r.status !== 'inactive');
+  const items = showInactive
+    ? rawItems
+    : rawItems.filter((r) => r.status !== "sold" && r.status !== "inactive");
 
-  const totals = showInactive ? data?.totals : items.reduce((acc, r) => {
-    acc.pure_income += r.pure_income;
-    acc.deposits_total += r.deposits_total;
-    acc.advances_total += r.advances_total;
-    acc.maintenance_provision += r.maintenance_provision;
-    acc.expense += r.expense;
-    acc.adjustments += r.adjustments;
-    acc.profit += r.profit;
-    acc.investment_total += Number(r.investment_total || 0);
-    if (r.remaining != null) acc.remaining += Number(r.remaining || 0);
-    return acc;
-  }, { pure_income: 0, deposits_total: 0, advances_total: 0, maintenance_provision: 0, expense: 0, adjustments: 0, profit: 0, investment_total: 0, remaining: 0 });
+  const totals = showInactive
+    ? data?.totals
+    : items.reduce(
+        (acc, r) => {
+          acc.pure_income += r.pure_income;
+          acc.deposits_total += r.deposits_total;
+          acc.advances_total += r.advances_total;
+          acc.maintenance_provision += r.maintenance_provision;
+          if (r.maintenance_fund_available != null) {
+            acc.maintenance_fund_available += Number(r.maintenance_fund_available || 0);
+          }
+          acc.expense += r.expense;
+          acc.adjustments += r.adjustments;
+          acc.profit += r.profit;
+          acc.investment_total += Number(r.investment_total || 0);
+          if (r.remaining != null) acc.remaining += Number(r.remaining || 0);
+          return acc;
+        },
+        {
+          pure_income: 0,
+          deposits_total: 0,
+          advances_total: 0,
+          maintenance_provision: 0,
+          maintenance_fund_available: 0,
+          expense: 0,
+          adjustments: 0,
+          profit: 0,
+          investment_total: 0,
+          remaining: 0,
+        }
+      );
 
   const { items: sortedItems, requestSort, sortConfig } = useSortableData(items);
 
+  // ===== Datos de Vista Diaria =====
   const dailyItems = dailyData?.items || [];
   const dailyTotals = dailyData?.totals;
-  const { items: sortedDailyItems, requestSort: requestSortDaily, sortConfig: sortConfigDaily } = useSortableData(dailyItems);
+  const {
+    items: sortedDailyItems,
+    requestSort: requestSortDaily,
+    sortConfig: sortConfigDaily,
+  } = useSortableData(dailyItems);
 
-  const SortIcon = ({ columnKey, config }: { columnKey: string, config: any }) => {
+  // ===== Datos de Vista Rentabilidad =====
+  const rawProfItems = profData?.items || [];
+  const filteredProfItems = (
+    showInactive
+      ? rawProfItems
+      : rawProfItems.filter((r) => r.status !== "sold" && r.status !== "inactive")
+  ).map((r) => ({
+    ...r,
+    margin_pct: r.pure_income > 0 ? Number(((r.net_profit / r.pure_income) * 100).toFixed(1)) : null,
+  }));
+
+  const profTotals = filteredProfItems.reduce(
+    (acc, r) => {
+      acc.pure_income += r.pure_income;
+      acc.expense += r.expense;
+      acc.adjustments += r.adjustments;
+      acc.net_profit += r.net_profit;
+      if (r.maintenance_fund_available != null) {
+        acc.maintenance_fund_available += r.maintenance_fund_available;
+      }
+      return acc;
+    },
+    { pure_income: 0, expense: 0, adjustments: 0, net_profit: 0, maintenance_fund_available: 0 }
+  );
+
+  const {
+    items: sortedProfItems,
+    requestSort: requestSortProf,
+    sortConfig: sortConfigProf,
+  } = useSortableData(filteredProfItems);
+
+  const chartData = (profData?.series || []).map((pt) => ({
+    date: pt.date,
+    label: fmtShortDate(pt.date),
+    pure_income: showInactive ? pt.pure_income : pt.active_pure_income,
+    expense: showInactive ? pt.expense : pt.active_expense,
+    adjustments: showInactive ? pt.adjustments : pt.active_adjustments,
+    net_profit: showInactive ? pt.net_profit : pt.active_net_profit,
+  }));
+
+  const SortIcon = ({ columnKey, config }: { columnKey: string; config: any }) => {
     if (config?.key !== columnKey) return <ChevronsUpDown className="w-3 h-3 opacity-30" />;
-    return config.direction === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
+    return config.direction === "asc" ? (
+      <ArrowUp className="w-3 h-3" />
+    ) : (
+      <ArrowDown className="w-3 h-3" />
+    );
   };
 
-  // 2. ENVOLVER EL RETURN COMPLETO CON <CompanyLock>
+  const isAnyLoading = loading || dailyLoading || profLoading;
+
   return (
     <CompanyLock>
       <div className="min-h-screen p-6">
-        <div className="mx-auto max-w-6xl">
+        <div className="mx-auto max-w-7xl">
           <h1 className="mb-6 text-3xl font-bold tracking-tight">Utilidades — Admin</h1>
 
           <form onSubmit={onSearch} className="mb-4 flex flex-wrap items-center gap-2">
-            <input
-              className="rounded-xl border px-3 py-2"
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              required
-            />
-            {viewMode === "monthly" && (
+            {(viewMode !== "profitability" || profPeriod === "month") && (
+              <input
+                className="rounded-xl border px-3 py-2"
+                type="month"
+                value={month}
+                onChange={(e) => handleMonthChange(e.target.value)}
+                required
+              />
+            )}
+            {viewMode === "profitability" && (profPeriod === "day" || profPeriod === "week") && (
+              <div className="flex items-center gap-2">
+                <input
+                  className="rounded-xl border px-3 py-2"
+                  type="date"
+                  value={profDate}
+                  onChange={(e) => handleProfDateChange(e.target.value)}
+                  required
+                />
+                {profDate !== todayIso && (
+                  <button
+                    type="button"
+                    onClick={() => handleProfDateChange(todayIso)}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Hoy
+                  </button>
+                )}
+              </div>
+            )}
+            {(viewMode === "monthly" || viewMode === "profitability") && (
               <input
                 className="rounded-xl border px-3 py-2"
                 placeholder="Filtrar por placa (opcional)"
                 value={plate}
-                onChange={(e) => setPlate(e.target.value.toUpperCase())}
+                onChange={(e) => handlePlateChange(e.target.value)}
               />
             )}
             <button className="rounded-xl bg-black px-4 py-2 text-white">
-              {(loading || dailyLoading) ? "Cargando..." : "Buscar"}
+              {isAnyLoading ? "Cargando..." : "Buscar"}
             </button>
           </form>
 
-          {/* Tab toggle */}
           {/* Tab toggle */}
           <div className="mb-4 flex items-center gap-4 flex-wrap">
             <div className="inline-flex rounded-xl border bg-gray-100 p-1">
               <button
                 type="button"
-                onClick={() => setViewMode("monthly")}
+                onClick={() => {
+                  setViewMode("monthly");
+                  if (!data) load();
+                }}
                 className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                   viewMode === "monthly"
                     ? "bg-white text-black shadow-sm"
@@ -396,7 +760,10 @@ export default function AdminProfit() {
               </button>
               <button
                 type="button"
-                onClick={() => { setViewMode("daily"); if (!dailyData) loadDaily(); }}
+                onClick={() => {
+                  setViewMode("daily");
+                  if (!dailyData) loadDaily();
+                }}
                 className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                   viewMode === "daily"
                     ? "bg-white text-black shadow-sm"
@@ -405,8 +772,51 @@ export default function AdminProfit() {
               >
                 📊 Diario
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode("profitability");
+                  if (!profData) loadProfitability();
+                }}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  viewMode === "profitability"
+                    ? "bg-white text-black shadow-sm"
+                    : "text-gray-500 hover:text-black"
+                }`}
+              >
+                💹 Rentabilidad
+              </button>
             </div>
-            {viewMode === "monthly" && (
+
+            {viewMode === "profitability" && (
+              <div className="inline-flex items-center rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+                <span className="px-2.5 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  Periodo:
+                </span>
+                {(
+                  [
+                    { key: "day", label: "Día" },
+                    { key: "week", label: "Semana" },
+                    { key: "month", label: "Mes" },
+                  ] as { key: ProfitabilityPeriod; label: string }[]
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => handlePeriodChange(opt.key)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+                      profPeriod === opt.key
+                        ? "bg-emerald-600 text-white shadow-sm"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {(viewMode === "monthly" || viewMode === "profitability") && (
               <label className="flex items-center gap-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 px-3 py-2 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors shadow-sm">
                 <input
                   type="checkbox"
@@ -419,6 +829,337 @@ export default function AdminProfit() {
             )}
           </div>
 
+          {/* ========== VISTA RENTABILIDAD ========== */}
+          {viewMode === "profitability" && (
+            <div className="space-y-6">
+              {/* Tarjetas resumen del periodo */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Ingresos Netos ({profPeriod === "day" ? "Día" : profPeriod === "week" ? "Semana" : "Mes"})
+                  </div>
+                  <div className="mt-1 text-2xl font-bold text-slate-900">
+                    ${fmtCOP.format(profTotals.pure_income)}
+                  </div>
+                  {profData && (
+                    <div className="mt-1 text-xs text-slate-500">
+                      {profData.start_date === profData.end_date
+                        ? profData.start_date
+                        : `${profData.start_date} → ${profData.end_date}`}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Gastos Totales ({profPeriod === "day" ? "Día" : profPeriod === "week" ? "Semana" : "Mes"})
+                  </div>
+                  <div className="mt-1 text-2xl font-bold text-red-600">
+                    ${fmtCOP.format(profTotals.expense)}
+                  </div>
+                  {profTotals.adjustments !== 0 && (
+                    <div className="mt-1 text-xs text-slate-500">
+                      Ajustes: ${fmtCOP.format(profTotals.adjustments)}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Utilidad Neta Total
+                  </div>
+                  <div
+                    className={`mt-1 text-2xl font-bold ${
+                      profTotals.net_profit >= 0 ? "text-emerald-600" : "text-red-600"
+                    }`}
+                  >
+                    ${fmtCOP.format(profTotals.net_profit)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {profTotals.pure_income > 0
+                      ? `Margen neto: ${((profTotals.net_profit / profTotals.pure_income) * 100).toFixed(1)}%`
+                      : "Sin ingresos en el periodo"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Gráfico de líneas superior: Tendencia de la Utilidad Neta Total */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900">
+                      <TrendingUp className="h-5 w-5 text-emerald-600" />
+                      Tendencia de la Utilidad Neta Total
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      {profPeriod === "day"
+                        ? `Evolución diaria de los últimos 7 días hasta ${profData?.end_date || profDate}`
+                        : profPeriod === "week"
+                        ? `Evolución diaria de la semana (${profData?.start_date || ""} a ${profData?.end_date || ""})`
+                        : `Evolución diaria del mes (${profData?.chart_start_date || month} a ${profData?.chart_end_date || month})`}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="h-80 w-full">
+                  {chartData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis
+                          dataKey="label"
+                          tick={{ fontSize: 12, fill: "#64748b" }}
+                          tickMargin={8}
+                          minTickGap={20}
+                        />
+                        <YAxis
+                          tickFormatter={(val) => fmtCompactCOP(Number(val))}
+                          tick={{ fontSize: 12, fill: "#64748b" }}
+                          width={70}
+                        />
+                        <ReferenceLine y={0} stroke="#94a3b8" strokeDasharray="3 3" />
+                        <RechartsTooltip
+                          formatter={(value: any, name: any) => [
+                            `$${fmtCOP.format(Number(value || 0))}`,
+                            name,
+                          ]}
+                          labelFormatter={(_label, payload) => {
+                            const rawDate = payload?.[0]?.payload?.date;
+                            return rawDate ? `Fecha: ${rawDate} (${fmtDayLabel(rawDate)})` : _label;
+                          }}
+                          contentStyle={{
+                            borderRadius: "12px",
+                            borderColor: "#e2e8f0",
+                            boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                          }}
+                        />
+                        <Legend />
+                        <Line
+                          type="monotone"
+                          dataKey="net_profit"
+                          name="Utilidad Neta Total"
+                          stroke="#10b981"
+                          strokeWidth={3}
+                          dot={{ r: 3, fill: "#10b981" }}
+                          activeDot={{ r: 6 }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="pure_income"
+                          name="Ingresos"
+                          stroke="#0ea5e9"
+                          strokeWidth={1.5}
+                          strokeDasharray="4 4"
+                          dot={false}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="expense"
+                          name="Gastos"
+                          stroke="#ef4444"
+                          strokeWidth={1.5}
+                          strokeDasharray="4 4"
+                          dot={false}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                      {profLoading ? "Cargando gráfico..." : "Sin datos para graficar en este periodo."}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Tabla inferior ordenable por placa */}
+              <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+                <div className="border-b px-5 py-4 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">
+                      Desglose de Rentabilidad por Vehículo
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Haz clic en cualquier encabezado para ordenar por placa, ingresos, gastos o rentabilidad neta.
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold text-slate-500">
+                    {sortedProfItems.length} vehículo{sortedProfItems.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 text-left">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">
+                        <div
+                          onClick={() => requestSortProf("plate")}
+                          className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                        >
+                          Placa <SortIcon columnKey="plate" config={sortConfigProf} />
+                        </div>
+                      </th>
+                      <th className="px-4 py-3 font-semibold">
+                        <div
+                          onClick={() => requestSortProf("pure_income")}
+                          className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                        >
+                          Ingresos <SortIcon columnKey="pure_income" config={sortConfigProf} />
+                        </div>
+                      </th>
+                      <th className="px-4 py-3 font-semibold">
+                        <div
+                          onClick={() => requestSortProf("expense")}
+                          className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                        >
+                          Gastos <SortIcon columnKey="expense" config={sortConfigProf} />
+                        </div>
+                      </th>
+                      <th className="px-4 py-3 font-semibold">
+                        <div
+                          onClick={() => requestSortProf("adjustments")}
+                          className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                        >
+                          Ajustes <SortIcon columnKey="adjustments" config={sortConfigProf} />
+                        </div>
+                      </th>
+                      <th className="px-4 py-3 font-semibold">
+                        <div
+                          onClick={() => requestSortProf("maintenance_fund_available")}
+                          title="Saldo disponible actual del Fondo de Mantenimiento (solo contratos de leasing activos)"
+                          className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                        >
+                          Fondo Mant. (Hoy){" "}
+                          <SortIcon columnKey="maintenance_fund_available" config={sortConfigProf} />
+                        </div>
+                      </th>
+                      <th className="px-4 py-3 font-semibold">
+                        <div
+                          onClick={() => requestSortProf("net_profit")}
+                          className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                        >
+                          Rentabilidad Neta <SortIcon columnKey="net_profit" config={sortConfigProf} />
+                        </div>
+                      </th>
+                      <th className="px-4 py-3 font-semibold">
+                        <div
+                          onClick={() => requestSortProf("margin_pct")}
+                          className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                        >
+                          Margen % <SortIcon columnKey="margin_pct" config={sortConfigProf} />
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedProfItems.map((r) => (
+                      <tr key={r.plate} className="border-t hover:bg-slate-50/70 transition-colors">
+                        <td className="px-4 py-3 font-medium">
+                          <div className="flex items-center gap-2">
+                            {r.plate}
+                            <StatusBadge status={r.status} />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {r.pure_income > 0 && profData ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openDetail("income", r.plate, {
+                                  from: profData.start_date,
+                                  to: profData.end_date,
+                                })
+                              }
+                              className="underline hover:text-emerald-700"
+                              title="Ver pagos confirmados en el periodo"
+                            >
+                              ${fmtCOP.format(r.pure_income)}
+                            </button>
+                          ) : (
+                            <>${fmtCOP.format(0)}</>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-red-600">
+                          {r.expense > 0 && profData ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openDetail("expense", r.plate, {
+                                  from: profData.start_date,
+                                  to: profData.end_date,
+                                })
+                              }
+                              className="underline hover:text-red-800"
+                              title="Ver gastos prorrateados en el periodo"
+                            >
+                              ${fmtCOP.format(r.expense)}
+                            </button>
+                          ) : (
+                            <>${fmtCOP.format(0)}</>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">
+                          ${fmtCOP.format(r.adjustments)}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700">
+                          {r.maintenance_fund_available != null
+                            ? `$${fmtCOP.format(r.maintenance_fund_available)}`
+                            : "—"}
+                        </td>
+                        <td
+                          className={`px-4 py-3 font-semibold ${
+                            r.net_profit >= 0 ? "text-green-600" : "text-red-600"
+                          }`}
+                        >
+                          ${fmtCOP.format(r.net_profit)}
+                        </td>
+                        <td className="px-4 py-3 text-xs font-medium text-slate-600">
+                          {r.margin_pct != null ? `${r.margin_pct}%` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+
+                    {sortedProfItems.length === 0 && !profLoading && (
+                      <tr>
+                        <td className="px-4 py-6 text-gray-500" colSpan={7}>
+                          Sin datos para este periodo.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t bg-gray-50">
+                      <td className="px-4 py-3 font-semibold">TOTAL</td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(profTotals.pure_income)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-red-600">
+                        ${fmtCOP.format(profTotals.expense)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(profTotals.adjustments)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(profTotals.maintenance_fund_available)}
+                      </td>
+                      <td
+                        className={`px-4 py-3 font-semibold ${
+                          profTotals.net_profit >= 0 ? "text-green-600" : "text-red-600"
+                        }`}
+                      >
+                        ${fmtCOP.format(profTotals.net_profit)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-xs text-slate-600">
+                        {profTotals.pure_income > 0
+                          ? `${((profTotals.net_profit / profTotals.pure_income) * 100).toFixed(1)}%`
+                          : "—"}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* ========== VISTA DIARIA ========== */}
           {viewMode === "daily" && (
             <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
@@ -426,37 +1167,58 @@ export default function AdminProfit() {
                 <thead className="bg-gray-50 text-left">
                   <tr>
                     <th className="px-4 py-3 font-semibold">
-                      <div onClick={() => requestSortDaily('date')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      <div
+                        onClick={() => requestSortDaily("date")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
                         Fecha <SortIcon columnKey="date" config={sortConfigDaily} />
                       </div>
                     </th>
                     <th className="px-4 py-3 font-semibold">
-                      <div onClick={() => requestSortDaily('pure_income')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      <div
+                        onClick={() => requestSortDaily("pure_income")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
                         Ingreso Neto <SortIcon columnKey="pure_income" config={sortConfigDaily} />
                       </div>
                     </th>
                     <th className="px-4 py-3 font-semibold">
-                      <div onClick={() => requestSortDaily('deposits')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      <div
+                        onClick={() => requestSortDaily("deposits")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
                         Depósitos <SortIcon columnKey="deposits" config={sortConfigDaily} />
                       </div>
                     </th>
                     <th className="px-4 py-3 font-semibold">
-                      <div onClick={() => requestSortDaily('advances')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      <div
+                        onClick={() => requestSortDaily("advances")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
                         Anticipos <SortIcon columnKey="advances" config={sortConfigDaily} />
                       </div>
                     </th>
                     <th className="px-4 py-3 font-semibold">
-                      <div onClick={() => requestSortDaily('maintenance')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      <div
+                        onClick={() => requestSortDaily("maintenance")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
                         Prov. Mant. <SortIcon columnKey="maintenance" config={sortConfigDaily} />
                       </div>
                     </th>
                     <th className="px-4 py-3 font-semibold">
-                      <div onClick={() => requestSortDaily('expense')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      <div
+                        onClick={() => requestSortDaily("expense")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
                         Gastos <SortIcon columnKey="expense" config={sortConfigDaily} />
                       </div>
                     </th>
                     <th className="px-4 py-3 font-semibold">
-                      <div onClick={() => requestSortDaily('daily_profit')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
+                      <div
+                        onClick={() => requestSortDaily("daily_profit")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
                         Utilidad Diaria <SortIcon columnKey="daily_profit" config={sortConfigDaily} />
                       </div>
                     </th>
@@ -471,7 +1233,11 @@ export default function AdminProfit() {
                       <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.advances)}</td>
                       <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.maintenance)}</td>
                       <td className="px-4 py-3 text-red-600">${fmtCOP.format(r.expense)}</td>
-                      <td className={`px-4 py-3 font-semibold ${r.daily_profit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                      <td
+                        className={`px-4 py-3 font-semibold ${
+                          r.daily_profit >= 0 ? "text-green-600" : "text-red-600"
+                        }`}
+                      >
                         ${fmtCOP.format(r.daily_profit)}
                       </td>
                     </tr>
@@ -479,7 +1245,9 @@ export default function AdminProfit() {
 
                   {sortedDailyItems.length === 0 && !dailyLoading && (
                     <tr>
-                      <td className="px-4 py-6 text-gray-500" colSpan={7}>Sin datos para este mes.</td>
+                      <td className="px-4 py-6 text-gray-500" colSpan={7}>
+                        Sin datos para este mes.
+                      </td>
                     </tr>
                   )}
                 </tbody>
@@ -488,12 +1256,26 @@ export default function AdminProfit() {
                   <tfoot>
                     <tr className="border-t bg-gray-50">
                       <td className="px-4 py-3 font-semibold">TOTAL</td>
-                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(dailyTotals.pure_income)}</td>
-                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(dailyTotals.deposits)}</td>
-                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(dailyTotals.advances)}</td>
-                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(dailyTotals.maintenance)}</td>
-                      <td className="px-4 py-3 font-semibold text-red-600">${fmtCOP.format(dailyTotals.expense)}</td>
-                      <td className={`px-4 py-3 font-semibold ${dailyTotals.daily_profit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(dailyTotals.pure_income)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(dailyTotals.deposits)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(dailyTotals.advances)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(dailyTotals.maintenance)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-red-600">
+                        ${fmtCOP.format(dailyTotals.expense)}
+                      </td>
+                      <td
+                        className={`px-4 py-3 font-semibold ${
+                          dailyTotals.daily_profit >= 0 ? "text-green-600" : "text-red-600"
+                        }`}
+                      >
                         ${fmtCOP.format(dailyTotals.daily_profit)}
                       </td>
                     </tr>
@@ -505,182 +1287,250 @@ export default function AdminProfit() {
 
           {/* ========== VISTA MENSUAL ========== */}
           {viewMode === "monthly" && (
-          <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 text-left">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('plate')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Placa <SortIcon columnKey="plate" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('pure_income')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Ingreso Neto <SortIcon columnKey="pure_income" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('deposits_total')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Depósitos <SortIcon columnKey="deposits_total" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('advances_total')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Anticipos <SortIcon columnKey="advances_total" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('expense')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Gastos <SortIcon columnKey="expense" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('adjustments')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Ajustes <SortIcon columnKey="adjustments" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('maintenance_provision')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Prov. Mant. <SortIcon columnKey="maintenance_provision" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('profit')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Utilidad <SortIcon columnKey="profit" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('cum_profit')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Acum. <SortIcon columnKey="cum_profit" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('investment_total')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Inversión <SortIcon columnKey="investment_total" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('remaining')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Restante <SortIcon columnKey="remaining" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3 font-semibold">
-                    <div onClick={() => requestSort('is_released')} className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max">
-                      Liberado <SortIcon columnKey="is_released" config={sortConfig} />
-                    </div>
-                  </th>
-                  <th className="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedItems.map((r) => (
-                  <tr key={r.plate} className="border-t">
-                    <td className="px-4 py-3 font-medium">
-                      <div className="flex items-center gap-2">
-                        {r.plate}
-                        <StatusBadge status={r.status} />
-                      </div>
-                    </td>
-
-                    {/* Ingreso Neto: clickeable para ver detalle */}
-                    <td className="px-4 py-3">
-                      {r.pure_income > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => openDetail("income", r.plate)}
-                          className="underline"
-                          title="Ver ingresos del mes"
-                        >
-                          ${fmtCOP.format(r.pure_income)}
-                        </button>
-                      ) : (
-                        <>${fmtCOP.format(0)}</>
-                      )}
-                    </td>
-
-                    {/* Depósitos (info) */}
-                    <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.deposits_total)}</td>
-
-                    {/* Anticipos (info) */}
-                    <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.advances_total)}</td>
-
-                    {/* Gastos: clickeable para ver detalle */}
-                    <td className="px-4 py-3">
-                      {r.expense > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => openDetail("expense", r.plate)}
-                          className="underline"
-                          title="Ver gastos del mes"
-                        >
-                          ${fmtCOP.format(r.expense)}
-                        </button>
-                      ) : (
-                        <>${fmtCOP.format(0)}</>
-                      )}
-                    </td>
-
-                    <td className="px-4 py-3">${fmtCOP.format(r.adjustments)}</td>
-                    <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.maintenance_provision)}</td>
-                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(r.profit)}</td>
-                    <td className="px-4 py-3">${fmtCOP.format(r.cum_profit)}</td>
-                    <td className="px-4 py-3">
-                      {r.investment_total != null ? `$${fmtCOP.format(r.investment_total)}` : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      {r.remaining != null ? `$${fmtCOP.format(r.remaining)}` : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      {r.is_released ? (
-                        <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">Sí</span>
-                      ) : (
-                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">No</span>
-                      )}
-                    </td>
-
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => openLedger(r.plate)}
-                        className="rounded-lg border px-3 py-1 text-xs"
-                        title="Ver/editar ajustes del mes"
-                      >
-                        Ajustes
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-
-                {sortedItems.length === 0 && !loading && (
+            <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-left">
                   <tr>
-                    <td className="px-4 py-6 text-gray-500" colSpan={13}>
-                      Sin datos.
-                    </td>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("plate")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Placa <SortIcon columnKey="plate" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("pure_income")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Ingreso Neto <SortIcon columnKey="pure_income" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("deposits_total")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Depósitos <SortIcon columnKey="deposits_total" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("advances_total")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Anticipos <SortIcon columnKey="advances_total" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("expense")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Gastos <SortIcon columnKey="expense" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("adjustments")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Ajustes <SortIcon columnKey="adjustments" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("maintenance_provision")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Prov. Mant. <SortIcon columnKey="maintenance_provision" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("maintenance_fund_available")}
+                        title="Saldo disponible actual del Fondo de Mantenimiento (solo contratos de leasing activos)"
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Fondo Mant. (Hoy){" "}
+                        <SortIcon columnKey="maintenance_fund_available" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("profit")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Utilidad <SortIcon columnKey="profit" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("cum_profit")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Acum. <SortIcon columnKey="cum_profit" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("investment_total")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Inversión <SortIcon columnKey="investment_total" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("remaining")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Restante <SortIcon columnKey="remaining" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      <div
+                        onClick={() => requestSort("is_released")}
+                        className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors w-max"
+                      >
+                        Liberado <SortIcon columnKey="is_released" config={sortConfig} />
+                      </div>
+                    </th>
+                    <th className="px-4 py-3"></th>
                   </tr>
-                )}
-              </tbody>
+                </thead>
+                <tbody>
+                  {sortedItems.map((r) => (
+                    <tr key={r.plate} className="border-t">
+                      <td className="px-4 py-3 font-medium">
+                        <div className="flex items-center gap-2">
+                          {r.plate}
+                          <StatusBadge status={r.status} />
+                        </div>
+                      </td>
 
-              {totals && (
-                <tfoot>
-                  <tr className="border-t bg-gray-50">
-                    <td className="px-4 py-3 font-semibold">TOTAL</td>
-                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.pure_income)}</td>
-                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.deposits_total)}</td>
-                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.advances_total)}</td>
-                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.expense)}</td>
-                    <td className="px-4 py-3 font-semibold">—</td>
-                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.maintenance_provision)}</td>
-                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.profit)}</td>
-                    <td className="px-4 py-3 font-semibold">—</td>
-                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.investment_total)}</td>
-                    <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.remaining)}</td>
-                    <td className="px-4 py-3 font-semibold">—</td>
-                    <td></td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
+                      {/* Ingreso Neto: clickeable para ver detalle */}
+                      <td className="px-4 py-3">
+                        {r.pure_income > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => openDetail("income", r.plate)}
+                            className="underline"
+                            title="Ver ingresos del mes"
+                          >
+                            ${fmtCOP.format(r.pure_income)}
+                          </button>
+                        ) : (
+                          <>${fmtCOP.format(0)}</>
+                        )}
+                      </td>
+
+                      {/* Depósitos (info) */}
+                      <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.deposits_total)}</td>
+
+                      {/* Anticipos (info) */}
+                      <td className="px-4 py-3 text-gray-500">${fmtCOP.format(r.advances_total)}</td>
+
+                      {/* Gastos: clickeable para ver detalle */}
+                      <td className="px-4 py-3">
+                        {r.expense > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => openDetail("expense", r.plate)}
+                            className="underline"
+                            title="Ver gastos del mes"
+                          >
+                            ${fmtCOP.format(r.expense)}
+                          </button>
+                        ) : (
+                          <>${fmtCOP.format(0)}</>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3">${fmtCOP.format(r.adjustments)}</td>
+                      <td className="px-4 py-3 text-gray-500">
+                        ${fmtCOP.format(r.maintenance_provision)}
+                      </td>
+                      <td className="px-4 py-3 text-gray-700">
+                        {r.maintenance_fund_available != null
+                          ? `$${fmtCOP.format(r.maintenance_fund_available)}`
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(r.profit)}</td>
+                      <td className="px-4 py-3">${fmtCOP.format(r.cum_profit)}</td>
+                      <td className="px-4 py-3">
+                        {r.investment_total != null ? `$${fmtCOP.format(r.investment_total)}` : "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        {r.remaining != null ? `$${fmtCOP.format(r.remaining)}` : "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        {r.is_released ? (
+                          <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">
+                            Sí
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                            No
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => openLedger(r.plate)}
+                          className="rounded-lg border px-3 py-1 text-xs"
+                          title="Ver/editar ajustes del mes"
+                        >
+                          Ajustes
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+
+                  {sortedItems.length === 0 && !loading && (
+                    <tr>
+                      <td className="px-4 py-6 text-gray-500" colSpan={14}>
+                        Sin datos.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+
+                {totals && (
+                  <tfoot>
+                    <tr className="border-t bg-gray-50">
+                      <td className="px-4 py-3 font-semibold">TOTAL</td>
+                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.pure_income)}</td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(totals.deposits_total)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(totals.advances_total)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.expense)}</td>
+                      <td className="px-4 py-3 font-semibold">—</td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(totals.maintenance_provision)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(totals.maintenance_fund_available ?? 0)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.profit)}</td>
+                      <td className="px-4 py-3 font-semibold">—</td>
+                      <td className="px-4 py-3 font-semibold">
+                        ${fmtCOP.format(totals.investment_total)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">${fmtCOP.format(totals.remaining)}</td>
+                      <td className="px-4 py-3 font-semibold">—</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
           )}
         </div>
 
@@ -690,7 +1540,8 @@ export default function AdminProfit() {
             <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-xl">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-xl font-semibold">
-                  {detailType === "income" ? "Detalle de Ingresos" : "Detalle de Gastos"} — {detailPlate} — {month}
+                  {detailType === "income" ? "Detalle de Ingresos" : "Detalle de Gastos"} —{" "}
+                  {detailPlate} — {detailLabel || month}
                 </h2>
                 <button onClick={closeDetail} className="rounded-xl border px-3 py-1 text-sm">
                   Cerrar
@@ -710,10 +1561,21 @@ export default function AdminProfit() {
                         <div className="font-semibold">${fmtCOP.format(p.amount)}</div>
                       </div>
                       <div className="text-sm text-gray-600">
-                        {p.payer_name} {p.installment_number ? `· Cuota ${p.installment_number}` : ""} · {p.status}
+                        {p.payer_name} {p.installment_number ? `· Cuota ${p.installment_number}` : ""}{" "}
+                        · {p.status}
+                        {p.delivery_amount != null && (
+                          <span className="ml-2 text-xs text-emerald-700">
+                            (Ingreso neto: ${fmtCOP.format(p.delivery_amount)})
+                          </span>
+                        )}
                       </div>
                       {p.proof_url && (
-                        <a href={p.proof_url} target="_blank" rel="noreferrer" className="text-xs underline">
+                        <a
+                          href={p.proof_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs underline"
+                        >
                           Ver comprobante
                         </a>
                       )}
@@ -732,7 +1594,12 @@ export default function AdminProfit() {
                       </div>
                       <div className="text-sm text-gray-600">{e.description || "—"}</div>
                       {e.attachment_url && (
-                        <a href={e.attachment_url} target="_blank" rel="noreferrer" className="text-xs underline">
+                        <a
+                          href={e.attachment_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs underline"
+                        >
                           Ver soporte
                         </a>
                       )}
@@ -831,7 +1698,7 @@ export default function AdminProfit() {
                         setEditingId(null);
                         setEditRow({
                           ...emptyLedger,
-                          date: new Date().toISOString().slice(0, 10),
+                          date: todayIso,
                         });
                       }}
                       className="rounded-xl border px-3 py-2 text-sm"

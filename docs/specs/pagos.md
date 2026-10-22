@@ -71,7 +71,7 @@ Para vehículos **sin leasing**, cada pago se reparte en columnas de `payments`:
     - Ajuste en aprobación (§5.0) recalcula `late_fee_paid` con el nuevo monto.
   - Se muestra en el formulario de pago (aviso de la regla y, al guardar, recargo causado / abonado / pendiente) y en el modal de aprobación (`approval-preview` devuelve `late_fee` y `breakdown.late_fee`; el canon se muestra sin la parte del recargo).
 - Los overrides manuales no pueden ser negativos. Sin cuota, la suma no puede superar el monto.
-- Para vehículos **con leasing**, estas columnas **no** representan el reparto real; ver `leasing.md` §4.
+- Para vehículos **con leasing**, estas columnas **no** representan el reparto real; ver `leasing.md` §4. Aun así, el panel de utilidades usa `delivery_amount` como ingreso también en leasing (decisión provisional 2026-10-22, `utilidades.md` §2).
 
 ## 4. Comprobante y antifraude
 

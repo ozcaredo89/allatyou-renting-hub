@@ -10,6 +10,7 @@ Fuente de verdad de las **reglas de negocio** de cada módulo. Las leen tanto pe
 | Pagos diarios | [pagos.md](pagos.md) | `routes/payments.ts`, aprobación en `routes/reports.ts`, `Pay.tsx`, `Reports.tsx` |
 | Anticipos operativos | [anticipos.md](anticipos.md) | `routes/advances.ts`, `operational_advance*` |
 | Gastos y fondo de mantenimiento | [gastos-fondo-mantenimiento.md](gastos-fondo-mantenimiento.md) | `routes/expenses.ts`, `Expenses.tsx`, notas débito |
+| Utilidades y rentabilidad | [utilidades.md](utilidades.md) | `routes/profit.ts`, `AdminProfit.tsx`, vistas `vehicle_month_*` |
 | Conductores | [conductores.md](conductores.md) | `routes/drivers.ts`, directorio de conductores |
 | Cobranza (CRM) | [cobranza-collections.md](cobranza-collections.md) | módulo de cobranza |
 | Inspecciones | [inspecciones.md](inspecciones.md), [inspecciones-dashboard.md](inspecciones-dashboard.md) | `routes/inspections.ts` |

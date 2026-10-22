@@ -75,6 +75,7 @@ Business rules live in `docs/specs/` (index: `docs/specs/README.md`). **Before c
 - Driver payments, receipts/anti-fraud, payment approval → `docs/specs/pagos.md`
 - Operational advances (driver loans) → `docs/specs/anticipos.md`
 - Expenses, maintenance fund, debit notes → `docs/specs/gastos-fondo-mantenimiento.md`
+- Profit/rentabilidad panel (`/profit`, `routes/profit.ts`, `vehicle_month_*` views) → `docs/specs/utilidades.md`
 
 Never resolve a business ambiguity by inventing a rule: if the spec doesn't cover it, ask the user and record the answer in the spec.
 

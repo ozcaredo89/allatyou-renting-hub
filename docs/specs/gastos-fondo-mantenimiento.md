@@ -1,6 +1,6 @@
 # Spec — Gastos y Fondo de Mantenimiento (Notas Débito)
 
-**Estado:** Vigente · **Última revisión:** 2026-10-12
+**Estado:** Vigente · **Última revisión:** 2026-10-22
 **Código principal:** `src/routes/expenses.ts`, `src/routes/leasing.ts` (debit-notes), `web/src/pages/Expenses.tsx`, `web/src/utils/debitNotePdf.ts`
 **Migraciones:** `20261009_leasing_maintenance_debits.sql`
 
@@ -30,6 +30,7 @@ Cada cuota de leasing aporta `maintenance_expected` (típico $10.000/día) a un 
 - **Gastado** = `SUM(leasing_maintenance_debits.amount_deducted)`.
 - **Disponible** = acumulado − gastado. Nunca puede quedar negativo.
 - Se consulta en `leasing_contracts_summary_vw` / `GET /leasing/summary?plate=`.
+- En el panel de utilidades se muestra como **Fondo Mant. (Hoy)**: siempre el saldo actual, no el del periodo consultado (ver `utilidades.md` §5).
 
 ## 3. Nota Débito de mantenimiento
 

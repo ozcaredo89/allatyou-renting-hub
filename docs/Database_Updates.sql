@@ -12,6 +12,32 @@ ALTER TABLE public.payments
   ADD COLUMN IF NOT EXISTS maintenance_amount numeric(14,2) DEFAULT 0;
 
 -- ============================================================
+-- PASO 1.1: Vista base vehicle_month_adjustments (documentación del esquema en Supabase)
+-- Regla verificada en producción:
+--   • opening_balance → 0 (no suma ni resta a los ajustes del mes)
+--   • extra_income    → +amount
+--   • extra_expense   → -amount
+--   • correction      → +amount
+-- ============================================================
+CREATE OR REPLACE VIEW public.vehicle_month_adjustments
+WITH (security_invoker = true) AS
+SELECT
+  plate,
+  date_trunc('month', date::timestamp with time zone)::date AS month,
+  SUM(
+    CASE
+      WHEN type = 'extra_income'  THEN COALESCE(amount, 0)
+      WHEN type = 'extra_expense' THEN -COALESCE(amount, 0)
+      WHEN type = 'correction'    THEN COALESCE(amount, 0)
+      ELSE 0
+    END
+  )::numeric(12,2) AS total_adjustments
+FROM public.vehicle_ledger
+GROUP BY
+  plate,
+  date_trunc('month', date::timestamp with time zone)::date;
+
+-- ============================================================
 -- PASO 2: Recrear la vista vehicle_month_profit
 -- DROP CASCADE elimina dependientes (ej. vehicle_cumulative_profit)
 -- ============================================================
