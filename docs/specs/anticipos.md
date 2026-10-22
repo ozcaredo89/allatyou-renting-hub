@@ -64,7 +64,14 @@ Un **anticipo operativo** es dinero que la empresa presta a un conductor (o cola
 - Pago = cuota de leasing + (opcional) cuota de anticipo.
 - Por ahora el **excedente** de un pago de leasing **no** se abona automáticamente al anticipo (decisión 2026-10-03, ver `leasing.md` §4).
 
-## 6. Preguntas abiertas
+## 6. Eliminar un anticipo (decisión 2026-10-21)
+
+- Para recrear un anticipo mal creado: `DELETE /advances/:id` (botón "Eliminar" en la lista, visible si `current_installment = 0`).
+- Solo se permite si **no tiene cuotas pagadas** en `operational_advance_schedule` y **no hay pagos de mora cubiertos con él** (`payments.receipt_status = 'advance_offset'` con `flag_details.advance_id`). Si no, 409.
+- Se borran el cronograma y el anticipo (borrado físico, no `cancelled`).
+- **No se elimina si nació de una Nota Débito** de mantenimiento (`leasing_maintenance_debits.advance_id`): 409. Borrarlo suelto dejaría la nota desvinculada; hay que eliminar el gasto con su Nota Débito y volverlo a crear.
+
+## 7. Preguntas abiertas
 
 - ¿Cómo se reparte cada cuota entre interés y capital en `operational_advance_schedule`? Hoy `interest_amount = 0`.
 - ¿Las cuotas de anticipo deben respetar días no pagables (Pico y Placa) como las de leasing? Hoy son días calendario.

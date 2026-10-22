@@ -795,6 +795,30 @@ function AdvancesList() {
     // eslint-disable-next-line
   }, [filters.status, filters.person, filters.plate]);
 
+  // Eliminar anticipo mal creado (solo sin cuotas pagadas; la API valida)
+  async function removeAdvance(a: Advance) {
+    if (
+      !window.confirm(
+        `¿Eliminar el anticipo #${a.id} de ${a.person_name} por $${fmtCOP.format(a.amount)}?\n\n` +
+          `Se borran el anticipo y su cronograma. No se puede deshacer.`
+      )
+    )
+      return;
+    try {
+      const auth = ensureBasicAuth();
+      const rs = await fetch(`${API}/advances/${a.id}`, { method: "DELETE", headers: { Authorization: auth } });
+      if (rs.status === 401 || rs.status === 403) {
+        clearBasicAuth();
+        throw new Error("Unauthorized");
+      }
+      const json = await rs.json();
+      if (!rs.ok) throw new Error(json?.error || "Error eliminando anticipo");
+      load(offset);
+    } catch (e: unknown) {
+      window.alert(e instanceof Error ? e.message : "Error");
+    }
+  }
+
   const canPrev = offset > 0 && !loading;
   const canNext = offset + limit < total && !loading;
 
@@ -894,9 +918,19 @@ function AdvancesList() {
                     <span className={`rounded-full px-3 py-1 text-xs ${badgeTone(a.status)}`}>{a.status}</span>
                   </td>
                   <td className="px-4 py-3">
-                    <button className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50" onClick={() => setSelected(a)}>
-                      Cronograma
-                    </button>
+                    <div className="flex gap-2">
+                      <button className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50" onClick={() => setSelected(a)}>
+                        Cronograma
+                      </button>
+                      {a.current_installment === 0 && (
+                        <button
+                          className="rounded-xl border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                          onClick={() => removeAdvance(a)}
+                        >
+                          Eliminar
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))

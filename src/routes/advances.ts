@@ -282,6 +282,73 @@ r.patch("/:id", async (req: Request, res: Response) => {
   res.json({ advance: data });
 });
 
+// --------- DELETE /advances/:id ---------------------------
+// Elimina un anticipo mal creado para poder recrearlo (anticipos.md §6).
+// Solo si no tiene cuotas pagadas ni pagos de mora cubiertos con él (advance_offset).
+r.delete("/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "invalid id" });
+
+  const { data: adv, error: advErr } = await supabase
+    .from("operational_advances")
+    .select("id")
+    .eq("id", id)
+    .maybeSingle();
+  if (advErr) return res.status(500).json({ error: advErr.message });
+  if (!adv) return res.status(404).json({ error: "Anticipo no encontrado" });
+
+  const { count: paidCount, error: paidErr } = await supabase
+    .from("operational_advance_schedule")
+    .select("id", { count: "exact", head: true })
+    .eq("advance_id", id)
+    .eq("status", "paid");
+  if (paidErr) return res.status(500).json({ error: paidErr.message });
+  if ((paidCount ?? 0) > 0) {
+    return res.status(409).json({ error: `No se puede eliminar: el anticipo tiene ${paidCount} cuota(s) pagada(s).` });
+  }
+
+  const { count: offsetCount, error: offErr } = await supabase
+    .from("payments")
+    .select("id", { count: "exact", head: true })
+    .eq("receipt_status", "advance_offset")
+    .eq("flag_details->>advance_id", String(id));
+  if (offErr) return res.status(500).json({ error: offErr.message });
+  if ((offsetCount ?? 0) > 0) {
+    return res.status(409).json({ error: `No se puede eliminar: hay ${offsetCount} pago(s) de mora cubiertos con este anticipo.` });
+  }
+
+  // Si nació de una Nota Débito no se borra suelto (quedaría la nota desvinculada): hay que rehacer el gasto completo
+  const { data: debits, error: debErr } = await supabase
+    .from("leasing_maintenance_debits")
+    .select("id, expense_id")
+    .eq("advance_id", id);
+  if (debErr) return res.status(500).json({ error: debErr.message });
+  if ((debits?.length ?? 0) > 0) {
+    const d = debits![0]!;
+    return res.status(409).json({
+      error: `No se puede eliminar: el anticipo viene de la Nota Débito #${d.id} (gasto #${d.expense_id}). Hay que eliminar el gasto con su Nota Débito y volverlo a crear.`,
+    });
+  }
+
+  // Borrar cronograma y luego el anticipo; si falla el anticipo, se restaura el cronograma
+  const { data: schedule, error: schReadErr } = await supabase
+    .from("operational_advance_schedule")
+    .select("*")
+    .eq("advance_id", id);
+  if (schReadErr) return res.status(500).json({ error: schReadErr.message });
+
+  const { error: schDelErr } = await supabase.from("operational_advance_schedule").delete().eq("advance_id", id);
+  if (schDelErr) return res.status(500).json({ error: schDelErr.message });
+
+  const { error: delErr } = await supabase.from("operational_advances").delete().eq("id", id);
+  if (delErr) {
+    if (schedule?.length) await supabase.from("operational_advance_schedule").insert(schedule);
+    return res.status(500).json({ error: delErr.message });
+  }
+
+  return res.json({ deleted: id });
+});
+
 // --------- PATCH /advances/:id/schedule/:rowId (EDITAR CUOTA COMPLETA) ---------
 // Permite cambiar estado (pending/paid), fecha y monto, recalculando el avance
 // Si se cambia la due_date de una cuota no-pagada, recalcula en cascada las siguientes no-pagadas.
