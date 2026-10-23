@@ -18,6 +18,9 @@ import {
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const fmtCOP = new Intl.NumberFormat("es-CO");
 
+/** Primer año con registros históricos en el sistema para el selector anual */
+const FIRST_DATA_YEAR = 2022;
+
 /** Fecha actual en Colombia (UTC-5) en formato YYYY-MM-DD */
 function todayCol(): string {
   return new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
@@ -115,7 +118,7 @@ type DailyResp = {
   };
 };
 
-type ProfitabilityPeriod = "day" | "week" | "month";
+type ProfitabilityPeriod = "day" | "week" | "month" | "year";
 
 type ProfitabilitySeriesPoint = {
   date: string;
@@ -163,9 +166,32 @@ function fmtDayLabel(iso: string): string {
 }
 
 function fmtShortDate(iso: string): string {
-  const d = new Date(iso + "T12:00:00");
   const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  if (/^\d{4}-\d{2}$/.test(iso)) {
+    const mIdx = parseInt(iso.slice(5, 7), 10) - 1;
+    return `${months[mIdx] || iso} ${iso.slice(2, 4)}`;
+  }
+  const d = new Date(iso + "T12:00:00");
   return `${d.getDate()} ${months[d.getMonth()]}`;
+}
+
+function fmtMonthLabel(ym: string): string {
+  const monthsFull = [
+    "Enero",
+    "Febrero",
+    "Marzo",
+    "Abril",
+    "Mayo",
+    "Junio",
+    "Julio",
+    "Agosto",
+    "Septiembre",
+    "Octubre",
+    "Noviembre",
+    "Diciembre",
+  ];
+  const mIdx = parseInt(ym.slice(5, 7), 10) - 1;
+  return `${monthsFull[mIdx] || ym} ${ym.slice(0, 4)}`;
 }
 
 function fmtCompactCOP(val: number): string {
@@ -222,6 +248,7 @@ const StatusBadge = ({ status }: { status?: string }) => {
 export default function AdminProfit() {
   const todayIso = todayCol();
   const todayYm = todayIso.slice(0, 7);
+  const todayYear = todayIso.slice(0, 4);
 
   const [month, setMonth] = useState(todayYm);
   const [plate, setPlate] = useState("");
@@ -237,6 +264,7 @@ export default function AdminProfit() {
   // Profitability state
   const [profPeriod, setProfPeriod] = useState<ProfitabilityPeriod>("month");
   const [profDate, setProfDate] = useState<string>(todayIso);
+  const [profYear, setProfYear] = useState<string>(todayYear);
   const [profData, setProfData] = useState<ProfitabilityResp | null>(null);
   const [profLoading, setProfLoading] = useState(false);
 
@@ -348,11 +376,13 @@ export default function AdminProfit() {
     overridePeriod?: ProfitabilityPeriod,
     overrideDate?: string,
     overrideMonth?: string,
-    overridePlate?: string
+    overridePlate?: string,
+    overrideYear?: string
   ) {
     const activePeriod = overridePeriod ?? profPeriod;
     const activeDate = overrideDate ?? profDate;
     const activeMonth = overrideMonth ?? month;
+    const activeYear = overrideYear ?? profYear;
     const activePlate = (overridePlate ?? plate).trim().toUpperCase();
     const reqId = ++profReqRef.current;
     profAbortRef.current?.abort();
@@ -365,6 +395,7 @@ export default function AdminProfit() {
         period: activePeriod,
         date: activeDate,
         month: activeMonth,
+        year: activeYear,
       });
       if (activePlate) params.set("plate", activePlate);
 
@@ -395,7 +426,7 @@ export default function AdminProfit() {
   function loadCurrent(overrideMonth?: string, overridePlate?: string) {
     if (viewMode === "monthly") load(overrideMonth, overridePlate);
     else if (viewMode === "daily") loadDaily(overrideMonth);
-    else loadProfitability(profPeriod, profDate, overrideMonth, overridePlate);
+    else loadProfitability(profPeriod, profDate, overrideMonth, overridePlate, profYear);
   }
 
   // Solo cargamos la pestaña activa ("monthly") al montar la página;
@@ -436,13 +467,20 @@ export default function AdminProfit() {
 
   function handlePeriodChange(nextPeriod: ProfitabilityPeriod) {
     setProfPeriod(nextPeriod);
-    loadProfitability(nextPeriod, profDate, month, plate);
+    loadProfitability(nextPeriod, profDate, month, plate, profYear);
   }
 
   function handleProfDateChange(nextDate: string) {
     setProfDate(nextDate);
     if (nextDate && /^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
-      loadProfitability(profPeriod, nextDate, month, plate);
+      loadProfitability(profPeriod, nextDate, month, plate, profYear);
+    }
+  }
+
+  function handleProfYearChange(nextYear: string) {
+    setProfYear(nextYear);
+    if (nextYear && /^\d{4}$/.test(nextYear)) {
+      loadProfitability(profPeriod, profDate, month, plate, nextYear);
     }
   }
 
@@ -691,6 +729,20 @@ export default function AdminProfit() {
   };
 
   const isAnyLoading = loading || dailyLoading || profLoading;
+  const periodLabel =
+    profPeriod === "day"
+      ? "Día"
+      : profPeriod === "week"
+      ? "Semana"
+      : profPeriod === "month"
+      ? "Mes"
+      : "Año";
+
+  const yearOptions: string[] = [];
+  const maxYearOpt = Math.max(Number(todayYear), Number(profYear) || Number(todayYear));
+  for (let y = maxYearOpt; y >= FIRST_DATA_YEAR; y--) {
+    yearOptions.push(String(y));
+  }
 
   return (
     <CompanyLock>
@@ -707,6 +759,19 @@ export default function AdminProfit() {
                 onChange={(e) => handleMonthChange(e.target.value)}
                 required
               />
+            )}
+            {viewMode === "profitability" && profPeriod === "year" && (
+              <select
+                className="rounded-xl border bg-white px-3 py-2"
+                value={profYear}
+                onChange={(e) => handleProfYearChange(e.target.value)}
+              >
+                {yearOptions.map((y) => (
+                  <option key={y} value={y}>
+                    Año {y}
+                  </option>
+                ))}
+              </select>
             )}
             {viewMode === "profitability" && (profPeriod === "day" || profPeriod === "week") && (
               <div className="flex items-center gap-2">
@@ -798,6 +863,7 @@ export default function AdminProfit() {
                     { key: "day", label: "Día" },
                     { key: "week", label: "Semana" },
                     { key: "month", label: "Mes" },
+                    { key: "year", label: "Año" },
                   ] as { key: ProfitabilityPeriod; label: string }[]
                 ).map((opt) => (
                   <button
@@ -836,7 +902,7 @@ export default function AdminProfit() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Ingresos Netos ({profPeriod === "day" ? "Día" : profPeriod === "week" ? "Semana" : "Mes"})
+                    Ingresos Netos ({periodLabel})
                   </div>
                   <div className="mt-1 text-2xl font-bold text-slate-900">
                     ${fmtCOP.format(profTotals.pure_income)}
@@ -852,7 +918,7 @@ export default function AdminProfit() {
 
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Gastos Totales ({profPeriod === "day" ? "Día" : profPeriod === "week" ? "Semana" : "Mes"})
+                    Gastos Totales ({periodLabel})
                   </div>
                   <div className="mt-1 text-2xl font-bold text-red-600">
                     ${fmtCOP.format(profTotals.expense)}
@@ -896,7 +962,9 @@ export default function AdminProfit() {
                         ? `Evolución diaria de los últimos 7 días hasta ${profData?.end_date || profDate}`
                         : profPeriod === "week"
                         ? `Evolución diaria de la semana (${profData?.start_date || ""} a ${profData?.end_date || ""})`
-                        : `Evolución diaria del mes (${profData?.chart_start_date || month} a ${profData?.chart_end_date || month})`}
+                        : profPeriod === "month"
+                        ? `Evolución diaria del mes (${profData?.chart_start_date || month} a ${profData?.chart_end_date || month})`
+                        : `Evolución mensual del año ${profYear} (${profData?.chart_start_date?.slice(0, 7) || `${profYear}-01`} a ${profData?.chart_end_date?.slice(0, 7) || `${profYear}-12`})`}
                     </p>
                   </div>
                 </div>
@@ -925,7 +993,11 @@ export default function AdminProfit() {
                           ]}
                           labelFormatter={(_label, payload) => {
                             const rawDate = payload?.[0]?.payload?.date;
-                            return rawDate ? `Fecha: ${rawDate} (${fmtDayLabel(rawDate)})` : _label;
+                            if (!rawDate) return _label;
+                            if (/^\d{4}-\d{2}$/.test(rawDate)) {
+                              return `Mes: ${fmtMonthLabel(rawDate)} (${rawDate})`;
+                            }
+                            return `Fecha: ${rawDate} (${fmtDayLabel(rawDate)})`;
                           }}
                           contentStyle={{
                             borderRadius: "12px",

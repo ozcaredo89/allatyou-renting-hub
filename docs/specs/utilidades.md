@@ -21,7 +21,7 @@ Panel interno (Basic Auth + `CompanyLock`) para ver cuánto deja cada vehículo.
 | **Utilidad neta** (`profit` / `net_profit`) | Ingresos − Gastos + Ajustes |
 
 - **No suman a la utilidad** (columnas informativas de la Mensual): `deposits_total` (= `insurance_amount`, depósito del conductor), `advances_total` (= `credit_installment_amount` de pagos con `installment_number`, recuperación de anticipos) y `maintenance_provision` (= `maintenance_amount`, provisión de mantenimiento de renting).
-- En Mensual la fórmula se calcula en la vista `vehicle_month_profit`. En Rentabilidad se recalcula en JS (`/reports/profitability`) con la misma regla. **Si cambia una, hay que cambiar la otra.**
+- En **Mensual** y en **Rentabilidad (período Año)** la fórmula se toma de la vista SQL `vehicle_month_profit`. En **Rentabilidad (períodos Día, Semana y Mes)** se recalcula en JS (`/reports/profitability`) a partir de `payments`, `expenses` y `vehicle_ledger` con la misma regla. **Si cambia una fórmula, hay que cambiar la otra.**
 - **Vehículos en leasing (decisión 2026-10-22, provisional):** se usa la misma fórmula, con `delivery_amount` como ingreso, aunque en leasing ese reparto no es el real (`pagos.md` §3; el real está en `payment_distributions`: mantenimiento $10.000, admin, interés, capital). Efecto conocido y aceptado por ahora: la utilidad de un vehículo en leasing incluye el abono a capital (que es recuperación de la inversión) y la provisión de mantenimiento queda en $6.000 en vez de $10.000. Ver §7.
 - Aparecen todas las placas de `vehicles`, incluso con $0 de actividad. Los pagos, gastos o ajustes de placas que no están en `vehicles` no se muestran.
 
@@ -33,12 +33,13 @@ Panel interno (Basic Auth + `CompanyLock`) para ver cuánto deja cada vehículo.
 - **Fondo Mant. (Hoy):** ver §5.
 - Desde la fila se abren el detalle de ingresos/gastos (`/reports/income-detail`, `/reports/expense-detail`) y el editor de ajustes (`/ledger`).
 
-### Rentabilidad (`GET /reports/profitability?period=day|week|month&date=&month=&plate=`)
-- Tarjetas (ingresos, gastos, utilidad neta, margen), un gráfico de líneas por día y una tabla por placa con margen % = utilidad neta / ingresos (`—` si no hubo ingresos).
+### Rentabilidad (`GET /reports/profitability?period=day|week|month|year&date=&month=&year=&plate=`)
+- Tarjetas (ingresos, gastos, utilidad neta, margen), un gráfico de líneas de tendencia y una tabla por placa con margen % = utilidad neta / ingresos (`—` si no hubo ingresos).
 - Períodos (hora Colombia, UTC−5):
   - **Día:** la tabla muestra la fecha elegida y el gráfico los 7 días que terminan en ella.
   - **Semana:** los 7 días `[fecha − 6, fecha]`, igual en tabla y gráfico.
   - **Mes:** el mes calendario. Si es el mes en curso, el gráfico se corta en hoy para no pintar días futuros en $0; la tabla sí cubre el mes completo.
+  - **Año:** el año calendario (`YYYY`), agregando desde la vista `vehicle_month_profit`. El gráfico muestra la evolución mensual (`YYYY-01` .. `YYYY-12`) y, si es el año en curso, se corta en el mes actual para no pintar meses futuros en $0.
 - Los detalles de ingresos/gastos se abren con el mismo rango de fechas de la tabla (`from`/`to`).
 
 ### Filtros comunes

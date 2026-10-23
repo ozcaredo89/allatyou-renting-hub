@@ -306,15 +306,18 @@ r.get("/income-detail", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "month (YYYY-MM) or from/to (YYYY-MM-DD) required" });
   }
 
-  const { data, error } = await supabase
-    .from("payments")
-    .select("id, payer_name, plate, payment_date, amount, delivery_amount, installment_number, proof_url, status")
-    .eq("plate", plate)
-    .eq("status", "confirmed")
-    .gte("payment_date", start)
-    .lt("payment_date", end)
-    .order("payment_date", { ascending: true })
-    .order("id", { ascending: true });
+  const { data, error } = await fetchAllRows<any>((fromIdx, toIdx) =>
+    supabase
+      .from("payments")
+      .select("id, payer_name, plate, payment_date, amount, delivery_amount, installment_number, proof_url, status")
+      .eq("plate", plate)
+      .eq("status", "confirmed")
+      .gte("payment_date", start)
+      .lt("payment_date", end)
+      .order("payment_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(fromIdx, toIdx)
+  );
 
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ items: data ?? [] });
@@ -342,14 +345,17 @@ r.get("/expense-detail", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "month (YYYY-MM) or from/to (YYYY-MM-DD) required" });
   }
 
-  const { data, error } = await supabase
-    .from("expenses")
-    .select("id, date, item, description, attachment_url, expense_vehicles!inner(plate, share_amount)")
-    .eq("expense_vehicles.plate", plate)
-    .gte("date", start)
-    .lt("date", end)
-    .order("date", { ascending: true })
-    .order("id", { ascending: true });
+  const { data, error } = await fetchAllRows<any>((fromIdx, toIdx) =>
+    supabase
+      .from("expenses")
+      .select("id, date, item, description, attachment_url, expense_vehicles!inner(plate, share_amount)")
+      .eq("expense_vehicles.plate", plate)
+      .gte("date", start)
+      .lt("date", end)
+      .order("date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(fromIdx, toIdx)
+  );
 
   if (error) return res.status(500).json({ error: error.message });
 
@@ -466,8 +472,156 @@ r.get("/daily", async (req: Request, res: Response) => {
   return res.json({ month: monthStr, items, totals });
 });
 
+type PlateAccum = {
+  pure_income: number;
+  expense: number;
+  adjustments: number;
+};
+
+type SeriesAccum = {
+  pure_income: number;
+  expense: number;
+  adjustments: number;
+  active_pure_income: number;
+  active_expense: number;
+  active_adjustments: number;
+};
+
+function emptyPlateAccum(): PlateAccum {
+  return { pure_income: 0, expense: 0, adjustments: 0 };
+}
+
+function emptySeriesAccum(): SeriesAccum {
+  return {
+    pure_income: 0,
+    expense: 0,
+    adjustments: 0,
+    active_pure_income: 0,
+    active_expense: 0,
+    active_adjustments: 0,
+  };
+}
+
 /**
- * GET /reports/profitability?period=day|week|month&date=YYYY-MM-DD&month=YYYY-MM&plate=ABC123
+ * Carga vehículos, estado por placa y fondo de mantenimiento disponible hoy,
+ * e inicializa los acumuladores por placa para las placas filtradas.
+ */
+async function loadFleetContext(plateFilter: string) {
+  const [vehiclesRes, leasingRes] = await Promise.all([
+    supabase.from("vehicles").select("plate, status").order("plate", { ascending: true }),
+    supabase.from("leasing_contracts_summary_vw").select("plate, maintenance_fund_available"),
+  ]);
+
+  if (vehiclesRes.error) return { error: vehiclesRes.error.message, ctx: null };
+  if (leasingRes.error) return { error: leasingRes.error.message, ctx: null };
+
+  const vehicles = vehiclesRes.data || [];
+  const allPlates = vehicles.map(v => v.plate);
+  const statusByPlate = new Map<string, string>(
+    vehicles.map(v => [v.plate, v.status || "active"])
+  );
+  const isInactivePlate = (p: string) => {
+    const st = statusByPlate.get(p);
+    return st === "sold" || st === "inactive";
+  };
+
+  const leasingMap = new Map<string, number>();
+  for (const row of leasingRes.data || []) {
+    leasingMap.set(row.plate, Math.round(Number(row.maintenance_fund_available ?? 0)));
+  }
+
+  const filterPlates = plateFilter ? allPlates.filter(p => p === plateFilter) : allPlates;
+  const filterPlateSet = new Set(filterPlates);
+
+  const plateStats = new Map<string, PlateAccum>();
+  for (const p of filterPlates) {
+    plateStats.set(p, emptyPlateAccum());
+  }
+
+  return {
+    error: null,
+    ctx: {
+      filterPlates,
+      filterPlateSet,
+      statusByPlate,
+      isInactivePlate,
+      leasingMap,
+      plateStats,
+    },
+  };
+}
+
+function buildProfitabilityItems(
+  filterPlates: string[],
+  plateStats: Map<string, PlateAccum>,
+  statusByPlate: Map<string, string>,
+  leasingMap: Map<string, number>
+) {
+  return filterPlates.map(plate => {
+    const st = plateStats.get(plate) || emptyPlateAccum();
+    const pure_income = Math.round(st.pure_income);
+    const expense = Math.round(st.expense);
+    const adjustments = Math.round(st.adjustments);
+    const net_profit = pure_income - expense + adjustments;
+    const maintenance_fund_available = leasingMap.has(plate) ? leasingMap.get(plate)! : null;
+
+    return {
+      plate,
+      status: statusByPlate.get(plate) || "active",
+      maintenance_fund_available,
+      pure_income,
+      expense,
+      adjustments,
+      net_profit,
+    };
+  });
+}
+
+function buildProfitabilitySeries(keys: string[], bucketStats: Map<string, SeriesAccum>) {
+  return keys.map(date => {
+    const bs = bucketStats.get(date) || emptySeriesAccum();
+    const pure_income = Math.round(bs.pure_income);
+    const expense = Math.round(bs.expense);
+    const adjustments = Math.round(bs.adjustments);
+    const net_profit = pure_income - expense + adjustments;
+
+    const active_pure_income = Math.round(bs.active_pure_income);
+    const active_expense = Math.round(bs.active_expense);
+    const active_adjustments = Math.round(bs.active_adjustments);
+    const active_net_profit = active_pure_income - active_expense + active_adjustments;
+
+    return {
+      date,
+      pure_income,
+      expense,
+      adjustments,
+      net_profit,
+      active_pure_income,
+      active_expense,
+      active_adjustments,
+      active_net_profit,
+    };
+  });
+}
+
+function buildProfitabilityTotals(items: ReturnType<typeof buildProfitabilityItems>) {
+  return items.reduce(
+    (acc, r) => {
+      acc.pure_income += r.pure_income;
+      acc.expense += r.expense;
+      acc.adjustments += r.adjustments;
+      acc.net_profit += r.net_profit;
+      if (r.maintenance_fund_available != null) {
+        acc.maintenance_fund_available += r.maintenance_fund_available;
+      }
+      return acc;
+    },
+    { pure_income: 0, expense: 0, adjustments: 0, net_profit: 0, maintenance_fund_available: 0 }
+  );
+}
+
+/**
+ * GET /reports/profitability?period=day|week|month|year&date=YYYY-MM-DD&month=YYYY-MM&year=YYYY&plate=ABC123
  * Tab de Rentabilidad:
  * - Ventana de tiempo rápida:
  *   • day: tabla desglosa el día seleccionado (date); gráfico muestra los 7 días hasta date para visualizar la tendencia.
@@ -475,6 +629,9 @@ r.get("/daily", async (req: Request, res: Response) => {
  *   • month: mes seleccionado (month = YYYY-MM) tanto en gráfico como en tabla.
  *     Si el mes consultado es el mes en curso en Colombia, la serie del gráfico se corta en todayCol()
  *     para no graficar días futuros en $0.
+ *   • year: año seleccionado (year = YYYY), usando la vista SQL `vehicle_month_profit`.
+ *     La serie del gráfico muestra la evolución mensual (YYYY-01..YYYY-12) y, si es el año en curso,
+ *     se corta en el mes actual en Colombia para no graficar meses futuros en $0.
  * - Fórmula contable (idéntica a vehicle_month_profit / vehicle_month_adjustments):
  *   Ingresos = pure_income (delivery_amount), Gastos = share_amount en expense_vehicles,
  *   Ajustes = vehicle_ledger (extra_income: +amount, extra_expense: -amount, correction: +amount, opening_balance: 0),
@@ -482,13 +639,108 @@ r.get("/daily", async (req: Request, res: Response) => {
  */
 r.get("/profitability", async (req: Request, res: Response) => {
   const periodRaw = String(req.query.period || "month").trim().toLowerCase();
-  const period: "day" | "week" | "month" =
-    periodRaw === "day" || periodRaw === "week" ? periodRaw : "month";
+  const period: "day" | "week" | "month" | "year" =
+    periodRaw === "day" || periodRaw === "week" || periodRaw === "year" ? periodRaw : "month";
 
   const currentDayCol = todayCol();
+  const currentYearCol = currentDayCol.slice(0, 4);
   const dateParam = String(req.query.date || currentDayCol).trim();
   const monthParam = String(req.query.month || dateParam.slice(0, 7)).trim();
+  const yearParam = String(req.query.year || monthParam.slice(0, 4) || currentYearCol).trim();
   const plateFilter = String(req.query.plate || "").toUpperCase().trim();
+
+  if (period === "year") {
+    const yearNum = Number(yearParam);
+    const maxAllowedYear = Number(currentYearCol) + 1;
+    if (!/^\d{4}$/.test(yearParam) || yearNum < 2000 || yearNum > maxAllowedYear) {
+      return res
+        .status(400)
+        .json({ error: `year must be YYYY between 2000 and ${maxAllowedYear}` });
+    }
+
+    const yearStartMonth = `${yearParam}-01-01`;
+    const yearEndMonth = `${yearParam}-12-01`;
+
+    const [fleetRes, vmpRes] = await Promise.all([
+      loadFleetContext(plateFilter),
+      fetchAllRows<any>((from, to) =>
+        supabase
+          .from("vehicle_month_profit")
+          .select("plate, month, pure_income, expense, adjustments, profit")
+          .gte("month", yearStartMonth)
+          .lte("month", yearEndMonth)
+          .order("month", { ascending: true })
+          .order("plate", { ascending: true })
+          .range(from, to)
+      ),
+    ]);
+
+    if (fleetRes.error || !fleetRes.ctx) {
+      return res.status(500).json({ error: fleetRes.error || "Failed to load fleet context" });
+    }
+    if (vmpRes.error) return res.status(500).json({ error: vmpRes.error.message });
+
+    const { filterPlates, filterPlateSet, statusByPlate, isInactivePlate, leasingMap, plateStats } =
+      fleetRes.ctx;
+
+    // Si es el año actual en Colombia, cortamos la serie del gráfico en el mes actual (inclusive)
+    // para que los meses futuros aún no transcurridos no caigan a $0 al final de la gráfica.
+    const currentMonthNum = Number(currentDayCol.slice(5, 7));
+    const maxMonth = yearParam === currentYearCol ? currentMonthNum : 12;
+
+    const chartMonths: string[] = [];
+    const monthStats = new Map<string, SeriesAccum>();
+    for (let m = 1; m <= maxMonth; m++) {
+      const ym = `${yearParam}-${String(m).padStart(2, "0")}`;
+      chartMonths.push(ym);
+      monthStats.set(ym, emptySeriesAccum());
+    }
+
+    for (const row of vmpRes.data) {
+      if (!row.plate || !filterPlateSet.has(row.plate)) continue;
+      const inc = Number(row.pure_income || 0);
+      const exp = Number(row.expense || 0);
+      const adj = Number(row.adjustments || 0);
+      const ym = String(row.month || "").slice(0, 7);
+
+      const st = plateStats.get(row.plate);
+      if (st) {
+        st.pure_income += inc;
+        st.expense += exp;
+        st.adjustments += adj;
+      }
+
+      const ms = monthStats.get(ym);
+      if (ms) {
+        ms.pure_income += inc;
+        ms.expense += exp;
+        ms.adjustments += adj;
+        if (!isInactivePlate(row.plate)) {
+          ms.active_pure_income += inc;
+          ms.active_expense += exp;
+          ms.active_adjustments += adj;
+        }
+      }
+    }
+
+    const items = buildProfitabilityItems(filterPlates, plateStats, statusByPlate, leasingMap);
+    const series = buildProfitabilitySeries(chartMonths, monthStats);
+    const totals = buildProfitabilityTotals(items);
+
+    const lastChartMonth = chartMonths[chartMonths.length - 1] || `${yearParam}-12`;
+    const lastChartBounds = monthBounds(lastChartMonth);
+
+    return res.json({
+      period,
+      start_date: `${yearParam}-01-01`,
+      end_date: `${yearParam}-12-31`,
+      chart_start_date: `${yearParam}-01-01`,
+      chart_end_date: addDaysYmd(lastChartBounds.end, -1),
+      series,
+      items,
+      totals,
+    });
+  }
 
   if (period === "month") {
     if (!/^\d{4}-\d{2}$/.test(monthParam)) {
@@ -533,11 +785,8 @@ r.get("/profitability", async (req: Request, res: Response) => {
   const queryStart = chartStart < tableStart ? chartStart : tableStart;
   const queryEnd = chartEndExclusive > tableEndExclusive ? chartEndExclusive : tableEndExclusive;
 
-  const [vehiclesRes, leasingRes, paymentsRes, expensesRes, ledgerRes] = await Promise.all([
-    supabase.from("vehicles").select("plate, status").order("plate", { ascending: true }),
-    supabase
-      .from("leasing_contracts_summary_vw")
-      .select("plate, maintenance_fund_available"),
+  const [fleetRes, paymentsRes, expensesRes, ledgerRes] = await Promise.all([
+    loadFleetContext(plateFilter),
     fetchAllRows<any>((from, to) =>
       supabase
         .from("payments")
@@ -571,56 +820,21 @@ r.get("/profitability", async (req: Request, res: Response) => {
     ),
   ]);
 
-  if (vehiclesRes.error) return res.status(500).json({ error: vehiclesRes.error.message });
-  if (leasingRes.error) return res.status(500).json({ error: leasingRes.error.message });
+  if (fleetRes.error || !fleetRes.ctx) {
+    return res.status(500).json({ error: fleetRes.error || "Failed to load fleet context" });
+  }
   if (paymentsRes.error) return res.status(500).json({ error: paymentsRes.error.message });
   if (expensesRes.error) return res.status(500).json({ error: expensesRes.error.message });
   if (ledgerRes.error) return res.status(500).json({ error: ledgerRes.error.message });
 
-  const vehicles = vehiclesRes.data || [];
-  const allPlates = vehicles.map(v => v.plate);
-  const statusByPlate = new Map<string, string>(vehicles.map(v => [v.plate, v.status || "active"]));
-  const isInactivePlate = (p: string) => {
-    const st = statusByPlate.get(p);
-    return st === "sold" || st === "inactive";
-  };
-
-  const leasingMap = new Map<string, number>();
-  for (const row of leasingRes.data || []) {
-    leasingMap.set(row.plate, Math.round(Number(row.maintenance_fund_available ?? 0)));
-  }
-
-  const filterPlates = plateFilter ? allPlates.filter(p => p === plateFilter) : allPlates;
-  const filterPlateSet = new Set(filterPlates);
-
-  // Acumuladores por placa para la tabla [tableStart, tableEndExclusive)
-  const plateStats = new Map<string, { pure_income: number; expense: number; adjustments: number }>();
-  for (const p of filterPlates) {
-    plateStats.set(p, { pure_income: 0, expense: 0, adjustments: 0 });
-  }
+  const { filterPlates, filterPlateSet, statusByPlate, isInactivePlate, leasingMap, plateStats } =
+    fleetRes.ctx;
 
   // Acumuladores por día para el gráfico [chartStart, chartEndExclusive)
   const chartDays = listDaysInRange(chartStart, chartEndExclusive);
-  const dayStats = new Map<
-    string,
-    {
-      pure_income: number;
-      expense: number;
-      adjustments: number;
-      active_pure_income: number;
-      active_expense: number;
-      active_adjustments: number;
-    }
-  >();
+  const dayStats = new Map<string, SeriesAccum>();
   for (const d of chartDays) {
-    dayStats.set(d, {
-      pure_income: 0,
-      expense: 0,
-      adjustments: 0,
-      active_pure_income: 0,
-      active_expense: 0,
-      active_adjustments: 0,
-    });
+    dayStats.set(d, emptySeriesAccum());
   }
 
   // 1) Procesar ingresos (payments.delivery_amount)
@@ -684,65 +898,9 @@ r.get("/profitability", async (req: Request, res: Response) => {
     }
   }
 
-  // Construir items por placa
-  const items = filterPlates.map(plate => {
-    const st = plateStats.get(plate) || { pure_income: 0, expense: 0, adjustments: 0 };
-    const pure_income = Math.round(st.pure_income);
-    const expense = Math.round(st.expense);
-    const adjustments = Math.round(st.adjustments);
-    const net_profit = pure_income - expense + adjustments;
-    const maintenance_fund_available = leasingMap.has(plate) ? leasingMap.get(plate)! : null;
-
-    return {
-      plate,
-      status: statusByPlate.get(plate) || "active",
-      maintenance_fund_available,
-      pure_income,
-      expense,
-      adjustments,
-      net_profit,
-    };
-  });
-
-  // Construir serie temporal para el gráfico de líneas
-  const series = chartDays.map(d => {
-    const ds = dayStats.get(d)!;
-    const pure_income = Math.round(ds.pure_income);
-    const expense = Math.round(ds.expense);
-    const adjustments = Math.round(ds.adjustments);
-    const net_profit = pure_income - expense + adjustments;
-
-    const active_pure_income = Math.round(ds.active_pure_income);
-    const active_expense = Math.round(ds.active_expense);
-    const active_adjustments = Math.round(ds.active_adjustments);
-    const active_net_profit = active_pure_income - active_expense + active_adjustments;
-
-    return {
-      date: d,
-      pure_income,
-      expense,
-      adjustments,
-      net_profit,
-      active_pure_income,
-      active_expense,
-      active_adjustments,
-      active_net_profit,
-    };
-  });
-
-  const totals = items.reduce(
-    (acc, r) => {
-      acc.pure_income += r.pure_income;
-      acc.expense += r.expense;
-      acc.adjustments += r.adjustments;
-      acc.net_profit += r.net_profit;
-      if (r.maintenance_fund_available != null) {
-        acc.maintenance_fund_available += r.maintenance_fund_available;
-      }
-      return acc;
-    },
-    { pure_income: 0, expense: 0, adjustments: 0, net_profit: 0, maintenance_fund_available: 0 }
-  );
+  const items = buildProfitabilityItems(filterPlates, plateStats, statusByPlate, leasingMap);
+  const series = buildProfitabilitySeries(chartDays, dayStats);
+  const totals = buildProfitabilityTotals(items);
 
   return res.json({
     period,
