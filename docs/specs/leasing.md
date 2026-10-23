@@ -1,7 +1,7 @@
 # Spec — Leasing / Rent-to-Own
 
-**Estado:** Vigente · **Última revisión:** 2026-10-12
-**Código principal:** `src/lib/leasingCascade.ts`, `src/routes/leasing.ts`, `web/src/pages/AdminAmortization.tsx`
+**Estado:** Vigente · **Última revisión:** 2026-10-23
+**Código principal:** `src/lib/leasingCascade.ts`, `src/lib/contractGenerator.ts`, `src/templates/contrato.html`, `src/routes/leasing.ts`, `web/src/pages/AdminAmortization.tsx`
 **Migraciones:** `20260714_leasing_schema.sql` → `20261009_leasing_maintenance_debits.sql`
 
 > Este archivo describe **reglas de negocio**. El esquema exacto vive en las migraciones; no se duplica aquí.
@@ -31,15 +31,23 @@ simulación → pending → active → closed (solo manual, ver §7)
                  └──→ superseded (se generó otro pending para la misma placa)
 ```
 
-1. **Simulación** (`/leasing/simulations`): solo guarda inputs, no cronograma.
-2. **Generar contrato** (`POST /leasing/contracts/generate`): crea el contrato en `pending`, genera PDF+DOCX y pasa el vehículo a `reserved`. Cualquier `pending` previo de la misma placa queda `superseded`.
-   - La tasa remuneratoria no puede superar **1,5 × IBC** vigente (`config_financials`). Sin IBC configurado no se generan contratos.
+1. **Simulación** (`/leasing/simulations` desde `AdminAmortization.tsx`): solo guarda inputs, no cronograma.
+2. **Generar contrato y documento** (`POST /leasing/contracts/generate` en `src/routes/leasing.ts` → `generateContract` en `src/lib/contractGenerator.ts`): crea el contrato en `pending`, genera el documento PDF+DOCX y pasa el vehículo a `reserved`. Cualquier `pending` previo de la misma placa queda `superseded`.
+   - **Plantilla (fuente única de verdad):** `src/templates/contrato.html` (incluye el Contrato de Compraventa con Retención de Dominio, el Pagaré a la Orden + Carta de Instrucciones y el Anexo 1 con la tabla de amortización). Nota: `docs/plantilla_contrato_completa.docx` es solo referencia histórica y **no** la usa el código.
+   - **Cómo se crea el documento (`src/lib/contractGenerator.ts`):**
+     1. Valida tasas (`validateRatesVsIBC`): ni la tasa remuneratoria ni `mora_pct` pueden superar **1,5 × IBC** vigente (`config_financials`). Sin IBC configurado no se generan contratos.
+     2. Obtiene consecutivos atómicos vía RPCs Postgres: `next_contract_number` (`AY-YYYY-XXXX`) y `next_pagare_number` (`PAG-YYYY-XXXX`).
+     3. Calcula la tabla de amortización completa con `generateLeasingSchedule` y arma las filas HTML (`buildAmortizacionRows`).
+     4. Reemplaza los placeholders `{{...}}` en `src/templates/contrato.html` (usa `src/lib/numberToWords.ts` para formatear montos y cifras en letras).
+     5. Renderiza el **PDF** con Puppeteer (formato A4) y el **DOCX** con `html-to-docx`.
+     6. Sube ambos archivos a Cloudflare R2 bajo `contracts/${numero_contrato}_${ts}.pdf` y `.docx` (keys inmutables) y devuelve URLs prefirmadas con **TTL de 30 minutos**.
+     7. Registra la versión en `leasing_contract_versions` con el hash SHA-256 del template (`template_version`) y `audit_payload` sin PII (nunca guarda cédula, email, teléfono ni geocerca ahí).
    - Requiere `driver_id`, `daily_capital_interest` y `mora_pct`.
-3. **Activar** (`PATCH /leasing/contracts/:id/activate`): exige
-   - URL del contrato firmado/autenticado alojada en R2 (`R2_PUBLIC_URL`),
+3. **Activar** (`PATCH /leasing/contracts/:id/activate`, modal `LeasingActivationModal` en `AdminAmortization.tsx`): exige
+   - URL del contrato firmado/autenticado alojada en R2 (subida vía `POST /uploads` a la carpeta `contracts` y validada contra `R2_PUBLIC_URL`),
    - confirmación explícita de `start_date` (`start_date_confirmed: true`),
-   - calendario de días pagables no vacío.
-   Genera el cronograma y activa todo en una sola RPC (`activate_leasing_contract`).
+   - calendario de días pagables no vacío (si `start_date` cambió respecto al borrador, recalcula Pico y Placa).
+   Genera el cronograma y activa todo en una sola RPC (`activate_leasing_contract`), pasando el contrato a `active` y el vehículo a `leasing`.
 4. **Default / ejecutar pagaré**: bloqueado si pasaron **>72h** desde la creación sin documento firmado adjunto.
 5. `POST /leasing/contracts` es **legacy/deprecated**: no usarlo en flujos nuevos.
 6. **Cancelar un leasing en curso** (`POST /leasing/contracts/:id/cancel-active`, solo desde `active`): transición `active → cancelled` (decisión 2026-10-20). Botón en `AdminVehicles` (estado `leasing`) y en `AdminAmortization` (pestaña activos), con confirmación visual **sin montos**. Efectos:
@@ -126,6 +134,27 @@ El backend debe leer de esta vista y no recalcular en JS (evita truncamiento de 
 - Por ley no puede superar **1,5 × IBC** (tope de usura); se valida al generar el contrato.
 - **El sistema no la cobra:** hoy no se calcula ningún monto adicional por mora sobre cuotas vencidas. Si algún día se cobra, se define aquí primero.
 
-## 9. Preguntas abiertas
+## 9. Causales de resolución y blindaje contractual (`src/templates/contrato.html`)
+
+Además de la mora de **≥ 2 cuotas consecutivas** y la salida de la **geocerca** o exceso reiterado de velocidad, el contrato contempla (revisión 2026-10-23):
+
+1. **Prohibición de consumo, porte de sustancias y alcohol (Cláusula Sexta):**
+   - **Prohibición objetiva y definición legal:** se definen *"sustancias psicoactivas"* como las controladas en la Ley 30 de 1986 y listas del Fondo Nacional de Estupefacientes. Cero excepciones para el **cannabis (incluido el medicinal)** y para conducir bajo el efecto de cualquier sustancia o medicamento que afecte las capacidades psicomotoras. Se permite portar medicamentos recetados distintos del cannabis en empaque original sellado y con fórmula vigente. Prohibido consumir licor, llevar envases abiertos o conducir con cualquier grado de alcohol (**incluido "Grado Cero"**, Ley 1696 de 2013, confirmado con **segunda medición a los 15 minutos** según Res. 1844/2015 de Medicina Legal). Frente a pasajeros: obligación de *"no permitir a sabiendas"*, suspender el servicio y avisar a la policía.
+   - **Declaración juramentada y extinción de dominio:** declaración al firmar de no consumir sustancias controladas sin prescripción médica, ni cannabis bajo ninguna modalidad (incluida la medicinal), ni tener tratamientos que afecten la conducción (falsedad = **dolo**, art. 1515 C.C.). Obligación de avisar en **24h** cualquier incautación, comparendo o inmovilización (Ley 1708 de 2014 y Ley 30 de 1986).
+   - **Dos niveles de actuación (en ambos: suspensión inmediata + entrega del vehículo + 2 días hábiles de descargos antes de la resolución formal):**
+     - *Nivel 1 (Hechos objetivos):* comparendo/inmovilización/informe de autoridad **específicamente por embriaguez, negativa a la prueba o sustancias psicoactivas**, prueba positiva confirmada, negativa o inasistencia a prueba (ante autoridad o laboratorio designado), o hallazgo físico documentado.
+     - *Nivel 2 (Reporte/"soplo" o indicios):* notificación escrita, **suspensión preventiva de la operación**, orden de prueba obligatoria y **2 días hábiles** para descargos. Si se niega o no asiste a tiempo, o si sale positivo, las partes pactan que se presume configurado el incumplimiento grave **salvo prueba en contrario aportada en los descargos**, y la resolución se decide al vencer los 2 días hábiles de descargos.
+   - **Régimen de pruebas (ingreso, aleatorias en franja de servicio y por requerimiento):** las pruebas aleatorias solo se exigen **mientras el vehículo esté en operación o dentro de la franja horaria de servicio (6:00 a.m. – 10:00 p.m.)**. Se practican **ante la autoridad de tránsito o en el laboratorio designado por el vendedor**: plazo máximo de **3 horas** para alcohol y **12 horas** para sustancias psicoactivas (orina, sangre, cabello hasta 90 días, o marcadores EtG/PEth) en IPS/laboratorio habilitado en el REPS (Res. 3100/2019) o acreditado ONAC (ISO 15189/17025) con cadena de custodia, y con autorización de entrega directa de resultados **durante la vigencia del contrato y mientras subsistan obligaciones**. Costo de laboratorio a cargo del comprador; **si sale negativo, se abona a la siguiente cuota diaria**.
+   - **Anexo 2 (`Acta de Entrega Voluntaria del Vehículo`):** unificado con `docs/formatos/acta_entrega_voluntaria.html` (casillas de hechos incluyendo aliento/olor, negativa a prueba y comparendo; reconocimiento y versión de puño y letra; aceptación de prueba ante autoridad o laboratorio; detalle de llaves/documentos y retiro de objetos personales; 2 días hábiles de descargos; recibo de copia; huella y firma de **2 testigos**).
+2. **Separación entre Fondo de Mantenimiento y Cláusula Penal (Cláusula Séptima):**
+   - Del **fondo de mantenimiento / depósito** solo se descuentan **gastos reales y directos con factura/soporte** (limpieza, descontaminación, grúa, patios, peritajes, comparendos —sin descontar pruebas ya pagadas por el comprador—), entregando liquidación escrita.
+   - Los perjuicios estimados (lucro cesante, afectación jurídica) se cobran vía **cláusula penal** (exigible ejecutivamente cuando el incumplimiento conste reconocido en el Anexo 2 o documento del deudor, art. 422 C.G.P., o vía declarativa) e indemnización adicional (**art. 1600 C.C.**, pena + indemnización acumulables sin cobrar dos veces el mismo concepto).
+3. **Restitución, inspecciones y datos sensibles sin audio (Cláusula Novena):**
+   - **Restitución y Pago Directo (9.1):** entrega voluntaria en **24 horas** (notificada la suspensión preventiva o la resolución); **una vez declarada la resolución o configurado el incumplimiento**, procede el **pacto expreso de Pago Directo y aprehensión por Ley 1676 de 2013 (art. 60)** con autorización de inscripción en el Registro de Garantías Mobiliarias de Confecámaras (nunca retoma por la fuerza).
+   - **Cuotas pagadas en caso de resolución (9.1):** no se devuelven; se entienden causadas como contraprestación por uso y goce, depreciación y administración. Solo se liquida y devuelve el fondo de mantenimiento (7.1).
+   - **Datos sensibles y videovigilancia sin audio (9.4):** autorización expresa (arts. 5 y 6 Ley 1581 de 2012) para pruebas toxicológicas, cámaras de cabina/exterior **únicamente en video (sin grabación de audio, art. 192 C.P.)** y telemetría. Aviso visible de videovigilancia que identifica a ALLATYOU S.A.S. como Responsable, la finalidad y dónde consultar la política de datos (SIC).
+   - **Inspecciones sin previo aviso (9.5):** recaen exclusivamente sobre el vehículo (cabina y baúl), **sin requisa de personas ni de sus objetos personales**, en presencia del conductor y/o de **2 testigos**, con registro fotográfico/fílmico.
+
+## 10. Preguntas abiertas
 
 - ¿Qué hacer con los excedentes acumulados cuando se defina la política (abono a capital, a anticipo, devolución)?

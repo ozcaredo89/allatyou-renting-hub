@@ -6,7 +6,7 @@ Fuente de verdad de las **reglas de negocio** de cada módulo. Las leen tanto pe
 
 | Dominio | Archivo | Leer antes de tocar |
 |---|---|---|
-| Leasing / Rent-to-Own | [leasing.md](leasing.md) | `leasingCascade.ts`, `routes/leasing.ts`, `AdminAmortization.tsx`, migraciones `*leasing*` |
+| Leasing / Rent-to-Own | [leasing.md](leasing.md) | `leasingCascade.ts`, `contractGenerator.ts`, `templates/contrato.html`, `routes/leasing.ts`, `AdminAmortization.tsx`, migraciones `*leasing*` |
 | Pagos diarios | [pagos.md](pagos.md) | `routes/payments.ts`, aprobación en `routes/reports.ts`, `Pay.tsx`, `Reports.tsx` |
 | Anticipos operativos | [anticipos.md](anticipos.md) | `routes/advances.ts`, `operational_advance*` |
 | Gastos y fondo de mantenimiento | [gastos-fondo-mantenimiento.md](gastos-fondo-mantenimiento.md) | `routes/expenses.ts`, `Expenses.tsx`, notas débito |
