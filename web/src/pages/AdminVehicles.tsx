@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { requestCancelActiveLeasing } from "../lib/leasingCancel";
-import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search, FileText, ExternalLink, Settings2, Satellite, Rocket } from "lucide-react";
+import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search, FileText, ExternalLink, Settings2, Satellite, Rocket, MessageCircle } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useSortableData } from "../hooks/useSortableData";
 import { TopDwellLocations } from "../components/TopDwellLocations";
@@ -10,6 +10,8 @@ import FleetMap from "../components/FleetMap";
 import { GlobalOilReport } from "../components/GlobalOilReport";
 import GlobalMileageReport from "../components/GlobalMileageReport";
 import { generateDebitNotePDF } from "../utils/debitNotePdf";
+import { DriverModal } from "../components/DriverModal";
+import type { Driver } from "../types/driver";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -237,7 +239,9 @@ export default function AdminVehicles() {
       <ArrowDown className="w-3 h-3" />
     );
   };
-  const [drivers, setDrivers] = useState<DriverSimple[]>([]);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
+  const [loadingDriverId, setLoadingDriverId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<{ field: 'ownership_card_front' | 'ownership_card_back' | 'soat_url'; message: string } | null>(null);
@@ -358,7 +362,7 @@ export default function AdminVehicles() {
         return;
       }
       const rawVehicles = await rsV.json();
-      const rsD = await fetch(`${API}/drivers`, { headers });
+      const rsD = await fetch(`${API}/drivers?all=true`, { headers });
       const jsonD = await rsD.json();
 
       const processedVehicles = Array.isArray(rawVehicles) ? rawVehicles.map((v: any) => {
@@ -414,6 +418,35 @@ export default function AdminVehicles() {
   function handleEdit(v: Vehicle) {
     setEditing({ ...v });
     setIsCreating(false);
+  }
+
+  async function openDriverFicha(driverId: number) {
+    const existing = drivers.find((d) => d.id === driverId);
+    if (existing) {
+      setSelectedDriver(existing);
+      return;
+    }
+
+    setLoadingDriverId(driverId);
+    try {
+      const auth = ensureBasicAuth();
+      const rsD = await fetch(`${API}/drivers?all=true`, { headers: { Authorization: auth } });
+      if (!rsD.ok) throw new Error("No se pudo consultar el directorio de conductores.");
+      const jsonD = await rsD.json();
+      const allDrivers: Driver[] = Array.isArray(jsonD) ? jsonD : [];
+      setDrivers(allDrivers);
+      const found = allDrivers.find((d) => d.id === driverId);
+      if (found) {
+        setSelectedDriver(found);
+      } else {
+        alert("No se encontró el expediente completo del conductor.");
+      }
+    } catch (err) {
+      console.error("Error cargando ficha del conductor", err);
+      alert("No se pudo cargar la ficha completa del conductor. Por favor intenta de nuevo.");
+    } finally {
+      setLoadingDriverId(null);
+    }
   }
 
   function openHistory(plate: string, category: 'Mantenimiento' | 'Cambio de aceite' | 'Kilometraje' | 'Hotspots') {
@@ -966,25 +999,33 @@ export default function AdminVehicles() {
                       {/* CONDUCTOR */}
                       <td className="px-4 py-3">
                         {v.driver ? (
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5">
                             <div className="h-6 w-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] font-bold shrink-0">
                               {v.driver.full_name.charAt(0)}
                             </div>
-                            {v.driver.phone ? (
+                            <button
+                              type="button"
+                              disabled={loadingDriverId === v.driver.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDriverFicha(v.driver!.id);
+                              }}
+                              className="text-emerald-600 hover:text-emerald-800 hover:underline truncate max-w-[130px] font-medium text-left cursor-pointer disabled:opacity-50"
+                              title={`Ver ficha de ${v.driver.full_name}`}
+                            >
+                              {loadingDriverId === v.driver.id ? "Cargando..." : v.driver.full_name}
+                            </button>
+                            {v.driver.phone && (
                               <a
                                 href={`https://wa.me/${v.driver.phone.replace(/\D/g, '').startsWith('57') ? v.driver.phone.replace(/\D/g, '') : '57' + v.driver.phone.replace(/\D/g, '')}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-emerald-600 hover:text-emerald-800 hover:underline truncate max-w-[140px] font-medium"
+                                className="p-1 rounded-md text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 transition-colors shrink-0"
                                 title={`Contactar a ${v.driver.full_name} por WhatsApp`}
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                {v.driver.full_name}
+                                <MessageCircle className="w-3.5 h-3.5" />
                               </a>
-                            ) : (
-                              <span className="text-slate-700 truncate max-w-[140px]" title={v.driver.full_name}>
-                                {v.driver.full_name}
-                              </span>
                             )}
                           </div>
                         ) : <span className="text-slate-400 italic text-[11px]">Sin asignar</span>}
@@ -1409,7 +1450,7 @@ export default function AdminVehicles() {
                     <div className="relative">
                       <select className="w-full appearance-none rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none" value={editing.current_driver_id || ""} onChange={e => setEditing({ ...editing, current_driver_id: Number(e.target.value) || null })}>
                         <option value="">-- Vehículo sin asignar --</option>
-                        {drivers.map(d => (<option key={d.id} value={d.id}>{d.full_name}</option>))}
+                        {drivers.filter(d => d.status === 'active' || d.id === editing.current_driver_id).map(d => (<option key={d.id} value={d.id}>{d.full_name}</option>))}
                       </select>
                       <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-emerald-600">▼</div>
                     </div>
@@ -2171,6 +2212,30 @@ export default function AdminVehicles() {
           </div>
         </div>
       </div>
+      )}
+
+      {selectedDriver && (
+        <DriverModal
+          driver={selectedDriver}
+          onClose={() => setSelectedDriver(null)}
+          onSaved={(savedDriver) => {
+            setDrivers((prev) => prev.map((d) => (d.id === savedDriver.id ? savedDriver : d)));
+            setItems((prev) =>
+              prev.map((v) =>
+                v.current_driver_id === savedDriver.id
+                  ? {
+                      ...v,
+                      driver: {
+                        id: savedDriver.id,
+                        full_name: savedDriver.full_name,
+                        phone: savedDriver.phone,
+                      },
+                    }
+                  : v
+              )
+            );
+          }}
+        />
       )}
     </div>
   );

@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase";
 import { sendEmail } from "../lib/email";
 import { getActiveLeasingContract } from "../lib/leasingCascade";
 import { activeAdvanceForDriver } from "../lib/advanceOwnership";
+import { basicAuth } from "../middleware/basicAuth";
 
 const r = Router();
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
@@ -13,7 +14,7 @@ const PLATE_RE = /^[A-Z]{3}\d{3}$/;
  * - ?all=true -> Trae TODOS (para el panel admin).
  * - (sin params) -> Trae SOLO ACTIVOS (para dropdowns).
  */
-r.get("/", async (req: Request, res: Response) => {
+r.get("/", basicAuth, async (req: Request, res: Response) => {
   try {
     let query = supabase
       .from("drivers")
@@ -38,7 +39,7 @@ r.get("/", async (req: Request, res: Response) => {
  * POST /drivers
  * Crea un conductor manualmente (Directo, sin postulación).
  */
-r.post("/", async (req: Request, res: Response) => {
+r.post("/", basicAuth, async (req: Request, res: Response) => {
   const body = req.body;
   try {
     // Validaciones mínimas
@@ -105,7 +106,7 @@ r.post("/", async (req: Request, res: Response) => {
  * PUT /drivers/:id
  * Actualiza datos de un conductor.
  */
-r.put("/:id", async (req: Request, res: Response) => {
+r.put("/:id", basicAuth, async (req: Request, res: Response) => {
   const { id } = req.params;
   const body = req.body;
 
@@ -176,7 +177,7 @@ r.put("/:id", async (req: Request, res: Response) => {
  * POST /drivers/promote/:applicationId
  * Promueve un candidato a conductor oficial.
  */
-r.post("/promote/:applicationId", async (req: Request, res: Response) => {
+r.post("/promote/:applicationId", basicAuth, async (req: Request, res: Response) => {
   const { applicationId } = req.params;
   try {
     const { data: app, error: appErr } = await supabase
@@ -312,7 +313,7 @@ r.get("/:plate", async (req: Request, res: Response) => {
  * PATCH /drivers/:id/contact
  * Actualización rápida de contacto (Teléfono/Email) para módulo de cobranza.
  */
-r.patch("/:id/contact", async (req: Request, res: Response) => {
+r.patch("/:id/contact", basicAuth, async (req: Request, res: Response) => {
   const { id } = req.params;
   const { phone } = req.body;
 
