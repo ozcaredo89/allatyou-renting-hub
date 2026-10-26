@@ -1,60 +1,311 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { Camera, CheckCircle2, AlertCircle, UploadCloud, Trash2, MessageCircle } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
+const SUPPORT_WHATSAPP = "573113738912";
 
-// Listas estáticas para facilitar el llenado
+// Listas estáticas para facilitar el llenado y evitar datos basura
 const CITIES = ["Cali", "Jamundí", "Yumbo", "Palmira", "Buga", "Otra"];
-const BRANDS = ["Chevrolet", "Kia", "Renault", "Mazda", "Nissan", "Suzuki", "Toyota", "Ford", "Volkswagen", "Otra"];
-const FUELS = ["Gasolina", "Gas/Gasolina", "Diesel", "Eléctrico"];
+
+const BRANDS = [
+  "Chevrolet",
+  "Kia",
+  "Renault",
+  "Mazda",
+  "Nissan",
+  "Suzuki",
+  "Honda",
+  "Toyota",
+  "Hyundai",
+  "Ford",
+  "Volkswagen",
+  "Otra",
+];
+
+const BRAND_LINES: Record<string, string[]> = {
+  Chevrolet: ["Spark GT", "Spark Life", "Beat", "Sail", "Onix", "Joy", "Aveo", "Sonic", "Tracker", "Captiva", "Cruze"],
+  Kia: ["Picanto", "Rio", "Soluto", "Cerato", "Stonic", "Sonet", "Sportage", "Seltos"],
+  Renault: ["Kwid", "Logan", "Sandero", "Stepway", "Duster", "Twingo", "Symbol", "Clio", "Captur", "Kardian"],
+  Mazda: ["Mazda 2", "Mazda 3", "CX-30", "CX-5", "CX-3", "Mazda 6"],
+  Nissan: ["March", "Versa", "Sentra", "Kicks", "Qashqai", "Tiida", "Note"],
+  Suzuki: ["Swift", "Alto", "S-Presso", "Baleno", "Celerio", "Dzire", "Vitara", "S-Cross", "Ertiga"],
+  Honda: ["City", "Civic", "Fit", "WR-V", "HR-V", "CR-V", "Accord", "Pilot"],
+  Toyota: ["Corolla", "Yaris", "Etios", "Corolla Cross", "RAV4", "Hilux", "Fortuner", "Prado"],
+  Hyundai: ["Grand i10", "HB20", "Accent", "i20", "Elantra", "Tucson", "Creta", "Kona"],
+  Ford: ["Fiesta", "Focus", "Fusion", "EcoSport", "Escape", "Explorer"],
+  Volkswagen: ["Gol", "Voyage", "Polo", "Virtus", "Jetta", "T-Cross", "Nivus", "Tiguan"],
+};
+
+const COMMON_COLORS = ["Blanco", "Gris", "Plata", "Negro", "Rojo", "Azul", "Beige"];
+const FUELS = ["Gasolina", "Gas/Gasolina", "Diesel", "Eléctrico", "Híbrido"];
+
+const APPOINTMENT_SUGGESTIONS = [
+  "Mañana en la mañana",
+  "Mañana en la tarde",
+  "Esta semana",
+  "Este fin de semana",
+  "Lo antes posible",
+];
+
+function sanitizeColombianPhone(raw: string): string {
+  let digits = raw.replace(/\D/g, "");
+  if (digits.length > 10 && digits.startsWith("57")) {
+    digits = digits.slice(2);
+  }
+  return digits.slice(0, 10);
+}
+
+function isGibberishText(v: string): boolean {
+  const clean = v.trim();
+  if (!clean) return false;
+  const words = clean.split(/\s+/);
+  for (const word of words) {
+    if (word.length > 25) return true;
+    if (/[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]{6,}/.test(word)) return true;
+    // Solo evaluar cambios de mayúscula/minúscula en palabras de 10 letras o más
+    if (word.length >= 10 && word !== word.toUpperCase()) {
+      let transitions = 0;
+      for (let i = 1; i < word.length; i++) {
+        const prevChar = word.charAt(i - 1);
+        const currChar = word.charAt(i);
+        const prevUpper = /[A-ZÁÉÍÓÚÑ]/.test(prevChar);
+        const currUpper = /[A-ZÁÉÍÓÚÑ]/.test(currChar);
+        const prevLet = /[a-zA-ZáéíóúñÁÉÍÓÚÑ]/.test(prevChar);
+        const currLet = /[a-zA-ZáéíóúñÁÉÍÓÚÑ]/.test(currChar);
+        if (prevLet && currLet && prevUpper !== currUpper) transitions++;
+      }
+      if (transitions >= 3) return true;
+    }
+  }
+  return false;
+}
 
 export function VehicleApplicationForm() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isDuplicatePlateError, setIsDuplicatePlateError] = useState(false);
+  const errorBannerRef = useRef<HTMLDivElement>(null);
+
+  const showError = (msg: string, isDuplicate = false) => {
+    setError(msg);
+    setIsDuplicatePlateError(isDuplicate);
+    setTimeout(() => {
+      errorBannerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+  };
+
+  // Honeypot anti-bots
+  const [website, setWebsite] = useState("");
 
   // Estado inicial alineado con el payload del backend
   const [formData, setFormData] = useState({
     owner: { fullName: "", phone: "", email: "", city: "Cali" },
-    vehicle: { 
-      plate: "", 
-      brand: "Chevrolet", 
+    vehicle: {
+      plate: "",
+      brand: "Chevrolet",
       isBrandNewSuggestion: false,
-      line: "", 
-      year: new Date().getFullYear(), 
-      color: "", 
-      fuel: "Gasolina" 
+      line: "",
+      isLineNewSuggestion: false,
+      year: new Date().getFullYear(),
+      color: "Blanco",
+      fuel: "Gasolina",
     },
-    business: { 
-      appointmentDate: "", 
-      availability: "unlimited", 
-      expectedPrice: 70000 
+    business: {
+      appointmentDate: "",
+      availability: "unlimited",
+      expectedPrice: 70000,
     },
-    status: { 
-      mileage: 0, 
-      soatDate: "", 
-      technoDate: "", 
-      hasInsurance: false 
+    status: {
+      mileage: 0,
+      soatDate: "",
+      technoDate: "",
+      hasInsurance: false,
     },
-    photos: [] as { kind: string, url: string }[] // Placeholder para futura implementación de carga de fotos
+    photos: [] as { kind: string; url: string }[],
   });
 
-  // Manejo especial para marcas "Otra"
+  // Manejo para marca o línea personalizada ("Otra")
   const [customBrand, setCustomBrand] = useState("");
+  const [isCustomLine, setIsCustomLine] = useState(false);
+  const [customLine, setCustomLine] = useState("");
 
-  const handleNext = () => setStep(prev => prev + 1);
-  const handleBack = () => setStep(prev => prev - 1);
+  const currentBrandLines = BRAND_LINES[formData.vehicle.brand] || [];
+
+  const clearErrors = () => {
+    setError(null);
+    setIsDuplicatePlateError(false);
+  };
+
+  const handleBrandChange = (newBrand: string) => {
+    clearErrors();
+    setIsCustomLine(newBrand === "Otra");
+    setCustomLine("");
+    setFormData(prev => ({
+      ...prev,
+      vehicle: {
+        ...prev.vehicle,
+        brand: newBrand,
+        line: "",
+      },
+    }));
+  };
+
+  const handlePhotoUpload = async (kind: "exterior" | "interior", file: File) => {
+    setUploadingPhoto(kind);
+    clearErrors();
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("folder", "vehicles");
+      const res = await fetch(`${API}/uploads`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "No se pudo subir la imagen");
+      }
+      const data = await res.json();
+      setFormData(prev => {
+        const otherPhotos = prev.photos.filter(p => p.kind !== kind);
+        return {
+          ...prev,
+          photos: [...otherPhotos, { kind, url: data.url }],
+        };
+      });
+    } catch (err: any) {
+      showError(`Error subiendo foto: ${err.message}`);
+    } finally {
+      setUploadingPhoto(null);
+    }
+  };
+
+  const removePhoto = (kind: "exterior" | "interior") => {
+    setFormData(prev => ({
+      ...prev,
+      photos: prev.photos.filter(p => p.kind !== kind),
+    }));
+  };
+
+  const getPhotoUrl = (kind: "exterior" | "interior") =>
+    formData.photos.find(p => p.kind === kind)?.url;
+
+  const validateStep = (currentStep: number): boolean => {
+    clearErrors();
+
+    if (currentStep === 1) {
+      const name = formData.owner.fullName.trim();
+      if (name.length < 3) {
+        showError("Por favor ingresa tu nombre completo (mínimo 3 letras).");
+        return false;
+      }
+      if (isGibberishText(name)) {
+        showError("Revisa el nombre, parece tener un error de escritura.");
+        return false;
+      }
+
+      const phone = formData.owner.phone.trim();
+      if (!/^3\d{9}$/.test(phone)) {
+        showError("Ingresa un número de celular colombiano válido de 10 dígitos (debe iniciar en 3).");
+        return false;
+      }
+
+      const email = formData.owner.email.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        showError("Por favor ingresa un correo electrónico válido (ej: nombre@correo.com).");
+        return false;
+      }
+    }
+
+    if (currentStep === 2) {
+      const plate = formData.vehicle.plate.trim().toUpperCase();
+      if (!/^[A-Z]{3}\d{3}$/.test(plate)) {
+        showError("La placa debe tener formato colombiano de 3 letras y 3 números (ej: ABC123).");
+        return false;
+      }
+
+      const currentYear = new Date().getFullYear();
+      if (!formData.vehicle.year || formData.vehicle.year < 1990 || formData.vehicle.year > currentYear + 1) {
+        showError(`Ingresa un año/modelo válido (entre 1990 y ${currentYear + 1}).`);
+        return false;
+      }
+
+      const effectiveBrand = formData.vehicle.brand === "Otra" ? customBrand.trim() : formData.vehicle.brand.trim();
+      if (!effectiveBrand || effectiveBrand.length < 2 || isGibberishText(effectiveBrand)) {
+        showError("Revisa la marca del vehículo, parece tener un error de escritura.");
+        return false;
+      }
+
+      const effectiveLine = (formData.vehicle.brand === "Otra" || isCustomLine)
+        ? customLine.trim()
+        : formData.vehicle.line.trim();
+      if (!effectiveLine || effectiveLine.length < 1 || isGibberishText(effectiveLine)) {
+        showError("Por favor selecciona o escribe la línea de tu vehículo (ej: Picanto, Civic, Onix).");
+        return false;
+      }
+
+      const color = formData.vehicle.color.trim();
+      if (!color || color.length < 3 || isGibberishText(color)) {
+        showError("Por favor indica el color del vehículo.");
+        return false;
+      }
+    }
+
+    if (currentStep === 3) {
+      if (!formData.business.expectedPrice || formData.business.expectedPrice < 20000) {
+        showError("Ingresa un precio diario esperado válido (ej: $70.000 COP).");
+        return false;
+      }
+      const appt = formData.business.appointmentDate.trim();
+      if (!appt) {
+        showError("Por favor selecciona o escribe cuándo podríamos ver el vehículo.");
+        return false;
+      }
+      if (isGibberishText(appt)) {
+        showError("Por favor ingresa una disponibilidad válida para ver el vehículo.");
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const handleNext = () => {
+    if (validateStep(step)) {
+      setStep(prev => prev + 1);
+    }
+  };
+
+  const handleBack = () => {
+    clearErrors();
+    setStep(prev => prev - 1);
+  };
 
   const handleSubmit = async () => {
-    setLoading(true);
-    setError(null);
+    if (!validateStep(1) || !validateStep(2) || !validateStep(3)) return;
 
-    // Preparamos el payload final (si es marca custom, reemplazamos el valor)
-    const payload = { ...formData };
-    if (payload.vehicle.brand === "Otra") {
-      payload.vehicle.brand = customBrand;
-      payload.vehicle.isBrandNewSuggestion = true;
-    }
+    setLoading(true);
+    clearErrors();
+
+    const effectiveBrand = formData.vehicle.brand === "Otra" ? customBrand.trim() : formData.vehicle.brand.trim();
+    const effectiveLine = (formData.vehicle.brand === "Otra" || isCustomLine)
+      ? customLine.trim()
+      : formData.vehicle.line.trim();
+
+    const payload = {
+      ...formData,
+      website, // Honeypot
+      vehicle: {
+        ...formData.vehicle,
+        brand: effectiveBrand,
+        isBrandNewSuggestion: formData.vehicle.brand === "Otra",
+        line: effectiveLine,
+        isLineNewSuggestion: formData.vehicle.brand === "Otra" || isCustomLine,
+      },
+    };
 
     try {
       const response = await fetch(`${API}/vehicle-applications`, {
@@ -64,12 +315,14 @@ export function VehicleApplicationForm() {
       });
 
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.message || "Error al enviar la solicitud del vehículo.");
+        const errData = await response.json().catch(() => ({}));
+        const isDup = response.status === 409 || errData.error === "vehicle_already_exists";
+        showError(errData.message || "Error al enviar la solicitud del vehículo.", isDup);
+        return;
       }
       setSuccess(true);
     } catch (err: any) {
-      setError(err.message);
+      showError(err.message || "Error de conexión al enviar la solicitud.");
     } finally {
       setLoading(false);
     }
@@ -78,65 +331,158 @@ export function VehicleApplicationForm() {
   if (success) {
     return (
       <div className="rounded-3xl border border-emerald-500/30 bg-slate-900/80 p-8 text-center">
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-3xl text-emerald-400">🚗</div>
+        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
+          <CheckCircle2 className="w-9 h-9" />
+        </div>
         <h3 className="text-xl font-bold text-white">¡Vehículo Registrado!</h3>
-        <p className="mt-2 text-slate-300 text-sm">
-          Hemos recibido la información de tu vehículo. <br/>
-          Nuestro equipo comercial te contactará para agendar el peritaje.
+        <p className="mt-2 text-slate-300 text-sm leading-relaxed">
+          Hemos recibido la información de tu <strong>{formData.vehicle.brand === "Otra" ? customBrand : formData.vehicle.brand}</strong> de placa <strong>{formData.vehicle.plate}</strong>.<br />
+          Nuestro equipo comercial te contactará al WhatsApp <strong>{formData.owner.phone}</strong> para agendar la revisión.
         </p>
       </div>
     );
   }
 
+  const STEP_TITLES = [
+    { num: 1, label: "Propietario" },
+    { num: 2, label: "Vehículo" },
+    { num: 3, label: "Negocio" },
+    { num: 4, label: "Fotos y Estado" },
+  ];
+
   return (
     <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 shadow-xl">
-      {/* Barra de Progreso */}
-      <div className="mb-6 flex justify-between gap-2">
-        {[1, 2, 3, 4].map(s => (
-          <div key={s} className={`h-1.5 flex-1 rounded-full transition-colors ${step >= s ? 'bg-emerald-500' : 'bg-slate-700'}`} />
-        ))}
+      {/* Honeypot invisible para bots */}
+      <input
+        type="text"
+        name="website"
+        tabIndex={-1}
+        autoComplete="off"
+        value={website}
+        onChange={e => setWebsite(e.target.value)}
+        className="hidden"
+        aria-hidden="true"
+      />
+
+      {/* Barra de Progreso con Etiquetas */}
+      <div className="mb-6">
+        <div className="grid grid-cols-4 gap-2 mb-2">
+          {STEP_TITLES.map(s => (
+            <div key={s.num} className="flex flex-col gap-1.5">
+              <div
+                className={`h-1.5 rounded-full transition-colors ${
+                  step >= s.num ? "bg-emerald-500" : "bg-slate-700"
+                }`}
+              />
+              <span
+                className={`text-[10px] font-semibold truncate ${
+                  step === s.num ? "text-emerald-400" : step > s.num ? "text-slate-300" : "text-slate-500"
+                }`}
+              >
+                {s.num}. {s.label}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {error && <div className="mb-4 rounded-lg bg-red-500/10 p-3 text-xs text-red-400 border border-red-500/20">{error}</div>}
+      {error && (
+        <div
+          ref={errorBannerRef}
+          className="mb-4 rounded-xl bg-red-500/15 p-3.5 text-xs text-red-300 border border-red-500/30 animate-in fade-in space-y-2"
+        >
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+          {isDuplicatePlateError && (
+            <a
+              href={`https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent(
+                `Hola AllAtYou, intento registrar mi vehículo de placa ${formData.vehicle.plate} pero dice que ya está registrado.`
+              )}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-500/30 transition-colors"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              ¿Es tu vehículo? Escríbenos por WhatsApp
+            </a>
+          )}
+        </div>
+      )}
 
       {/* STEP 1: Propietario */}
       {step === 1 && (
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-white">1. Datos del Propietario</h3>
-          
-          <input 
-            className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white focus:ring-2 focus:ring-emerald-400 outline-none" 
-            placeholder="Nombre completo" 
-            value={formData.owner.fullName}
-            onChange={e => setFormData({...formData, owner: {...formData.owner, fullName: e.target.value}})} 
-          />
-          
-          <div className="grid grid-cols-2 gap-3">
-            <input 
-              className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none" 
-              placeholder="Celular / WhatsApp" 
-              value={formData.owner.phone}
-              onChange={e => setFormData({...formData, owner: {...formData.owner, phone: e.target.value.replace(/\D/g, '')}})} 
+
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Nombre completo *</label>
+            <input
+              className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white focus:ring-2 focus:ring-emerald-400 outline-none"
+              placeholder="Ej: Juan Carlos Pérez"
+              value={formData.owner.fullName}
+              onChange={e => {
+                clearErrors();
+                setFormData({ ...formData, owner: { ...formData.owner, fullName: e.target.value } });
+              }}
             />
-            <select 
-              className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none"
-              value={formData.owner.city}
-              onChange={e => setFormData({...formData, owner: {...formData.owner, city: e.target.value}})}
-            >
-              {CITIES.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
           </div>
 
-          <input 
-            type="email"
-            className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none" 
-            placeholder="Correo electrónico" 
-            value={formData.owner.email}
-            onChange={e => setFormData({...formData, owner: {...formData.owner, email: e.target.value}})} 
-          />
-          
-          <button onClick={handleNext} className="w-full rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400 transition-colors">
-            Siguiente
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Celular / WhatsApp (10 dígitos) *</label>
+              <input
+                type="tel"
+                maxLength={18}
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white focus:ring-2 focus:ring-emerald-400 outline-none font-mono"
+                placeholder="3001234567"
+                value={formData.owner.phone}
+                onChange={e => {
+                  clearErrors();
+                  setFormData({
+                    ...formData,
+                    owner: { ...formData.owner, phone: sanitizeColombianPhone(e.target.value) },
+                  });
+                }}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Ciudad *</label>
+              <select
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white focus:ring-2 focus:ring-emerald-400 outline-none"
+                value={formData.owner.city}
+                onChange={e => setFormData({ ...formData, owner: { ...formData.owner, city: e.target.value } })}
+              >
+                {CITIES.map(c => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Correo electrónico *</label>
+            <input
+              type="email"
+              className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white focus:ring-2 focus:ring-emerald-400 outline-none"
+              placeholder="ejemplo@correo.com"
+              value={formData.owner.email}
+              onChange={e => {
+                clearErrors();
+                setFormData({ ...formData, owner: { ...formData.owner, email: e.target.value } });
+              }}
+            />
+          </div>
+
+          <button
+            onClick={handleNext}
+            className="w-full rounded-xl bg-emerald-500 py-3 text-sm font-bold text-slate-950 hover:bg-emerald-400 transition-colors shadow-lg shadow-emerald-500/10"
+          >
+            Siguiente: Datos del Vehículo →
           </button>
         </div>
       )}
@@ -145,68 +491,172 @@ export function VehicleApplicationForm() {
       {step === 2 && (
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-white">2. Datos del Vehículo</h3>
-          
-          <div className="grid grid-cols-2 gap-3">
-            <input 
-              className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white uppercase outline-none font-mono" 
-              placeholder="PLACA (ABC123)" 
-              maxLength={6}
-              value={formData.vehicle.plate}
-              onChange={e => setFormData({...formData, vehicle: {...formData.vehicle, plate: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "")}})} 
-            />
-             <input 
-              type="number"
-              className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none" 
-              placeholder="Año (Ej: 2022)" 
-              value={formData.vehicle.year}
-              onChange={e => setFormData({...formData, vehicle: {...formData.vehicle, year: Number(e.target.value)}})} 
-            />
-          </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <select 
-              className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none"
-              value={formData.vehicle.brand}
-              onChange={e => setFormData({...formData, vehicle: {...formData.vehicle, brand: e.target.value}})}
-            >
-              {BRANDS.map(b => <option key={b} value={b}>{b}</option>)}
-            </select>
-            {formData.vehicle.brand === "Otra" ? (
-               <input 
-               className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none" 
-               placeholder="¿Cuál marca?" 
-               value={customBrand}
-               onChange={e => setCustomBrand(e.target.value)} 
-             />
-            ) : (
-              <input 
-                className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none" 
-                placeholder="Línea (Ej: Picanto)" 
-                value={formData.vehicle.line}
-                onChange={e => setFormData({...formData, vehicle: {...formData.vehicle, line: e.target.value}})} 
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Placa (3 letras + 3 números) *</label>
+              <input
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white uppercase outline-none font-mono tracking-wider focus:ring-2 focus:ring-emerald-400"
+                placeholder="ABC123"
+                maxLength={6}
+                value={formData.vehicle.plate}
+                onChange={e => {
+                  clearErrors();
+                  setFormData({
+                    ...formData,
+                    vehicle: {
+                      ...formData.vehicle,
+                      plate: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6),
+                    },
+                  });
+                }}
               />
+            </div>
+
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Modelo / Año *</label>
+              <input
+                type="number"
+                min={1990}
+                max={new Date().getFullYear() + 1}
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
+                placeholder="Ej: 2023"
+                value={formData.vehicle.year || ""}
+                onChange={e => {
+                  clearErrors();
+                  setFormData({
+                    ...formData,
+                    vehicle: { ...formData.vehicle, year: Number(e.target.value) },
+                  });
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Marca *</label>
+              <select
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
+                value={formData.vehicle.brand}
+                onChange={e => handleBrandChange(e.target.value)}
+              >
+                {BRANDS.map(b => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Si eligió Marca = "Otra", pedimos el nombre de la marca SIN ocultar el campo de Línea */}
+            {formData.vehicle.brand === "Otra" ? (
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">¿Cuál marca? *</label>
+                <input
+                  className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
+                  placeholder="Ej: BYD, Subaru, Chery..."
+                  value={customBrand}
+                  onChange={e => {
+                    clearErrors();
+                    setCustomBrand(e.target.value);
+                  }}
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Línea / Referencia *</label>
+                <select
+                  className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
+                  value={isCustomLine ? "__custom__" : formData.vehicle.line}
+                  onChange={e => {
+                    clearErrors();
+                    if (e.target.value === "__custom__") {
+                      setIsCustomLine(true);
+                      setFormData({ ...formData, vehicle: { ...formData.vehicle, line: "" } });
+                    } else {
+                      setIsCustomLine(false);
+                      setFormData({ ...formData, vehicle: { ...formData.vehicle, line: e.target.value } });
+                    }
+                  }}
+                >
+                  <option value="">Selecciona la línea...</option>
+                  {currentBrandLines.map(l => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
+                  <option value="__custom__">Otra línea...</option>
+                </select>
+              </div>
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-             <input 
-                className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none" 
-                placeholder="Color" 
-                value={formData.vehicle.color}
-                onChange={e => setFormData({...formData, vehicle: {...formData.vehicle, color: e.target.value}})} 
+          {/* Input para escribir la línea cuando eligió "Otra" marca o "Otra línea..." */}
+          {(formData.vehicle.brand === "Otra" || isCustomLine) && (
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Escribe la línea del vehículo *</label>
+              <input
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
+                placeholder="Ej: Picanto, Civic, Onix, Yuan Plus..."
+                value={customLine}
+                onChange={e => {
+                  clearErrors();
+                  setCustomLine(e.target.value);
+                }}
               />
-             <select 
-              className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none"
-              value={formData.vehicle.fuel}
-              onChange={e => setFormData({...formData, vehicle: {...formData.vehicle, fuel: e.target.value}})}
-            >
-              {FUELS.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Color *</label>
+              <input
+                list="common-vehicle-colors"
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
+                placeholder="Ej: Blanco, Gris, Plata..."
+                value={formData.vehicle.color}
+                onChange={e => {
+                  clearErrors();
+                  setFormData({ ...formData, vehicle: { ...formData.vehicle, color: e.target.value } });
+                }}
+              />
+              <datalist id="common-vehicle-colors">
+                {COMMON_COLORS.map(c => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </div>
+
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Combustible *</label>
+              <select
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
+                value={formData.vehicle.fuel}
+                onChange={e => setFormData({ ...formData, vehicle: { ...formData.vehicle, fuel: e.target.value } })}
+              >
+                {FUELS.map(f => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="flex gap-3 pt-2">
-            <button onClick={handleBack} className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm font-bold text-white hover:bg-white/5">Atrás</button>
-            <button onClick={handleNext} className="flex-1 rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400">Siguiente</button>
+            <button
+              onClick={handleBack}
+              className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm font-bold text-white hover:bg-white/5"
+            >
+              Atrás
+            </button>
+            <button
+              onClick={handleNext}
+              className="flex-[2] rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400"
+            >
+              Siguiente: Negocio →
+            </button>
           </div>
         </div>
       )}
@@ -215,24 +665,37 @@ export function VehicleApplicationForm() {
       {step === 3 && (
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-white">3. Expectativa de Negocio</h3>
-          
+
           <div className="rounded-xl bg-slate-950 p-4 border border-white/5 space-y-4">
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">Precio diario esperado (COP)</label>
-              <input 
+              <label className="text-xs text-slate-400 mb-1 block">Precio diario esperado (COP) *</label>
+              <input
                 type="number"
-                className="w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-2 text-sm text-emerald-400 font-bold outline-none" 
+                step={5000}
+                min={20000}
+                className="w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-2.5 text-sm text-emerald-400 font-bold outline-none focus:ring-2 focus:ring-emerald-400"
                 value={formData.business.expectedPrice}
-                onChange={e => setFormData({...formData, business: {...formData.business, expectedPrice: Number(e.target.value)}})} 
+                onChange={e => {
+                  clearErrors();
+                  setFormData({
+                    ...formData,
+                    business: { ...formData.business, expectedPrice: Number(e.target.value) },
+                  });
+                }}
               />
             </div>
 
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">Disponibilidad para alquilar</label>
-              <select 
-                className="w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-2 text-sm text-white outline-none"
+              <label className="text-xs text-slate-400 mb-1 block">Disponibilidad para alquilar *</label>
+              <select
+                className="w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
                 value={formData.business.availability}
-                onChange={e => setFormData({...formData, business: {...formData.business, availability: e.target.value as any}})}
+                onChange={e =>
+                  setFormData({
+                    ...formData,
+                    business: { ...formData.business, availability: e.target.value },
+                  })
+                }
               >
                 <option value="unlimited">Tiempo Ilimitado (Recomendado)</option>
                 <option value="days">Solo algunos días</option>
@@ -241,66 +704,216 @@ export function VehicleApplicationForm() {
             </div>
 
             <div>
-               <label className="text-xs text-slate-400 mb-1 block">¿Cuándo podríamos ver el vehículo?</label>
-               <input 
-                  className="w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-2 text-sm text-white outline-none" 
-                  placeholder="Ej: Lunes en la mañana" 
-                  value={formData.business.appointmentDate}
-                  onChange={e => setFormData({...formData, business: {...formData.business, appointmentDate: e.target.value}})} 
-                />
+              <label className="text-xs text-slate-300 font-medium mb-2 block">
+                ¿Cuándo podríamos ver el vehículo para revisión? *
+              </label>
+
+              {/* Chips rápidos para evitar que el usuario lo deje vacío */}
+              <div className="flex flex-wrap gap-1.5 mb-2.5">
+                {APPOINTMENT_SUGGESTIONS.map(sug => {
+                  const isSelected = formData.business.appointmentDate === sug;
+                  return (
+                    <button
+                      key={sug}
+                      type="button"
+                      onClick={() => {
+                        clearErrors();
+                        setFormData({
+                          ...formData,
+                          business: { ...formData.business, appointmentDate: sug },
+                        });
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border ${
+                        isSelected
+                          ? "bg-emerald-500/20 border-emerald-400 text-emerald-300"
+                          : "bg-slate-900 border-white/10 text-slate-400 hover:text-white hover:border-white/25"
+                      }`}
+                    >
+                      {sug}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <input
+                className="w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
+                placeholder="Selecciona una opción arriba o escribe día y hora (Ej: Lunes 10am)"
+                value={formData.business.appointmentDate}
+                onChange={e => {
+                  clearErrors();
+                  setFormData({
+                    ...formData,
+                    business: { ...formData.business, appointmentDate: e.target.value },
+                  });
+                }}
+              />
             </div>
           </div>
 
           <div className="flex gap-3 pt-2">
-            <button onClick={handleBack} className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm font-bold text-white hover:bg-white/5">Atrás</button>
-            <button onClick={handleNext} className="flex-1 rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400">Siguiente</button>
+            <button
+              onClick={handleBack}
+              className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm font-bold text-white hover:bg-white/5"
+            >
+              Atrás
+            </button>
+            <button
+              onClick={handleNext}
+              className="flex-[2] rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400"
+            >
+              Siguiente: Fotos y Estado →
+            </button>
           </div>
         </div>
       )}
 
-      {/* STEP 4: Estado y Finalizar */}
+      {/* STEP 4: Estado, Fotos y Finalizar */}
       {step === 4 && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-white">4. Estado y Documentos</h3>
-          
-          <input 
-             type="number"
-             className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none" 
-             placeholder="Kilometraje aproximado" 
-             value={formData.status.mileage || ''}
-             onChange={e => setFormData({...formData, status: {...formData.status, mileage: Number(e.target.value)}})} 
-          />
+          <h3 className="text-lg font-semibold text-white">4. Fotos y Estado del Vehículo</h3>
 
-          <div className="space-y-2">
-            <p className="text-xs text-slate-400">Vencimientos (Opcional si no los recuerdas)</p>
+          {/* Subida de Fotos */}
+          <div>
+            <label className="text-xs text-slate-300 font-medium mb-2 flex items-center gap-1.5">
+              <Camera className="w-3.5 h-3.5 text-emerald-400" />
+              Fotos del vehículo (Exterior e Interior)
+            </label>
             <div className="grid grid-cols-2 gap-3">
-              <input type="date" className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-xs text-white" onChange={e => setFormData({...formData, status: {...formData.status, soatDate: e.target.value}})} />
-              <input type="date" className="rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-xs text-white" onChange={e => setFormData({...formData, status: {...formData.status, technoDate: e.target.value}})} />
+              {[
+                { kind: "exterior" as const, title: "Foto Exterior", subtitle: "Frente o lateral" },
+                { kind: "interior" as const, title: "Foto Interior", subtitle: "Sillas o tablero" },
+              ].map(slot => {
+                const url = getPhotoUrl(slot.kind);
+                const isUploading = uploadingPhoto === slot.kind;
+                return (
+                  <div
+                    key={slot.kind}
+                    className={`relative rounded-xl border border-dashed p-3 flex flex-col items-center justify-center text-center transition-colors ${
+                      url
+                        ? "border-emerald-500/40 bg-emerald-500/5"
+                        : "border-white/15 bg-slate-950 hover:border-emerald-500/40"
+                    }`}
+                  >
+                    {url ? (
+                      <div className="w-full">
+                        <img
+                          src={url}
+                          alt={slot.title}
+                          className="h-24 w-full object-cover rounded-lg mb-2"
+                        />
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-[11px] font-semibold text-emerald-400">✓ Cargada</span>
+                          <button
+                            type="button"
+                            onClick={() => removePhoto(slot.kind)}
+                            className="text-red-400 hover:text-red-300 p-1"
+                            title="Quitar foto"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <label className="w-full py-3 cursor-pointer flex flex-col items-center">
+                        <UploadCloud className="w-7 h-7 text-slate-400 mb-1.5" />
+                        <span className="text-xs font-bold text-white">
+                          {isUploading ? "Subiendo..." : slot.title}
+                        </span>
+                        <span className="text-[10px] text-slate-400 mt-0.5">{slot.subtitle}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={isUploading}
+                          onChange={e => {
+                            const f = e.target.files?.[0];
+                            if (f) handlePhotoUpload(slot.kind, f);
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Kilometraje aproximado (Opcional)</label>
+            <input
+              type="number"
+              min={0}
+              className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
+              placeholder="Ej: 45000"
+              value={formData.status.mileage || ""}
+              onChange={e =>
+                setFormData({
+                  ...formData,
+                  status: { ...formData.status, mileage: Number(e.target.value) },
+                })
+              }
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[11px] text-slate-400 mb-1 block">Vencimiento SOAT (Opcional)</label>
+              <input
+                type="date"
+                value={formData.status.soatDate}
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 text-xs text-white"
+                onChange={e =>
+                  setFormData({
+                    ...formData,
+                    status: { ...formData.status, soatDate: e.target.value },
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="text-[11px] text-slate-400 mb-1 block">Vencimiento Tecno (Opcional)</label>
+              <input
+                type="date"
+                value={formData.status.technoDate}
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 text-xs text-white"
+                onChange={e =>
+                  setFormData({
+                    ...formData,
+                    status: { ...formData.status, technoDate: e.target.value },
+                  })
+                }
+              />
             </div>
           </div>
 
           <label className="flex items-center gap-3 rounded-xl bg-slate-950 p-3 border border-white/5 cursor-pointer hover:bg-slate-900 transition-colors">
-             <input 
-                type="checkbox" 
-                className="accent-emerald-500 h-5 w-5" 
-                checked={formData.status.hasInsurance}
-                onChange={e => setFormData({...formData, status: {...formData.status, hasInsurance: e.target.checked}})} 
-             />
-             <div className="flex flex-col">
-               <span className="text-sm font-semibold text-white">Seguro Todo Riesgo</span>
-               <span className="text-[10px] text-slate-400">¿El vehículo cuenta con póliza vigente?</span>
-             </div>
+            <input
+              type="checkbox"
+              className="accent-emerald-500 h-5 w-5"
+              checked={formData.status.hasInsurance}
+              onChange={e =>
+                setFormData({
+                  ...formData,
+                  status: { ...formData.status, hasInsurance: e.target.checked },
+                })
+              }
+            />
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-white">Seguro Todo Riesgo</span>
+              <span className="text-[10px] text-slate-400">¿El vehículo cuenta con póliza vigente?</span>
+            </div>
           </label>
-          
-          <div className="rounded-xl bg-blue-500/10 p-3 text-xs text-blue-200 border border-blue-500/20">
-             ℹ️ Si tienes fotos, te las pediremos por WhatsApp para agilizar el proceso.
-          </div>
 
-          <div className="flex gap-3 pt-4">
-            <button onClick={handleBack} className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm font-bold text-white hover:bg-white/5">Atrás</button>
-            <button 
-              disabled={loading} 
-              onClick={handleSubmit} 
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={handleBack}
+              className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm font-bold text-white hover:bg-white/5"
+            >
+              Atrás
+            </button>
+            <button
+              disabled={loading || !!uploadingPhoto}
+              onClick={handleSubmit}
               className="flex-[2] rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400 disabled:opacity-50 transition-colors shadow-lg shadow-emerald-500/20"
             >
               {loading ? "Registrando..." : "Registrar Vehículo"}

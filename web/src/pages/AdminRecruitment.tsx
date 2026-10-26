@@ -329,11 +329,34 @@ export default function AdminRecruitment() {
                       <div><dt className="text-slate-500">Combustible</dt><dd className="font-medium">{selected.fuel_type}</dd></div>
                       <div><dt className="text-slate-500">Color</dt><dd className="font-medium">{selected.color}</dd></div>
                       <div><dt className="text-slate-500">Kilometraje</dt><dd className="font-medium">{selected.mileage ? selected.mileage.toLocaleString() : "N/A"}</dd></div>
+                      <div><dt className="text-slate-500">Seguro Todo Riesgo</dt><dd className="font-medium">{selected.has_all_risk_insurance ? "✅ Sí tiene" : "❌ No tiene"}</dd></div>
+                      <div><dt className="text-slate-500">Cita / Disponibilidad</dt><dd className="font-medium">{selected.appointment_date || "No especificada"}</dd></div>
                       <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-100 sm:col-span-2">
                         <dt className="text-emerald-800 text-xs font-bold uppercase">Expectativa de Renta</dt>
                         <dd className="font-bold text-emerald-700 text-lg">${new Intl.NumberFormat('es-CO').format(selected.expected_daily_rent)} / día</dd>
                         <dd className="text-xs text-emerald-600 mt-1">Disponibilidad: {selected.availability_type}</dd>
                       </div>
+                      {Array.isArray(selected.photos) && selected.photos.length > 0 && (
+                        <div className="sm:col-span-2 pt-2">
+                          <dt className="text-slate-500 mb-2 font-semibold">Fotos Adjuntas</dt>
+                          <dd className="grid grid-cols-2 gap-3">
+                            {selected.photos.map((photo: any, i: number) => (
+                              <a
+                                key={i}
+                                href={photo.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="group block rounded-xl border border-slate-200 overflow-hidden bg-slate-50"
+                              >
+                                <img src={photo.url} alt={photo.kind || `Foto ${i + 1}`} className="h-32 w-full object-cover group-hover:scale-105 transition-transform" />
+                                <span className="block px-3 py-1.5 text-xs font-bold text-slate-600 capitalize">
+                                  {photo.kind === "exterior" ? "Foto Exterior" : photo.kind === "interior" ? "Foto Interior" : photo.kind} ↗
+                                </span>
+                              </a>
+                            ))}
+                          </dd>
+                        </div>
+                      )}
                     </>
                   )}
                 </dl>
