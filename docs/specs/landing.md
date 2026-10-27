@@ -1,148 +1,94 @@
-SPEC FILE: AllAtYou Landing Page & Ecosystem
-Versión: 2.0 (Growth & Service Expansion) Estado: Producción Dominio: www.allatyou.com
+# SPEC FILE: AllAtYou Landing Page & Ecosystem
+**Versión:** 2.1 (Captación, Anti-Spam & Lecciones Aprendidas)  
+**Estado:** Producción  
+**Dominio:** www.allatyou.com  
 
-1. Propósito y Estrategia
+---
+
+## 1. Propósito y Estrategia
 La Landing Page ha evolucionado de un simple folleto informativo a un Ecosistema de Servicios. Cumple tres funciones estratégicas:
+1. **Conversión Core (Renting):** Captar propietarios (inversionistas) y conductores para el modelo operativo administrado.
+2. **Growth Hacking (SEO & Utilidades):** Atraer tráfico masivo mediante herramientas gratuitas de alto valor (Pico y Placa, Recordatorios) ubicadas en la "Zona de Acción" del Hero.
+3. **Upselling (Asistencia):** Vender el servicio de "Asistencia Vehicular" como un producto independiente o complementario.
 
-Conversión Core (Renting): Captar propietarios (inversionistas) y conductores para el modelo operativo.
+---
 
-Growth Hacking (SEO & Utilidades): Atraer tráfico masivo mediante herramientas gratuitas de alto valor (Pico y Placa, Recordatorios) ubicadas en la "Zona de Acción" del Hero.
+## 2. Arquitectura y Enrutamiento
 
-Upselling (Asistencia): Vender el nuevo servicio de "Asistencia Vehicular" como un producto independiente o complementario.
+### 2.1 Dominios
+* **`www.allatyou.com` (Público):** Landing Page, Asistencia, Utilidades, `/rent-your-car`, `/rent`.
+* **`web.allatyou.com` (Operativo / ERP Admin):** Aplicación de gestión interna (redirige a `/pay` o rutas de admin).
 
-2. Arquitectura y Enrutamiento
-2.1 Dominios
-www.allatyou.com (Público): Landing Page, Asistencia, Utilidades.
+### 2.2 Router (`web/src/App.tsx`)
+El enrutamiento público se maneja bajo el `PublicLayout` (Header blanco/transparente).
 
-web.allatyou.com (Operativo): Aplicación de gestión interna (redirige a /pay o login).
+| Ruta | Componente | Descripción |
+| :--- | :--- | :--- |
+| `/` | `Landing.tsx` | Página principal con Hero, Utilidades, Simulador y Formularios. |
+| `/rent-your-car` | `RentYourCar.tsx` | Formulario de subida de vehículos al Marketplace P2P. |
+| `/rent` | `RentCatalog.tsx` | Catálogo de vehículos disponibles para rentar. |
+| `/assistance` | `Assistance.tsx` | Landing de venta del servicio de Asistencia ($180k/mes). |
+| `/pay` | `Pay.tsx` | Pasarela de pagos para clientes operativos. |
 
-2.2 Router (web/src/App.tsx)
-El enrutamiento público se maneja bajo el PublicLayout (Header blanco/transparente).
+---
 
-Ruta	Componente	Descripción
-/	Landing.tsx	Página principal con Hero, Utilidades y Formularios.
-/assistance	Assistance.tsx	(NUEVO) Landing de venta del servicio de Asistencia ($180k/mes).
-/pay	Pay.tsx	Pasarela de pagos para clientes operativos.
-3. Estructura de la Landing Page (/)
-El diseño sigue un flujo de "Embudo de Confianza".
+## 3. Formularios de Captación y el Doble Flujo de Vehículos
 
-3.1 Navbar (Sticky)
-Logo: AllAtYou Renting Hub.
+> ⚠️ **Lección de Arquitectura Clave:** Existen dos flujos separados de registro de vehículos con propósitos y destinos diferentes. No confundirlos:
 
-Links: Inicio, Asistencia (NUEVO), Pagos (solo visible en subdominio operativo).
+### 3.1 `DriverApplicationForm` (Conductores)
+* Postulación de conductores que buscan trabajar un vehículo de la flota.
+* Endpoint: `POST /driver-applications`.
+* Captura de referencias, documentos (cédula, licencia) y firma digital en canvas.
+* Administración en `web.allatyou.com/recruitment` (pestaña "Conductores").
 
-Acciones: WhatsApp (Soporte).
+### 3.2 `VehicleApplicationForm` (Propietarios - Renting Administrado)
+* **Propósito:** El propietario entrega su vehículo a AllAtYou para que sea administrado dentro de la flota operativa.
+* **Ubicación:** Sección `#propietarios` de la Landing y modal del Simulador de Ganancias (`TabIncome.tsx`).
+* **Endpoint:** `POST /vehicle-applications` -> tabla `vehicle_applications`.
+* **Moderación / Vista Admin:** `web.allatyou.com/recruitment` -> Pestaña **"Vehículos"** (`AdminRecruitment.tsx`).
+* **Validaciones y UX:**
+  * Formulario en 4 pasos con validación secuencial antes de permitir avanzar (`handleNext`).
+  * Marcas predefinidas (incluye Honda) y catálogo de líneas sugeridas por marca con opción "Otra línea".
+  * Al seleccionar marca "Otra", se solicita la marca personalizada sin ocultar el campo de línea.
+  * Chips de disponibilidad rápida para agendar cita de peritaje (*"Mañana en la mañana"*, *"Esta semana"*, etc.).
+  * Subida de fotos exterior/interior a la carpeta `vehicles` de Cloudflare R2 con previsualización.
+  * Auto-scroll al banner de error (`scrollIntoView`) para garantizar visibilidad en dispositivos móviles.
 
-3.2 Hero Section ("La Zona de Acción")
-Copy: "Pon tu carro a producir sin manejarlo."
+### 3.3 `RentYourCar` (Marketplace P2P - Alquiler Directo)
+* **Propósito:** El propietario lista su vehículo en el catálogo público para alquilarlo directamente a terceros (modelo Turo).
+* **Ubicación:** Accesible desde la barra superior blanca (`PublicLayout.tsx`) en `/rent-your-car`.
+* **Endpoint:** `POST /marketplace/upload` -> tabla `marketplace_cars`.
+* **Moderación / Vista Admin:** `web.allatyou.com/marketplace` (`AdminMarketplace.tsx`).
+* *(Ver especificación detallada en [marketplace.md](marketplace.md)).*
 
-Grid de Acciones (Jerarquía Visual):
+---
 
-Negocio (Fila Superior): Botones grandes para "Simular Ganancias" (CTA Principal - Verde) y "Cómo funciona".
+## 4. Reglas de Seguridad Anti-Spam y Casos Borde
 
-Ganchos SEO (Fila Inferior): Tarjetas tipo "App" con fondo oscuro (bg-[#0f172a]) para:
+1. **Honeypot Invisible:** Todos los formularios públicos incluyen un campo invisible `website`. Si contiene valor, el backend bloquea la petición con `400` silenciosamente.
+2. **Placa Colombiana Estricta:** Validación estricta con regex `^[A-Z]{3}\d{3}$`. Los bots de spam que generan cadenas alfanuméricas aleatorias quedan bloqueados automáticamente.
+3. **Manejo de Teléfonos con Prefijo Internacional (+57):**
+   * El reemplazo ingenuo `.replace(/\D/g, "").slice(0, 10)` convierte `+57 300 123 4567` en `5730012345` (número corrupto).
+   * **Regla:** Solo retirar el prefijo `57` cuando la cadena de dígitos supere los 10 dígitos:
+     ```ts
+     let digits = raw.replace(/\D/g, "");
+     if (digits.length > 10 && digits.startsWith("57")) digits = digits.slice(2);
+     return digits.slice(0, 10);
+     ```
+   * En el HTML, el `<input>` debe tener `maxLength={18}` para que el navegador no corte el texto pegado antes de ejecutar el `onChange`.
+4. **Filtro Anti-Gibberish sin Falsos Positivos:**
+   * La detección de mayúsculas/minúsculas alternas (camelCase aleatorio de bots) **solo** se evalúa en palabras de 10 o más letras para evitar bloquear apellidos y nombres legítimos como `McDonald`, `DiCaprio`, `LeBlanc` o `JuanCarlos`.
+   * Los mensajes de error al usuario deben mantener un tono neutro (*"Revisa el nombre, parece tener un error de escritura"*).
+5. **Fotos Seguras en R2:**
+   * Al enviar imágenes a `${API}/uploads`, siempre debe especificarse `folder: "vehicles"`. Omitirlo provoca que se clasifique como `"proofs"` y se ejecute innecesariamente el OCR de recibos bancarios.
+   * El backend solo acepta URLs de fotos que pertenezcan al dominio configurado en `process.env.R2_PUBLIC_URL`.
+6. **Manejo de Placa Duplicada (409 Conflict):**
+   * Cuando la placa ya está registrada en el sistema, el formulario no solo muestra el error sino un botón de contacto directo a WhatsApp de soporte con mensaje pre-redactado para desbloquear al propietario legítimo.
 
-Pico y Placa Hoy: Abre Modal.
+---
 
-Recordatorios (SOAT/Tecno): Abre Modal.
-
-Responsive Fix: En móvil es 1 columna (grid-cols-1), en escritorio 2 columnas.
-
-3.3 Componentes Visuales Clave
-ModelOverview.tsx (Responsive):
-
-Muestra el ciclo: Filtro → Contrato → Control → Ingreso.
-
-Móvil: Diseño vertical (flex-col) con flechas hacia abajo (↓) y línea conectora de fondo.
-
-Desktop: Diseño horizontal (flex-row) con flechas a la derecha (→).
-
-IncomeSimulator.tsx: Calculadora de rentabilidad proyectada.
-
-3.4 Secciones de Contenido
-Cómo funciona: Pasos para propietarios.
-
-AssistanceBanner.tsx (NUEVO):
-
-Ubicación: Entre "Cómo funciona" y "Flujo de dinero".
-
-Función: Upselling. Banner visualmente destacado (gradiente oscuro/esmeralda) que lleva a /assistance.
-
-Flujo del dinero: Explicación de transparencia financiera.
-
-Formularios:
-
-DriverApplicationForm (Conductores).
-
-VehicleApplicationForm (Propietarios).
-
-3.5 Trust Section (Cierre de Venta)
-Componente: TrustSection.tsx (NUEVO).
-
-Ubicación: Estratégica, antes de las FAQ.
-
-Contenido: "Por qué esto no es un salto al vacío". 3 pilares de seguridad (Selección, Contratos, Reportes) para reducir la fricción final.
-
-4. Nueva Página: Asistencia (/assistance)
-Una Landing Page dedicada para vender el servicio de protección vehicular.
-
-Hero: "Cuando tu carro falla, AllAtYou se hace cargo".
-
-Grid de Servicios: Asistencia en carretera, Gestión de talleres, Peritaje, Legal.
-
-Pricing Card: Precio claro ($180.000/mes) y lista de inclusiones/exclusiones.
-
-CTA: Botón directo a WhatsApp con mensaje pre-configurado para ventas.
-
-5. Funcionalidad de Utilidades (SEO Técnico)
-Las utilidades ya no son secciones in-page, son Modales (UtilitiesModals.tsx) para limpiar la interfaz, pero mantienen su poder SEO mediante parámetros de URL.
-
-5.1 Lógica de Modales
-Pico y Placa: Input de placa → Consulta reglas locales (hardcoded en front + métrica en back).
-
-Recordatorios: Formulario para suscribir email/WhatsApp a alertas de vencimiento (SOAT/Tecno).
-
-5.2 SEO Hooks (Parámetros URL)
-El useEffect de Landing.tsx escucha query params para abrir modales automáticamente al compartir enlaces:
-
-allatyou.com/?tool=pico-placa → Abre modal de Pico y Placa.
-
-allatyou.com/?tool=recordatorios → Abre modal de Recordatorios.
-
-allatyou.com/?plate=ABC1234 → Abre recordatorios y pre-llena la placa.
-
-6. Stack Técnico & Backend
-Frontend: React 18 + Vite + TypeScript + TailwindCSS.
-
-Iconografía: lucide-react (Reemplazo de SVGs manuales para consistencia).
-
-Endpoints Backend (Node.js/Express):
-
-POST /metrics/landing-view: Conteo de visitas.
-
-POST /metrics/pico-placa-use: Conteo de uso de herramienta.
-
-POST /reminders: Guardar suscripción de recordatorios.
-
-GET /metrics/summary: Mostrar contador social (opcional).
-
-7. Reglas de Diseño (Actualizadas)
-Paleta de Colores:
-
-Fondo Principal: bg-[#0b1220] (Azul muy oscuro/Negro).
-
-Tarjetas Secundarias: bg-[#0f172a] (Slate-900).
-
-Acento/Éxito: emerald-500 / emerald-400 (Texto brillante).
-
-Texto Muted: slate-400.
-
-Tipografía: Sans-serif (Inter/System fonts).
-
-Responsividad: Mobile-First.
-
-Botones de Hero: Full width en móvil.
-
-Tablas/Grid: Stack vertical en móvil.
-
-Notas de Despliegue: Al desplegar esta versión, asegurar que las variables de entorno (VITE_API_URL) apunten al backend de producción correcto para que el registro de recordatorios y métricas funcione.
+## 5. Utilidades y SEO Hooks
+* `allatyou.com/?tool=pico-placa` -> Abre modal de Pico y Placa.
+* `allatyou.com/?tool=recordatorios` -> Abre modal de Recordatorios.
+* `allatyou.com/?plate=ABC123` -> Abre recordatorios pre-llenando la placa.

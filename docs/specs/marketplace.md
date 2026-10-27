@@ -54,7 +54,7 @@ El módulo Marketplace transforma la plataforma en un modelo de negocio híbrido
 
 ---
 
-## 5. Seguridad, Validaciones y Reglas de Negocio
+## 5. Seguridad y Reglas de Negocio
 1. **Validación de Leads:** El sistema no publica automáticamente. Requiere intervención humana (Admin) para filtrar fraudes o vehículos en mal estado.
 2. **Protección Anti-Spam y Validaciones de Entrada (`POST /marketplace/upload` y `POST /vehicle-applications`):**
     * **Honeypot (`website`):** Campo oculto en el formulario; si recibe contenido, el backend rechaza la solicitud con `400`.
@@ -65,3 +65,38 @@ El módulo Marketplace transforma la plataforma en un modelo de negocio híbrido
 3. **Autenticación Administrativa (`basicAuth`):** Las rutas `/marketplace/admin/*` están protegidas en `src/index.ts` mediante el middleware `basicAuth`.
 4. **Protección de Datos:** La placa (`plate`) se captura para antecedentes pero **nunca** se muestra en el catálogo público por seguridad.
 5. **Integridad:** Las fotos se almacenan en R2 bajo la carpeta `vehicles` y se referencian en la tabla correspondiente.
+
+---
+
+## 6. Lecciones Aprendidas y Casos Borde Reales (Oct-2026)
+
+### 6.1 El dilema de los dos flujos de vehículos (Landing vs Marketplace)
+* **Confusión recurrente:** Existen dos flujos distintos para registrar vehículos:
+    1. **Landing Page (`#propietarios`):** Usa `VehicleApplicationForm.tsx` → `POST /vehicle-applications` → tabla `vehicle_applications` → Administración en `/recruitment` (pestaña "Vehículos"). Modelo: el propietario cede la administración de su carro a la flota.
+    2. **Marketplace (`/rent-your-car`):** Usa `RentYourCar.tsx` → `POST /marketplace/upload` → tabla `marketplace_cars` → Moderación en `/marketplace`. Modelo: el propietario alquila directamente estilo Turo.
+* **Por qué se llenaba de basura el Marketplace:** El enlace `/rent-your-car` está en el header de `PublicLayout.tsx` con clase `hidden md:flex`. Los usuarios en móvil no lo veían, pero los bots de internet seguían el enlace y atacaban el endpoint abierto `POST /marketplace/upload`.
+
+### 6.2 Defensa anti-spam sin falsos positivos para usuarios reales
+* **Regla de mayúsculas/minúsculas (CamelCase caótico):** Si se aplica alternancia de mayúsculas/minúsculas en palabras cortas, se bloquean nombres y apellidos legítimos como `McDonald`, `DiCaprio`, `LeBlanc` o `JuanCarlos`. **Regla:** Solo evaluar transiciones en palabras de 10 caracteres o más (`word.length >= 10`), exigiendo al menos 3 transiciones.
+* **Tono del mensaje de validación:** Nunca usar mensajes acusatorios como *"ingresa un nombre real"*. Usar tono neutro: *"Revisa el nombre, parece tener un error de escritura"*.
+* **Placa estricta colombiana:** Forzar mayúsculas y validar `^[A-Z]{3}\d{3}$`. Los bots genéricos generan cadenas aleatorias de 15 a 25 caracteres (ej. `BTFMGQCUVAGFQUBRRPIIODOF`) que quedan neutralizadas de inmediato.
+
+### 6.3 Pegado de celulares con prefijo internacional (`+57`)
+* Si se normaliza con `.replace(/\D/g, "").slice(0, 10)`, el pegado de `+57 300 123 4567` (12 dígitos) genera `5730012345`, almacenando un número falso que parece válido pero deja incomunicado al lead.
+* **Regla:** Solo retirar el prefijo `57` cuando la longitud sea mayor a 10 dígitos:
+  ```ts
+  let digits = raw.replace(/\D/g, "");
+  if (digits.length > 10 && digits.startsWith("57")) {
+    digits = digits.slice(2);
+  }
+  return digits.slice(0, 10);
+  ```
+* **HTML `maxLength`:** El input no debe tener `maxLength={10}` estricto en el DOM, ya que el navegador recorta antes del evento `onChange`. Debe configurarse en `maxLength={18}` para permitir el pegado de números formateados con prefijo y espacios.
+
+### 6.4 Visibilidad de errores en móvil (formularios largos)
+* Si el estado `error` se renderiza al principio del formulario y el usuario presiona "Enviar" al final de una página con scroll, no ve el error y asume que el botón no funciona.
+* **Regla:** Siempre ejecutar `scrollIntoView({ behavior: "smooth", block: "center" })` sobre el banner de error y/o mostrar el mensaje de error duplicado junto al botón de acción.
+
+### 6.5 Carpeta de subida de fotos a R2
+* Al invocar `${API}/uploads`, siempre debe incluirse `fd.append("folder", "vehicles")`. Si se omite, el backend asigna por defecto `folder = "proofs"`, lo que activa el OCR concurrente de comprobantes de pago sobre fotos de vehículos, saturando el servidor innecesariamente.
+* **Validación de origen:** No aceptar URLs `https://` arbitrarias; validar que pertenezcan a `process.env.R2_PUBLIC_URL` para evitar inyección de enlaces o rastreadores externos.
