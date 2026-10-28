@@ -2,6 +2,7 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { basicAuth } from "../middleware/basicAuth";
+import { classifyVehiclePhotos } from "../lib/vehicleImageClassifier";
 
 const r = Router();
 
@@ -280,6 +281,8 @@ r.post("/", async (req: Request, res: Response) => {
     // Validate: Photos (Solo URLs de nuestro bucket R2)
     // -----------------------------
     const allowedBucketPrefix = (process.env.R2_PUBLIC_URL || "").replace(/\/+$/, "");
+    const sanitizedPhotos: Array<{ url: string; kind: string }> = [];
+
     photos.forEach((p: any, idx: number) => {
       const urlStr = isNonEmptyString(p.url) ? p.url.trim() : "";
       const isAllowedOrigin = allowedBucketPrefix
@@ -288,9 +291,10 @@ r.post("/", async (req: Request, res: Response) => {
       if (!urlStr || !isAllowedOrigin) {
         fields.push({ path: `photos[${idx}].url`, issue: "invalid_url", label: `Foto #${idx + 1} válida` });
       }
-      if (!isNonEmptyString(p.kind)) {
-        fields.push({ path: `photos[${idx}].kind`, issue: "required_kind", label: `Tipo de foto #${idx + 1}` });
-      }
+      sanitizedPhotos.push({
+        url: urlStr,
+        kind: isNonEmptyString(p.kind) ? p.kind.trim() : "general",
+      });
     });
 
     // Si hay errores, cortar
@@ -349,7 +353,7 @@ r.post("/", async (req: Request, res: Response) => {
       techno_expires_at: technoDate || null,
       has_all_risk_insurance: hasInsurance,
 
-      photos: photos,
+      photos: sanitizedPhotos,
 
       status: "pending",
       status_reason: null,
@@ -363,6 +367,22 @@ r.post("/", async (req: Request, res: Response) => {
 
     if (error) {
       return res.status(500).json({ error: error.message });
+    }
+
+    // Auto-etiquetado con IA en segundo plano (Gemini 2.5 Flash / Vision)
+    if (sanitizedPhotos.length > 0) {
+      setImmediate(async () => {
+        try {
+          const classified = await classifyVehiclePhotos(sanitizedPhotos);
+          await supabase
+            .from("vehicle_applications")
+            .update({ photos: classified })
+            .eq("id", data.id);
+          console.log(`[AI] Auto-etiquetadas ${classified.length} fotos para vehículo aplicación #${data.id}`);
+        } catch (aiErr) {
+          console.warn("⚠️ AI classification background error:", aiErr);
+        }
+      });
     }
 
     return res.status(201).json({

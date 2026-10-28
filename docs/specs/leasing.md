@@ -88,8 +88,31 @@ Reglas confirmadas por el negocio (2026-10-02/03):
 | No hay cuota con esa fecha | `LEASING_DATE_MISMATCH` | No |
 | La cuota ya estaba pagada | `LEASING_INSTALLMENT_ALREADY_PAID` | No |
 | Otro pago confirmado misma placa+fecha | `LEASING_DUPLICATE_PAYMENT` | No |
-| Monto < cuota (tolerancia $1) | `LEASING_AMOUNT_MISMATCH` | No |
+| Monto < cuota (tolerancia $2.000) | `LEASING_AMOUNT_MISMATCH` | No (salvo micro-tolerancia o cruce) |
 | Monto > cuota | `LEASING_EXCESS_PAYMENT` | **Sí**: la cuota se cubre y el sobrante solo se etiqueta |
+
+### Manejo de Faltantes en Cuota de Leasing (Decisiones 2026-10-26 y 2026-10-27)
+
+Para evitar trabar la tabla de amortización y las fórmulas de interés/capital cuando un pago no coincide exactamente con la cuota contractual, se establecen los siguientes mecanismos según el origen del faltante:
+
+1. **Micro-tolerancia automática (hasta $2.000 COP):**
+   - Cubre pequeñas diferencias por comisiones bancarias, retenciones de corresponsales o redondeos (ej. transferencias de $90.000 vs cuota de $91.000).
+   - Si `shortfall <= $2.000 COP`: la vista previa no bloquea la aprobación (`can_approve = true`). Al confirmar, el backend absorbe el faltante, ajusta el pago a la cuota exacta y anexa nota: `Aprobado con micro-tolerancia de $X COP`.
+2. **Cruce de Cuentas con Gasto / Servicio (`POST /reports/payments/:id/cross-expense`):**
+   - **Origen:** El conductor transfiere menos porque pagó un repuesto para el carro de su bolsillo o prestó un servicio de carrera a la empresa.
+   - **Acción en UI:** Botón directo *"Cruzar con Gasto / Servicio"* en el modal de aprobación.
+   - **Efectos:**
+     1. Valida preventivamente que el monto del gasto no supere el faltante (`expenseAmount <= shortfall`).
+     2. Inserta el gasto en `expenses` y lo asocia a la placa en `expense_vehicles` (categorías: `Mantenimiento`, `Operativo`, etc.).
+     3. Suma el valor del gasto al pago: `Monto Pago = Transferencia bancaria + Gasto cruzado`.
+     4. Anexa nota con el ID del gasto y concepto (`Cruce con Gasto #...`).
+     5. Aplica la cascada de leasing y amortiza la cuota al 100% (`paid`). Si la aprobación falla, revierte el gasto y restaura el monto original.
+3. **Ajuste Manual con Nota (Compensación o acuerdo explícito):**
+   - **Origen:** El conductor avisa que enviará el faltante en la siguiente transferencia o existe un acuerdo administrativo.
+   - **Acción:** El operador pulsa *"Ajustar pago"* y especifica el acuerdo. La nota es obligatoria si el monto supera al comprobante.
+
+> [!IMPORTANT]
+> **La deuda es la cuota sin pagar:** En el modelo de negocio no se crean registros sintéticos ni marcadores artificiales de deuda. Si un faltante supera la tolerancia y no se cruza con un gasto ni se ajusta con nota justificada, el pago no se aprueba y la cuota del cronograma permanece pendiente (`pending`), constituyendo la mora real del vehículo y del conductor.
 
 - **Sobrantes y anticipos operativos (decisión 2026-10-12):**
   - Si un vehículo en leasing tiene un anticipo operativo activo y el pago ingresa con `installment_number`:

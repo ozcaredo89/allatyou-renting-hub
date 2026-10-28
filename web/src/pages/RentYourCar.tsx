@@ -1,6 +1,19 @@
 import { useState, useRef } from "react";
-import { UploadCloud, CheckCircle, Car, DollarSign, Camera, MapPin, X, Image as ImageIcon, MessageCircle, AlertCircle } from "lucide-react";
+import {
+  UploadCloud,
+  CheckCircle,
+  Car,
+  DollarSign,
+  Camera,
+  MapPin,
+  X,
+  MessageCircle,
+  AlertCircle,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { Link } from "react-router-dom";
+import { compressImage } from "../utils/compressImage";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -54,8 +67,9 @@ export default function RentYourCar() {
   // Honeypot anti-bots
   const [website, setWebsite] = useState("");
 
-  // --- ESTADOS PARA CÁMARA Y MENÚ ---
-  const [activeField, setActiveField] = useState<string | null>(null);
+  // --- ESTADOS PARA FOTOS Y CÁMARA ---
+  const [photos, setPhotos] = useState<Array<{ url: string; kind?: string }>>([]);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [showCamera, setShowCamera] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
 
@@ -78,8 +92,6 @@ export default function RentYourCar() {
     plate: "",
     price_per_day: "",
     has_gps: "Sí",
-    photo_exterior_url: "",
-    photo_interior_url: "",
   });
 
   const [customBrand, setCustomBrand] = useState("");
@@ -107,23 +119,38 @@ export default function RentYourCar() {
     return data.url;
   };
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files?.[0] || !activeField) return;
+  const handleMultipleFilesSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
     setLoading(true);
+    const newPhotos: Array<{ url: string; kind?: string }> = [];
+
     try {
-      const url = await uploadFile(e.target.files[0]);
-      setForm(prev => ({ ...prev, [activeField]: url }));
-      setActiveField(null);
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (!file.type.startsWith("image/")) continue;
+        setUploadProgress(`Comprimiendo y subiendo foto ${i + 1} de ${files.length}...`);
+        const compressed = await compressImage(file, { maxWidth: 1600, maxHeight: 1600, quality: 0.8 });
+        const url = await uploadFile(compressed);
+        newPhotos.push({ url, kind: "general" });
+      }
+      setPhotos(prev => [...prev, ...newPhotos]);
     } catch {
-      alert("Error al subir archivo.");
+      alert("Error al procesar o subir las fotos.");
     } finally {
       setLoading(false);
+      setUploadProgress(null);
+      if (e.target) e.target.value = "";
     }
+  };
+
+  const removePhotoByIndex = (index: number) => {
+    setPhotos(prev => prev.filter((_, i) => i !== index));
   };
 
   // --- LÓGICA DE CÁMARA (WEBRTC) ---
   const startCamera = async () => {
-    setActiveField(null);
     setShowCamera(true);
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -150,29 +177,41 @@ export default function RentYourCar() {
   };
 
   const capturePhoto = () => {
-    if (!videoRef.current || !canvasRef.current || !activeField) return;
+    if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    
+    // Escalar si el video supera 1600px
+    let w = video.videoWidth;
+    let h = video.videoHeight;
+    const maxDim = 1600;
+    if (w > maxDim || h > maxDim) {
+      const ratio = Math.min(maxDim / w, maxDim / h);
+      w = Math.round(w * ratio);
+      h = Math.round(h * ratio);
+    }
+
+    canvas.width = w;
+    canvas.height = h;
     const context = canvas.getContext("2d");
 
     if (context) {
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      context.drawImage(video, 0, 0, w, h);
       canvas.toBlob(
         async blob => {
           if (blob) {
             const file = new File([blob], `car_${Date.now()}.jpg`, { type: "image/jpeg" });
             stopCamera();
             setLoading(true);
+            setUploadProgress("Subiendo foto capturada...");
             try {
               const url = await uploadFile(file);
-              setForm(prev => ({ ...prev, [activeField]: url }));
+              setPhotos(prev => [...prev, { url, kind: "general" }]);
             } catch {
               alert("Error guardando la foto");
             } finally {
               setLoading(false);
-              setActiveField(null);
+              setUploadProgress(null);
             }
           }
         },
@@ -214,6 +253,11 @@ export default function RentYourCar() {
       return;
     }
 
+    if (photos.length === 0) {
+      showError("Por favor sube al menos una foto de tu vehículo.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -228,6 +272,9 @@ export default function RentYourCar() {
           year: parsedYear,
           plate: normalizedPlate,
           owner_phone: cleanPhone,
+          photos: photos.map(p => ({ url: p.url, kind: p.kind || "general" })),
+          photo_exterior_url: photos[0]?.url || "",
+          photo_interior_url: photos[1]?.url || photos[0]?.url || "",
         }),
       });
 
@@ -536,66 +583,99 @@ export default function RentYourCar() {
             </div>
           </div>
 
-          {/* SECCIÓN 3: FOTOS (MODIFICADA CON SHEET) */}
+          {/* SECCIÓN 3: FOTOS (FLEXIBLE CON IA Y RECOMENDACIONES) */}
           <div className="p-8">
-            <h3 className="text-sm font-bold text-emerald-600 uppercase tracking-wider mb-6 flex items-center gap-2">
-              <Camera className="w-4 h-4" /> 3. Fotos del Vehículo
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* FOTO EXTERIOR */}
-              <div
-                onClick={() => setActiveField("photo_exterior_url")}
-                className={`border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center transition-colors cursor-pointer active:scale-95 ${
-                  form.photo_exterior_url
-                    ? "border-emerald-500 bg-emerald-50"
-                    : "border-slate-300 hover:border-emerald-400 hover:bg-slate-50"
-                }`}
-              >
-                {form.photo_exterior_url ? (
-                  <div className="text-center">
-                    <img
-                      src={form.photo_exterior_url}
-                      alt="Exterior"
-                      className="h-32 w-auto object-cover rounded-lg mb-2 shadow-sm mx-auto"
-                    />
-                    <span className="text-xs text-emerald-700 font-bold">¡Cambiar Foto!</span>
-                  </div>
-                ) : (
-                  <>
-                    <UploadCloud className="w-10 h-10 text-slate-300 mb-3" />
-                    <span className="text-sm font-bold text-slate-600">Foto Exterior</span>
-                    <span className="text-xs text-slate-400 mt-1">Frente o Lateral</span>
-                  </>
-                )}
-              </div>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-emerald-600 uppercase tracking-wider flex items-center gap-2">
+                <Camera className="w-4 h-4" /> 3. Fotos del Vehículo
+              </h3>
+              {photos.length > 0 && (
+                <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full">
+                  {photos.length} {photos.length === 1 ? "foto agregada" : "fotos agregadas"}
+                </span>
+              )}
+            </div>
 
-              {/* FOTO INTERIOR */}
-              <div
-                onClick={() => setActiveField("photo_interior_url")}
-                className={`border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center transition-colors cursor-pointer active:scale-95 ${
-                  form.photo_interior_url
-                    ? "border-emerald-500 bg-emerald-50"
-                    : "border-slate-300 hover:border-emerald-400 hover:bg-slate-50"
-                }`}
-              >
-                {form.photo_interior_url ? (
-                  <div className="text-center">
-                    <img
-                      src={form.photo_interior_url}
-                      alt="Interior"
-                      className="h-32 w-auto object-cover rounded-lg mb-2 shadow-sm mx-auto"
-                    />
-                    <span className="text-xs text-emerald-700 font-bold">¡Cambiar Foto!</span>
+            {/* Guía visual con recomendaciones amigables */}
+            <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4 text-xs text-emerald-950 space-y-2 mb-6">
+              <div className="flex items-center gap-1.5 font-bold text-emerald-800 text-sm">
+                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                Recomendaciones para mejores fotos (nuestra IA las organiza):
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-700 mt-2">
+                <div className="flex items-center gap-2 bg-white rounded-xl p-3 border border-emerald-100 shadow-sm">
+                  <span className="text-xl">☀️</span>
+                  <div>
+                    <strong className="block text-slate-900">Buena luz natural</strong>
+                    <span className="text-slate-500 text-[11px]">De día, sin sombras fuertes</span>
                   </div>
-                ) : (
-                  <>
-                    <UploadCloud className="w-10 h-10 text-slate-300 mb-3" />
-                    <span className="text-sm font-bold text-slate-600">Foto Interior</span>
-                    <span className="text-xs text-slate-400 mt-1">Tablero o Sillas</span>
-                  </>
-                )}
+                </div>
+                <div className="flex items-center gap-2 bg-white rounded-xl p-3 border border-emerald-100 shadow-sm">
+                  <span className="text-xl">🚗</span>
+                  <div>
+                    <strong className="block text-slate-900">Carro completo</strong>
+                    <span className="text-slate-500 text-[11px]">Ángulo frontal o 3/4</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 bg-white rounded-xl p-3 border border-emerald-100 shadow-sm">
+                  <span className="text-xl">💺</span>
+                  <div>
+                    <strong className="block text-slate-900">Interior y tablero</strong>
+                    <span className="text-slate-500 text-[11px]">Limpio y bien iluminado</span>
+                  </div>
+                </div>
               </div>
             </div>
+
+            {/* Galería de fotos subidas */}
+            {photos.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                {photos.map((p, idx) => (
+                  <div key={idx} className="relative group rounded-xl border border-slate-200 bg-slate-100 overflow-hidden shadow-sm aspect-[4/3]">
+                    <img src={p.url} alt={`Foto ${idx + 1}`} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-between p-2">
+                      <span className="text-[11px] text-white font-bold bg-black/60 px-2 py-0.5 rounded">
+                        {idx === 0 ? "Portada" : `#${idx + 1}`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removePhotoByIndex(idx)}
+                        className="p-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors shadow-sm"
+                        title="Eliminar foto"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Botones de acción: Tomar Foto o Subir desde Galería */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={startCamera}
+                disabled={loading}
+                className="flex items-center justify-center gap-2.5 p-4 rounded-xl border-2 border-dashed border-emerald-300 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-800 font-bold text-sm transition-all active:scale-[0.99] disabled:opacity-50"
+              >
+                <Camera className="w-5 h-5 text-emerald-600" />
+                <span>Tomar Foto con Cámara</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                className="flex items-center justify-center gap-2.5 p-4 rounded-xl border-2 border-dashed border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-sm transition-all active:scale-[0.99] disabled:opacity-50"
+              >
+                <UploadCloud className="w-5 h-5 text-slate-500" />
+                <span>{uploadProgress ? uploadProgress : "Subir desde Galería / Archivos"}</span>
+              </button>
+            </div>
+            <p className="text-center text-xs text-slate-400 mt-2">
+              Puedes subir una o varias fotos. No te preocupes por el orden ni el lado, nuestra IA las clasifica automáticamente.
+            </p>
           </div>
 
           {/* FOOTER */}
@@ -630,7 +710,7 @@ export default function RentYourCar() {
               type="submit"
               className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-xl shadow-lg hover:bg-black hover:scale-[1.01] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "Enviando Solicitud..." : "Enviar Solicitud de Registro 🚀"}
+              {loading ? (uploadProgress || "Enviando Solicitud...") : "Enviar Solicitud de Registro 🚀"}
             </button>
             <p className="text-center text-xs text-slate-400 mt-4">
               Al enviar, aceptas nuestros términos de servicio.
@@ -639,45 +719,15 @@ export default function RentYourCar() {
         </form>
       </div>
 
-      {/* --- ACTION SHEET (MENÚ) --- */}
-      {activeField && !showCamera && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md bg-white rounded-t-3xl p-6 pb-10 space-y-4 animate-in slide-in-from-bottom duration-300">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="text-lg font-bold text-slate-800">Seleccionar Imagen</h3>
-              <button onClick={() => setActiveField(null)} className="p-1 bg-slate-100 rounded-full text-slate-500">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <button
-                onClick={startCamera}
-                className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors"
-              >
-                <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center">
-                  <Camera className="w-6 h-6" />
-                </div>
-                <span className="text-sm font-bold text-slate-700">Usar Cámara</span>
-              </button>
-
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors"
-              >
-                <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center">
-                  <ImageIcon className="w-6 h-6" />
-                </div>
-                <span className="text-sm font-bold text-slate-700">Subir Archivo</span>
-              </button>
-            </div>
-          </div>
-          <div className="absolute inset-0 -z-10" onClick={() => setActiveField(null)} />
-        </div>
-      )}
-
       {/* INPUT OCULTO PARA SUBIDA DE ARCHIVOS */}
-      <input type="file" accept="image/*" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
+      <input
+        type="file"
+        accept="image/*"
+        multiple
+        ref={fileInputRef}
+        className="hidden"
+        onChange={handleMultipleFilesSelect}
+      />
 
       {/* --- MODAL DE CÁMARA FULLSCREEN --- */}
       {showCamera && (

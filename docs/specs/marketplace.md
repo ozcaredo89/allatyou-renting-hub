@@ -97,6 +97,17 @@ El módulo Marketplace transforma la plataforma en un modelo de negocio híbrido
 * Si el estado `error` se renderiza al principio del formulario y el usuario presiona "Enviar" al final de una página con scroll, no ve el error y asume que el botón no funciona.
 * **Regla:** Siempre ejecutar `scrollIntoView({ behavior: "smooth", block: "center" })` sobre el banner de error y/o mostrar el mensaje de error duplicado junto al botón de acción.
 
-### 6.5 Carpeta de subida de fotos a R2
+### 6.5 Carpeta de subida de fotos y compresión en cliente
+* **Compresión en cliente (`compressImage.ts`):** Las fotos tomadas con cámaras de celular (5MB-15MB) se redimensionan a máx `1600px` y se comprimen en canvas a JPEG con `quality: 0.8` en el navegador del usuario antes de subirse. Esto reduce el peso en >95% (~150KB-300KB), protegiendo la cuota de Cloudflare R2 y acelerando la subida en conexiones móviles.
 * Al invocar `${API}/uploads`, siempre debe incluirse `fd.append("folder", "vehicles")`. Si se omite, el backend asigna por defecto `folder = "proofs"`, lo que activa el OCR concurrente de comprobantes de pago sobre fotos de vehículos, saturando el servidor innecesariamente.
 * **Validación de origen:** No aceptar URLs `https://` arbitrarias; validar que pertenezcan a `process.env.R2_PUBLIC_URL` para evitar inyección de enlaces o rastreadores externos.
+
+### 6.6 Subida flexible de fotos sin fricción y auto-clasificación con IA
+* **Problema:** Forzar al usuario a subir fotos de ángulos específicos (exterior estricto, interior estricto) genera fricción durante el registro inicial y deserciones en móviles si el usuario solo tiene fotos generales en su galería.
+* **Solución UX:** 
+  1. Guía visual con recomendaciones claras y amigables (☀️ Buena luz natural, 🚗 Carro completo ángulo 3/4, 💺 Interior o tablero limpio).
+  2. Subida flexible de fotos múltiples o captura con cámara sin forzar ranuras rígidas.
+* **Procesamiento con IA (`vehicleImageClassifier.ts`):**
+  1. En el backend, las imágenes se procesan en segundo plano (`setImmediate`) usando modelos de visión (Gemini 2.5 Flash / GPT-4o-mini).
+  2. La IA clasifica si es un vehículo (`is_vehicle`), su ángulo/parte (`kind`: exterior, interior, detalle), su etiqueta detallada (`frente`, `lateral`, `tres_cuartos`, `tablero`, etc.) y evalúa cuál foto califica como mejor foto de portada (`is_cover_worthy`).
+  3. No bloquea la respuesta HTTP del usuario; la UI confirma la postulación de inmediato y los tags se persisten asíncronamente en Supabase.

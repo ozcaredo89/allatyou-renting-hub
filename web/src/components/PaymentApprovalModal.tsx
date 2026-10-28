@@ -14,6 +14,7 @@ import {
   PlusCircle,
   Pencil,
   Clock,
+  Receipt,
 } from "lucide-react";
 import { ensureBasicAuth } from "../lib/auth";
 
@@ -70,6 +71,9 @@ export type ApprovalPreviewData = {
     principal: number;
     total: number;
   } | null;
+  shortfall?: number;
+  is_within_tolerance?: boolean;
+  leasing_tolerance?: number;
 };
 
 type AdjustInfo = {
@@ -147,6 +151,15 @@ export function PaymentApprovalModal({
   const [ocrInfo, setOcrInfo] = useState<AdjustInfo | null>(null);
   const [quickAdjusting, setQuickAdjusting] = useState(false);
 
+  // Cruce de pago con gasto / servicio (carrera, repuesto, etc.)
+  const [crossOpen, setCrossOpen] = useState(false);
+  const [crossAmount, setCrossAmount] = useState("");
+  const [crossCategory, setCrossCategory] = useState("Mantenimiento");
+  const [crossItem, setCrossItem] = useState("");
+  const [crossDescription, setCrossDescription] = useState("");
+  const [crossSaving, setCrossSaving] = useState(false);
+  const [crossError, setCrossError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!isOpen || !paymentId) {
       setData(null);
@@ -160,6 +173,11 @@ export function PaymentApprovalModal({
       setAdjInfo(null);
       setAdjMsg(null);
       setOcrInfo(null);
+      setCrossOpen(false);
+      setCrossAmount("");
+      setCrossItem("");
+      setCrossDescription("");
+      setCrossError(null);
       return;
     }
 
@@ -281,6 +299,43 @@ export function PaymentApprovalModal({
       setAdjMsg({ ok: false, text: err instanceof Error ? err.message : String(err) });
     } finally {
       setAdjSaving(false);
+    }
+  }
+
+  async function handleCrossExpense() {
+    if (!paymentId || !crossAmount || !crossItem.trim()) return;
+    setCrossSaving(true);
+    setCrossError(null);
+    try {
+      const auth = ensureBasicAuth();
+      const res = await fetch(`${API}/reports/payments/${paymentId}/cross-expense`, {
+        method: "POST",
+        headers: {
+          Authorization: auth,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          amount: Number(crossAmount.replace(/[^\d]/g, "")),
+          item: crossItem.trim(),
+          category: crossCategory,
+          description: crossDescription.trim() || crossItem.trim(),
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json.error || "Error al cruzar el gasto con el pago");
+      }
+
+      setSuccessMsg(json.message || "Gasto cruzado y pago aprobado exitosamente");
+      setCrossOpen(false);
+      setTimeout(() => {
+        onSuccess();
+      }, 1200);
+    } catch (err: any) {
+      setCrossError(err.message || "Error al cruzar el gasto");
+    } finally {
+      setCrossSaving(false);
     }
   }
 
@@ -517,6 +572,36 @@ export function PaymentApprovalModal({
                     }`}>
                       {data.warning_message || "Existe una discrepancia con el cronograma o la cuota ya fue pagada."}
                     </p>
+                    {!data.is_within_tolerance && (data.shortfall ?? 0) > 0 && !adjOpen && !crossOpen && (
+                      <div className="mt-2.5 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const diff = data.shortfall!;
+                            setCrossAmount(String(diff));
+                            setCrossOpen(true);
+                            setAdjOpen(false);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold rounded-lg text-xs transition-colors cursor-pointer border border-amber-300 shadow-2xs"
+                        >
+                          <Receipt className="w-3.5 h-3.5 text-amber-700" />
+                          Cruzar con Gasto / Servicio (${fmtCOP.format(data.shortfall!)})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await openAdjust();
+                            setCrossOpen(false);
+                            const targetTotal = (data.amount || 0) + (data.shortfall || 0);
+                            setAdjAmount(String(targetTotal));
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-900 font-semibold rounded-lg text-xs transition-colors cursor-pointer border border-blue-300 shadow-2xs"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          Ajustar monto con nota
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -715,6 +800,107 @@ export function PaymentApprovalModal({
                   {adjMsg.text}
                 </div>
               )}
+
+              {/* Sección Cruce con Gasto / Servicio */}
+              {crossOpen && data.status === "pending" && !mttoOpen && !successMsg && (
+                <div className="p-4 rounded-xl border border-amber-300 bg-amber-50/70 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                      <Receipt className="w-4 h-4 text-amber-600" /> Cruzar faltante con Gasto / Servicio
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => setCrossOpen(false)}
+                      className="text-gray-400 hover:text-gray-600 rounded-lg p-1"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {crossError && (
+                    <div className="p-2.5 rounded-lg text-xs bg-red-100 border border-red-300 text-red-800">
+                      {crossError}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[11px] font-semibold text-gray-700 block mb-1">
+                        Monto a cruzar ($ COP) <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        value={crossAmount}
+                        onChange={(e) => setCrossAmount(e.target.value.replace(/[^\d]/g, ""))}
+                        inputMode="numeric"
+                        placeholder="Ej: 40000"
+                        className="w-full text-sm font-semibold rounded-lg border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                      />
+                      <p className="mt-1 text-[11px] text-gray-500">
+                        Transferencia: ${fmtCOP.format(data.amount)} + Cruce: ${fmtCOP.format(Number(crossAmount || 0))} = Total: ${fmtCOP.format(data.amount + Number(crossAmount || 0))}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold text-gray-700 block mb-1">
+                        Tipo / Categoría de Gasto <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={crossCategory}
+                        onChange={(e) => setCrossCategory(e.target.value)}
+                        className="w-full text-sm rounded-lg border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                      >
+                        <option value="Mantenimiento">🔧 Repuesto / Mantenimiento del vehículo</option>
+                        <option value="Operativo">🚖 Carrera / Servicio prestado a la empresa</option>
+                        <option value="Otros">📦 Otro gasto operativo</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-700 block mb-1">
+                      Concepto / Motivo del gasto <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      value={crossItem}
+                      onChange={(e) => setCrossItem(e.target.value)}
+                      placeholder="Ej: Compra de pastillas de freno / Carrera urgente para gerencia"
+                      className="w-full text-sm rounded-lg border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-700 block mb-1">
+                      Detalle adicional o notas <span className="text-gray-400 font-normal">(opcional)</span>
+                    </label>
+                    <input
+                      value={crossDescription}
+                      onChange={(e) => setCrossDescription(e.target.value)}
+                      placeholder="Ej: Autorizado por gerencia según recibo físico"
+                      className="w-full text-xs rounded-lg border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-amber-200">
+                    <button
+                      type="button"
+                      onClick={() => setCrossOpen(false)}
+                      className="px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCrossExpense}
+                      disabled={crossSaving || !crossAmount || Number(crossAmount) <= 0 || !crossItem.trim()}
+                      className="px-4 py-2 rounded-lg text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      {crossSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Receipt className="w-3.5 h-3.5" />}
+                      Cruzar Gasto y Aprobar Pago
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {data.status === "pending" && !mttoOpen && !successMsg && (
                 adjOpen ? (
                   <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-3">
@@ -744,7 +930,18 @@ export function PaymentApprovalModal({
                               El comprobante dice ${fmtCOP.format(adjInfo.ocr_amount)} · usar ese monto
                             </button>
                           )}
-                          <p className="mt-1 text-[11px] text-gray-500">Canon del día: ${fmtCOP.format(adjInfo.canon)}</p>
+                          {isLeasing && adjInfo.canon && adjInfo.canon !== Number(adjAmount.replace(/[^\d]/g, "")) && (
+                            <button
+                              type="button"
+                              onClick={() => setAdjAmount(String(adjInfo.canon))}
+                              className="mt-1 block text-[11px] font-semibold text-emerald-700 underline cursor-pointer"
+                            >
+                              Completar a cuota requerida de leasing (${fmtCOP.format(adjInfo.canon)})
+                            </button>
+                          )}
+                          <p className="mt-1 text-[11px] text-gray-500">
+                            {isLeasing ? `Cuota de leasing esperada: $${fmtCOP.format(adjInfo.canon)}` : `Canon del día: $${fmtCOP.format(adjInfo.canon)}`}
+                          </p>
                         </div>
 
                         <div>
@@ -790,13 +987,18 @@ export function PaymentApprovalModal({
 
                         <div>
                           <label className="text-[11px] font-semibold text-gray-700 block mb-1">
-                            Nota {Number(adjAmount.replace(/[^\d]/g, "")) < adjInfo.canon ? "(obligatoria: el monto es menor que el canon)" : "(opcional)"}
+                            Nota {(() => {
+                              const parsedAmt = Number(adjAmount.replace(/[^\d]/g, ""));
+                              if (parsedAmt < adjInfo.canon) return "(obligatoria: monto menor que el canon)";
+                              if (adjInfo.ocr_amount != null && parsedAmt > adjInfo.ocr_amount) return "(obligatoria: monto supera al comprobante)";
+                              return "(opcional)";
+                            })()}
                           </label>
                           <textarea
                             value={adjNote}
                             onChange={(e) => setAdjNote(e.target.value)}
                             rows={2}
-                            placeholder="Ej: el comprobante es de $70.000; el conductor no pagó la cuota este día"
+                            placeholder="Ej: el comprobante es de $70.000; el conductor transferirá el faltante en el próximo pago"
                             className="w-full text-xs rounded-lg border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-blue-300"
                           />
                         </div>
@@ -823,13 +1025,32 @@ export function PaymentApprovalModal({
                     )}
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={openAdjust}
-                    className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 text-xs font-semibold cursor-pointer"
-                  >
-                    <Pencil className="w-4 h-4" /> Ajustar monto o cuota del anticipo
-                  </button>
+                  <div className="flex gap-2">
+                    {((data.shortfall ?? 0) > (data.leasing_tolerance ?? 2000)) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const diff = data.shortfall != null ? data.shortfall : Math.max(0, (data.quota_expected?.total || 0) - data.amount);
+                          setCrossAmount(diff > 0 ? String(diff) : "");
+                          setCrossOpen(true);
+                          setAdjOpen(false);
+                        }}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl border border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100 text-xs font-semibold cursor-pointer"
+                      >
+                        <Receipt className="w-3.5 h-3.5 text-amber-600" /> Cruzar gasto
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openAdjust();
+                        setCrossOpen(false);
+                      }}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 text-xs font-semibold cursor-pointer"
+                    >
+                      <Pencil className="w-3.5 h-3.5" /> Ajustar pago
+                    </button>
+                  </div>
                 )
               )}
 

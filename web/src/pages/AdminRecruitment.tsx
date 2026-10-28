@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { StatusBadge } from "../components/StatusBadge";
 import { WhatsAppBtn, EmailBtn } from "../components/ContactButtons";
+import { compressImage } from "../utils/compressImage";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -89,7 +90,8 @@ export default function AdminRecruitment() {
     setUploadingDocKind(kind);
     try {
       const fd = new FormData();
-      fd.append("file", file);
+      const compressed = await compressImage(file, { maxWidth: 1600, maxHeight: 1600, quality: 0.8 });
+      fd.append("file", compressed);
       fd.append("folder", "documents");
       const upRs = await fetch(`${API}/uploads`, {
         method: "POST",

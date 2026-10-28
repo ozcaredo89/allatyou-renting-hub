@@ -85,6 +85,8 @@ El enrutamiento público se maneja bajo el `PublicLayout` (Header blanco/transpa
    * El backend solo acepta URLs de fotos que pertenezcan al dominio configurado en `process.env.R2_PUBLIC_URL`.
 6. **Manejo de Placa Duplicada (409 Conflict):**
    * Cuando la placa ya está registrada en el sistema, el formulario no solo muestra el error sino un botón de contacto directo a WhatsApp de soporte con mensaje pre-redactado para desbloquear al propietario legítimo.
+7. **Compresión Automática de Imágenes (`compressImage.ts`):**
+   * Antes de transferirse a `${API}/uploads`, las fotos de vehículos y documentos se redimensionan a máx `1600px` y se comprimen a JPEG `0.8` usando canvas nativo en el cliente. Reduce el almacenamiento en Cloudflare R2 en más de un 95% y evita fallos por timeout en redes móviles.
 
 ---
 

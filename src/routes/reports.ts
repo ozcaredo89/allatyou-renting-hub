@@ -658,7 +658,20 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
       const creditStored = Number(payment.credit_installment_amount || 0);
       const activeAdvLeasing = await activeAdvanceForDriver(payment.plate, payment.payment_date, "id, daily_installment, current_installment, installments");
 
-      const leasingExcess = Math.max(0, amt - qTotal - creditStored);
+      const leasingAmt = Math.max(0, amt - creditStored);
+      const leasingExcess = Math.max(0, leasingAmt - qTotal);
+
+      // Micro-tolerancia de hasta $2.000 COP (decisión 2026-10-27)
+      const shortfall = Math.max(0, qTotal - leasingAmt);
+      const isWithinTolerance = shortfall > 0 && shortfall <= 2000.0;
+      const isAmountInsufficient = shortfall > 2000.0;
+
+      let warningMsg: string | null = null;
+      if (isWithinTolerance) {
+        warningMsg = `Monto con micro-tolerancia ($${Math.round(shortfall).toLocaleString("es-CO")} COP faltantes). Se absorberá automáticamente al presionar Aprobar.`;
+      } else if (isAmountInsufficient) {
+        warningMsg = `Monto insuficiente para cuota de leasing: El pago es de $${Math.round(amt).toLocaleString("es-CO")} COP, pero la cuota #${cuota.installment_no} requiere $${Math.round(qTotal).toLocaleString("es-CO")} COP (faltan $${Math.round(shortfall).toLocaleString("es-CO")} COP). Puede cruzar el saldo con un gasto (repuesto/carrera) o ajustar con nota antes de aprobar.`;
+      }
 
       return res.json({
         payment_id: payment.id,
@@ -670,8 +683,8 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
         receipt_status: payment.receipt_status,
         proof_url: payment.proof_url,
         type: "leasing",
-        can_approve: true,
-        warning_message: null,
+        can_approve: !isAmountInsufficient,
+        warning_message: warningMsg,
         leasing_contract: {
           id: leasingContract.id,
           installment_no: cuota.installment_no,
@@ -701,6 +714,9 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
           principal: pExp,
           total: qTotal,
         },
+        shortfall: Math.round(shortfall),
+        is_within_tolerance: isWithinTolerance,
+        leasing_tolerance: LEASING_TOLERANCE_COP,
       });
     }
 
@@ -785,6 +801,13 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
         receipt_time: payment.receipt_time ? String(payment.receipt_time).slice(0, 5) : null,
       },
       quota_expected: null,
+      shortfall: Math.round(
+        payment.installment_shortfall != null && Number(payment.installment_shortfall) > 0
+          ? Number(payment.installment_shortfall)
+          : Math.max(0, baseRentRate - amt)
+      ),
+      is_within_tolerance: false,
+      leasing_tolerance: LEASING_TOLERANCE_COP,
     });
   } catch (err: any) {
     console.error("[approval-preview] error:", err.message);
@@ -923,6 +946,16 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
     });
   }
 
+  // Comparación con el comprobante enlazado a ESTE pago
+  const { data: rec } = await supabase.from("receipt_uploads").select("amount").eq("linked_payment_id", paymentId).maybeSingle();
+  const receiptAmount: number | null = rec?.amount != null ? Number(rec.amount) : null;
+
+  if (receiptAmount != null && receiptAmount > 0 && amount > receiptAmount && !userNote) {
+    return res.status(400).json({
+      error: `El monto ingresado ($${amount.toLocaleString("es-CO")}) supera el valor del comprobante ($${receiptAmount.toLocaleString("es-CO")}). Escribe una nota que explique el motivo del incremento o acuerdo.`,
+    });
+  }
+
   // Reparto: la cuota solo se abona si el monto cubre canon + cuota (pagos.md §3)
   const coversCredit = instNo != null && amount >= canon + expectedCredit;
   const credit = coversCredit ? expectedCredit : 0;
@@ -940,8 +973,6 @@ r.post("/payments/:id/adjust", async (req: Request, res: Response) => {
   });
 
   // Comparación con el comprobante enlazado a ESTE pago (un pago = un día; no se reparte).
-  const { data: rec } = await supabase.from("receipt_uploads").select("amount").eq("linked_payment_id", paymentId).maybeSingle();
-  const receiptAmount: number | null = rec?.amount != null ? Number(rec.amount) : null;
   const matchesReceipt = receiptAmount != null && receiptAmount > 0 && receiptAmount === amount;
 
   const changes: string[] = [];
@@ -1105,15 +1136,368 @@ r.post("/payments/:id/mark-maintenance", async (req: Request, res: Response) => 
   return res.json({ success: true, message: "Pago marcado como día en mantenimiento.", notes });
 });
 
+// ── Constante de Tolerancia de Leasing (Decisión 2026-10-27) ───────────────
+export const LEASING_TOLERANCE_COP = 2000;
+
+// ── Función Centralizada de Aprobación de Pagos ─────────────────────────────
+// Reutilizada por /approve y /cross-expense para garantizar
+// paridad estricta y atomicidad contable entre Leasing y Renting.
+export async function executePaymentApproval(
+  paymentId: number,
+  options?: {
+    allowToleranceAbsorption?: boolean;
+    recalcSplit?: boolean;
+    rollbackOnFailure?: () => Promise<void>;
+  }
+): Promise<{ ok: boolean; status: number; error?: string; message?: string; cascade?: any }> {
+  const allowTol = options?.allowToleranceAbsorption ?? true;
+
+  const { data: payment, error: pErr } = await supabase
+    .from("payments")
+    .select("*")
+    .eq("id", paymentId)
+    .maybeSingle();
+
+  if (pErr || !payment) {
+    if (options?.rollbackOnFailure) await options.rollbackOnFailure();
+    return { ok: false, status: 404, error: "Pago no encontrado" };
+  }
+
+  if (payment.status === "confirmed") {
+    if (options?.rollbackOnFailure) await options.rollbackOnFailure();
+    return { ok: false, status: 400, error: "Este pago ya fue confirmado previamente" };
+  }
+
+  const leasingContract = await getActiveLeasingContract(payment.plate);
+  const isLeasing = !!(leasingContract && !leasingContract.start_date_pending_confirmation);
+
+  if (isLeasing) {
+    const creditAmt = Number(payment.credit_installment_amount || 0);
+    let leasingAmt = Math.max(0, Number(payment.amount) - creditAmt);
+
+    // 1. Pre-verificar la cuota
+    const { data: cuotaRow, error: cErr } = await supabase
+      .from("leasing_schedule")
+      .select("*")
+      .eq("contract_id", leasingContract.id)
+      .eq("due_date", payment.payment_date)
+      .maybeSingle();
+
+    if (cErr || !cuotaRow) {
+      if (options?.rollbackOnFailure) await options.rollbackOnFailure();
+      return {
+        ok: false,
+        status: 422,
+        error: `No se pudo aplicar la cuota de leasing: No existe cuota en el cronograma de leasing para la fecha ${payment.payment_date} (día no hábil o festivo). Concilie la fecha manualmente.`,
+      };
+    }
+
+    if (cuotaRow.status === "paid") {
+      if (options?.rollbackOnFailure) await options.rollbackOnFailure();
+      return {
+        ok: false,
+        status: 422,
+        error: `No se pudo aplicar la cuota de leasing: La cuota #${cuotaRow.installment_no} (${cuotaRow.due_date}) ya fue pagada previamente.`,
+      };
+    }
+
+    // 2. Verificar micro-tolerancia
+    const qTotal = Number(cuotaRow.maintenance_expected || 0) +
+                   Number(cuotaRow.admin_expected || 0) +
+                   Number(cuotaRow.interest_expected || 0) +
+                   Number(cuotaRow.principal_expected || 0);
+
+    const shortfall = qTotal - leasingAmt;
+    let absorbedShortfall = 0;
+
+    if (allowTol && shortfall > 0 && shortfall <= LEASING_TOLERANCE_COP) {
+      absorbedShortfall = shortfall;
+      leasingAmt += absorbedShortfall;
+    }
+
+    // 3. Ejecutar la cascada
+    // Nota: Si se absorbe tolerancia, actualizamos amount temporalmente para que applyLeasingPayment lo vea
+    const origAmount = Number(payment.amount);
+    if (absorbedShortfall > 0) {
+      await supabase.from("payments").update({
+        amount: origAmount + absorbedShortfall,
+        updated_at: new Date().toISOString(),
+      }).eq("id", payment.id);
+    }
+
+    const cascadeResult = await applyLeasingPayment(payment.id, leasingAmt, leasingContract.id);
+
+    if (!cascadeResult.ok) {
+      // Revertir el amount si se había inflado
+      if (absorbedShortfall > 0) {
+        await supabase.from("payments").update({
+          amount: origAmount,
+          updated_at: new Date().toISOString(),
+        }).eq("id", payment.id);
+      }
+
+      if (options?.rollbackOnFailure) await options.rollbackOnFailure();
+
+      let friendlyErr = cascadeResult.error;
+      if (cascadeResult.error === "LEASING_AMOUNT_MISMATCH") {
+        friendlyErr = `El monto disponible ($${Math.round(leasingAmt).toLocaleString("es-CO")} COP) no cubre el total de la cuota del día en el cronograma. Puede cruzar el saldo con un gasto (repuesto/carrera) o ajustar con nota antes de aprobar.`;
+      } else if (cascadeResult.error === "LEASING_DATE_MISMATCH") {
+        friendlyErr = `No existe cuota en el cronograma de leasing para la fecha ${payment.payment_date} (día no hábil o festivo). Concilie la fecha manualmente.`;
+      } else if (cascadeResult.error === "LEASING_DUPLICATE_PAYMENT") {
+        friendlyErr = `Ya existe otro pago confirmado registrado para esta placa en la fecha ${payment.payment_date}.`;
+      } else if (cascadeResult.error === "LEASING_INSTALLMENT_ALREADY_PAID") {
+        friendlyErr = `La cuota del cronograma correspondiente a esta fecha ya fue pagada previamente.`;
+      }
+
+      return {
+        ok: false,
+        status: 422,
+        error: `No se pudo aplicar la cuota de leasing: ${friendlyErr}`,
+      };
+    }
+
+    // 4. Cascada exitosa: Guardar estado confirmed y nota si hubo tolerancia
+    const updates: Record<string, any> = {
+      status: "confirmed",
+      flagged_for_review: false,
+      updated_at: new Date().toISOString(),
+    };
+    if (absorbedShortfall > 0) {
+      const tolNote = `Aprobado con micro-tolerancia de $${Math.round(absorbedShortfall).toLocaleString("es-CO")} COP.`;
+      updates.notes = [payment.notes, tolNote].filter(Boolean).join(" ");
+      updates.amount = origAmount + absorbedShortfall;
+    }
+
+    const { error: upErr } = await supabase.from("payments").update(updates).eq("id", payment.id);
+    if (upErr) {
+      if (options?.rollbackOnFailure) await options.rollbackOnFailure();
+      return { ok: false, status: 500, error: `Error actualizando estado del pago: ${upErr.message}` };
+    }
+
+    // 5. Si el pago de leasing incluía cuota de anticipo y crédito, marcarla pagada
+    if (payment.installment_number != null && creditAmt > 0) {
+      const activeAdv = await activeAdvanceForDriver(payment.plate, payment.payment_date, "id");
+      if (activeAdv) {
+        await supabase
+          .from("operational_advance_schedule")
+          .update({
+            status: "paid",
+            paid_date: payment.payment_date,
+          })
+          .eq("advance_id", activeAdv.id)
+          .eq("installment_no", payment.installment_number);
+
+        const { count: paidCount } = await supabase
+          .from("operational_advance_schedule")
+          .select("id", { count: "exact", head: true })
+          .eq("advance_id", activeAdv.id)
+          .eq("status", "paid");
+
+        const newCurrent = paidCount ?? payment.installment_number;
+        const { data: fullAdv } = await supabase
+          .from("operational_advances")
+          .select("installments")
+          .eq("id", activeAdv.id)
+          .single();
+
+        const isComplete = fullAdv && newCurrent >= (fullAdv.installments ?? 0);
+        await supabase
+          .from("operational_advances")
+          .update({
+            current_installment: newCurrent,
+            status: isComplete ? "closed" : "active",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", activeAdv.id);
+      }
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      message: "Pago de leasing aprobado y cuota amortizada exitosamente.",
+      cascade: cascadeResult,
+    };
+  } else {
+    // ── Renting Tradicional ──
+    if (options?.recalcSplit) {
+      const amount = Number(payment.amount || 0);
+      const instNo = payment.installment_number ?? null;
+
+      // Recalcular el reparto según pagos.md §3 con el monto actual del pago (ej. pago + gasto cruzado)
+      let expectedCredit = 0;
+      let advance: any = null;
+      if (instNo != null) {
+        advance = await getAdvanceSummary(payment.plate, payment.payment_date);
+        const row = advance?.rows.find((x: any) => x.installment_no === instNo);
+        expectedCredit = Number(row?.installment_amount || advance?.daily_installment || 0);
+      }
+
+      const canon = await resolveCanonForPayment(payment.plate, payment.payment_date);
+      const coversCredit = instNo != null && amount >= canon + expectedCredit;
+      const credit = coversCredit ? expectedCredit : 0;
+      const rem = amount - credit;
+      const insurance = rem >= 5000 ? 5000 : 0;
+      const maintenance = rem > insurance ? Math.min(6000, rem - insurance) : 0;
+      const delivery = Math.max(0, rem - insurance - maintenance);
+      const lateFeePaid = lateFeePaidFromExcess({
+        lateFee: payment.late_fee_amount == null ? null : Number(payment.late_fee_amount),
+        amount,
+        canon,
+        credit,
+        delivery,
+      });
+
+      const update: Record<string, any> = {
+        status: "confirmed",
+        flagged_for_review: false,
+        credit_installment_amount: credit,
+        insurance_amount: insurance,
+        maintenance_amount: maintenance,
+        delivery_amount: delivery,
+        late_fee_paid: lateFeePaid,
+        installment_status: instNo == null ? null : coversCredit ? "paid" : "pending",
+        installment_shortfall: instNo == null ? null : coversCredit ? 0 : canon + expectedCredit - amount,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: upErr } = await supabase.from("payments").update(update).eq("id", payment.id);
+      if (upErr) {
+        if (options?.rollbackOnFailure) await options.rollbackOnFailure();
+        return { ok: false, status: 500, error: `Error actualizando estado del pago: ${upErr.message}` };
+      }
+
+      // Si cubrió la cuota del anticipo, marcarla pagada en operational_advance_schedule
+      if (coversCredit && advance) {
+        await supabase
+          .from("operational_advance_schedule")
+          .update({
+            status: "paid",
+            paid_date: payment.payment_date,
+          })
+          .eq("advance_id", advance.id)
+          .eq("installment_no", instNo);
+
+        const { count: paidCount } = await supabase
+          .from("operational_advance_schedule")
+          .select("id", { count: "exact", head: true })
+          .eq("advance_id", advance.id)
+          .eq("status", "paid");
+
+        const newCurrent = paidCount ?? instNo;
+        const isComplete = advance.installments && newCurrent >= advance.installments;
+        await supabase
+          .from("operational_advances")
+          .update({
+            current_installment: newCurrent,
+            status: isComplete ? "closed" : "active",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", advance.id);
+      }
+    } else {
+      // 🟠 Respetamos la distribución ya almacenada (comportamiento estándar de /approve)
+      const { error: upErr } = await supabase
+        .from("payments")
+        .update({
+          status: "confirmed",
+          flagged_for_review: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", payment.id);
+
+      if (upErr) {
+        if (options?.rollbackOnFailure) await options.rollbackOnFailure();
+        return { ok: false, status: 500, error: `Error actualizando estado del pago: ${upErr.message}` };
+      }
+
+      // Si tenía cuota de anticipo asociada y crédito guardado > 0, marcarla pagada
+      if (payment.installment_number != null && Number(payment.credit_installment_amount) > 0) {
+        const { data: activeAdv } = await supabase
+          .from("operational_advances")
+          .select("id, installments")
+          .eq("plate", payment.plate)
+          .eq("status", "active")
+          .limit(1)
+          .maybeSingle();
+
+        if (activeAdv) {
+          await supabase
+            .from("operational_advance_schedule")
+            .update({
+              status: "paid",
+              paid_date: payment.payment_date,
+            })
+            .eq("advance_id", activeAdv.id)
+            .eq("installment_no", payment.installment_number);
+
+          const { count: paidCount } = await supabase
+            .from("operational_advance_schedule")
+            .select("id", { count: "exact", head: true })
+            .eq("advance_id", activeAdv.id)
+            .eq("status", "paid");
+
+          const newCurrent = paidCount ?? payment.installment_number;
+          const isComplete = activeAdv.installments && newCurrent >= activeAdv.installments;
+          await supabase
+            .from("operational_advances")
+            .update({
+              current_installment: newCurrent,
+              status: isComplete ? "closed" : "active",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", activeAdv.id);
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      message: "Pago de renting aprobado exitosamente.",
+    };
+  }
+}
+
 // ── POST /reports/payments/:id/approve ──────────────────────────────────────
-// Aprueba un pago en estado 'pending'.
-// - Si es leasing: aplica la cascada estricta (applyLeasingPayment). Si falla, NO confirma el pago
-//   y retorna 422 con el error. Si triunfa, actualiza status = 'confirmed'.
-// - Si es renting: respeta el split guardado, marca status = 'confirmed' y si el pago
-//   incluía installment_number, asegura que el cronograma del anticipo quede en 'paid'.
+// Aprueba un pago en estado 'pending' usando la función centralizada executePaymentApproval.
 r.post("/payments/:id/approve", async (req: Request, res: Response) => {
   const paymentId = parseInt(String(req.params.id || ""), 10);
   if (isNaN(paymentId)) return res.status(400).json({ error: "ID de pago inválido" });
+
+  try {
+    const result = await executePaymentApproval(paymentId);
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+    return res.json({
+      success: true,
+      message: result.message,
+      cascade: result.cascade,
+    });
+  } catch (err: any) {
+    console.error("[approve payment] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /reports/payments/:id/cross-expense ────────────────────────────────
+// Cruza un faltante de pago con un gasto real de la empresa o del vehículo (ej: carrera o repuesto).
+// Con validaciones preventivas antes de escribir y rollback atómico si la aprobación falla.
+r.post("/payments/:id/cross-expense", async (req: Request, res: Response) => {
+  const paymentId = parseInt(String(req.params.id || ""), 10);
+  if (isNaN(paymentId)) return res.status(400).json({ error: "ID de pago inválido" });
+
+  const { amount, item, category = "Mantenimiento", description = "", receipt_url = null } = req.body || {};
+  const expenseAmount = Math.round(Number(amount));
+  if (!Number.isFinite(expenseAmount) || expenseAmount <= 0) {
+    return res.status(400).json({ error: "El monto del gasto debe ser un número positivo." });
+  }
+
+  const cleanItem = String(item || description || "Cruce de gasto con pago").trim();
+  if (!cleanItem) {
+    return res.status(400).json({ error: "Debe indicar el concepto o motivo del gasto." });
+  }
 
   try {
     const { data: payment, error: pErr } = await supabase
@@ -1122,153 +1506,155 @@ r.post("/payments/:id/approve", async (req: Request, res: Response) => {
       .eq("id", paymentId)
       .maybeSingle();
 
-    if (pErr || !payment) {
-      return res.status(404).json({ error: "Pago no encontrado" });
-    }
-
-    if (payment.status === "confirmed") {
-      return res.status(400).json({ error: "Este pago ya fue confirmado previamente" });
-    }
+    if (pErr || !payment) return res.status(404).json({ error: "Pago no encontrado" });
+    if (payment.status === "confirmed") return res.status(400).json({ error: "Este pago ya fue confirmado previamente" });
 
     const leasingContract = await getActiveLeasingContract(payment.plate);
     const isLeasing = !!(leasingContract && !leasingContract.start_date_pending_confirmation);
 
+    // PRE-VALIDACIONES:
     if (isLeasing) {
-      // 🔴 2 & 🟡 4: Cascada estricta. Deducir la cuota de anticipo para enviar el canon limpio
-      const creditAmt = Number(payment.credit_installment_amount || 0);
-      const leasingAmt = Math.max(0, Number(payment.amount) - creditAmt);
+      const { data: cuota, error: cErr } = await supabase
+        .from("leasing_schedule")
+        .select("*")
+        .eq("contract_id", leasingContract.id)
+        .eq("due_date", payment.payment_date)
+        .maybeSingle();
 
-      const cascadeResult = await applyLeasingPayment(payment.id, leasingAmt, leasingContract.id);
-      if (!cascadeResult.ok) {
-        return res.status(422).json({
-          error: `No se pudo aplicar la cuota de leasing: ${cascadeResult.error}`,
+      if (cErr || !cuota) {
+        return res.status(400).json({
+          error: `No existe cuota en el cronograma de leasing para la fecha ${payment.payment_date} (día no hábil o festivo). Concilie la fecha manualmente antes de cruzar gastos.`,
         });
       }
 
-      const { error: upErr } = await supabase
-        .from("payments")
-        .update({
-          status: "confirmed",
-          flagged_for_review: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", payment.id);
-
-      if (upErr) {
-        return res.status(500).json({ error: `Error actualizando estado del pago: ${upErr.message}` });
+      if (cuota.status === "paid") {
+        return res.status(400).json({
+          error: `La cuota correspondiente a esta fecha ya fue pagada previamente.`,
+        });
       }
 
-      // Si el pago de leasing incluía cuota de anticipo y crédito, marcarla pagada
-      if (payment.installment_number != null && creditAmt > 0) {
-        const activeAdv = await activeAdvanceForDriver(payment.plate, payment.payment_date, "id");
+      const qTotal = Number(cuota.maintenance_expected || 0) +
+                     Number(cuota.admin_expected || 0) +
+                     Number(cuota.interest_expected || 0) +
+                     Number(cuota.principal_expected || 0);
 
-        if (activeAdv) {
-          await supabase
-            .from("operational_advance_schedule")
-            .update({
-              status: "paid",
-              paid_date: payment.payment_date,
-            })
-            .eq("advance_id", activeAdv.id)
-            .eq("installment_no", payment.installment_number);
+      const creditAmt = Number(payment.credit_installment_amount || 0);
+      const currentLeasingAmt = Math.max(0, Number(payment.amount) - creditAmt);
+      const shortfall = Math.max(0, qTotal - currentLeasingAmt);
 
-          // Sincronizar cuota actual y estado del anticipo
-          const { count: paidCount } = await supabase
-            .from("operational_advance_schedule")
-            .select("id", { count: "exact", head: true })
-            .eq("advance_id", activeAdv.id)
-            .eq("status", "paid");
-
-          const newCurrent = paidCount ?? payment.installment_number;
-          const { data: fullAdv } = await supabase
-            .from("operational_advances")
-            .select("installments")
-            .eq("id", activeAdv.id)
-            .single();
-
-          const isComplete = fullAdv && newCurrent >= (fullAdv.installments ?? 0);
-
-          await supabase
-            .from("operational_advances")
-            .update({
-              current_installment: newCurrent,
-              status: isComplete ? "closed" : "active",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", activeAdv.id);
-        }
+      if (shortfall > 0 && expenseAmount > shortfall) {
+        return res.status(400).json({
+          error: `El monto del gasto ($${expenseAmount.toLocaleString("es-CO")} COP) no puede superar el faltante de la cuota ($${Math.round(shortfall).toLocaleString("es-CO")} COP). Para otros gastos, regístrelos directamente en el módulo de Gastos.`,
+        });
       }
 
-      return res.json({
-        success: true,
-        message: "Pago de leasing aprobado y cuota amortizada exitosamente.",
-        cascade: cascadeResult,
-      });
+      const effectiveAmt = currentLeasingAmt + expenseAmount;
+      if (effectiveAmt < qTotal - LEASING_TOLERANCE_COP) {
+        const remainingFalta = Math.round(qTotal - effectiveAmt);
+        return res.status(400).json({
+          error: `El monto cruzado ($${expenseAmount.toLocaleString("es-CO")}) aún no alcanza para cubrir la cuota ($${Math.round(qTotal).toLocaleString("es-CO")}). Faltan $${remainingFalta.toLocaleString("es-CO")} COP.`,
+        });
+      }
     } else {
-      // Renting Tradicional:
-      // 🟠 3: Respetamos la distribución ya almacenada
-      const { error: upErr } = await supabase
-        .from("payments")
-        .update({
-          status: "confirmed",
-          flagged_for_review: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", payment.id);
-
-      if (upErr) {
-        return res.status(500).json({ error: `Error actualizando estado del pago: ${upErr.message}` });
+      // Renting Tradicional
+      const canon = await resolveCanonForPayment(payment.plate, payment.payment_date);
+      let expectedCredit = 0;
+      if (payment.installment_number != null) {
+        const adv = await getAdvanceSummary(payment.plate, payment.payment_date);
+        const row = adv?.rows.find((x: any) => x.installment_no === payment.installment_number);
+        expectedCredit = Number(row?.installment_amount || adv?.daily_installment || 0);
       }
+      const totalExpected = canon + expectedCredit;
+      const shortfall = Math.max(0, totalExpected - Number(payment.amount || 0));
 
-      // Si tenía cuota de anticipo asociada y crédito, marcarla pagada
-      if (payment.installment_number != null && Number(payment.credit_installment_amount) > 0) {
-        const activeAdv = await activeAdvanceForDriver(payment.plate, payment.payment_date, "id");
-
-        if (activeAdv) {
-          await supabase
-            .from("operational_advance_schedule")
-            .update({
-              status: "paid",
-              paid_date: payment.payment_date,
-            })
-            .eq("advance_id", activeAdv.id)
-            .eq("installment_no", payment.installment_number);
-
-          // Sincronizar cuota actual y estado del anticipo
-          const { count: paidCount } = await supabase
-            .from("operational_advance_schedule")
-            .select("id", { count: "exact", head: true })
-            .eq("advance_id", activeAdv.id)
-            .eq("status", "paid");
-
-          const newCurrent = paidCount ?? payment.installment_number;
-          const { data: fullAdv } = await supabase
-            .from("operational_advances")
-            .select("installments")
-            .eq("id", activeAdv.id)
-            .single();
-
-          const isComplete = fullAdv && newCurrent >= (fullAdv.installments ?? 0);
-
-          await supabase
-            .from("operational_advances")
-            .update({
-              current_installment: newCurrent,
-              status: isComplete ? "closed" : "active",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", activeAdv.id);
-        }
+      if (shortfall > 0 && expenseAmount > shortfall) {
+        return res.status(400).json({
+          error: `El monto del gasto ($${expenseAmount.toLocaleString("es-CO")} COP) no puede superar el faltante de la tarifa ($${Math.round(shortfall).toLocaleString("es-CO")} COP). Para otros gastos, regístrelos directamente en el módulo de Gastos.`,
+        });
       }
-
-      return res.json({
-        success: true,
-        message: "Pago de renting aprobado exitosamente.",
-      });
     }
+
+    // 1. Insertar en expenses
+    const { data: expRow, error: expErr } = await supabase
+      .from("expenses")
+      .insert([{
+        date: payment.payment_date,
+        item: cleanItem,
+        category: category || "Mantenimiento",
+        description: String(description || cleanItem).trim(),
+        total_amount: expenseAmount,
+        attachment_url: receipt_url || null,
+      }])
+      .select()
+      .single();
+
+    if (expErr || !expRow) {
+      return res.status(500).json({ error: `Error creando el gasto: ${expErr?.message}` });
+    }
+
+    // 2. Vincular con expense_vehicles (con verificación de error)
+    const { error: evErr } = await supabase.from("expense_vehicles").insert([{
+      expense_id: expRow.id,
+      plate: payment.plate,
+      share_amount: expenseAmount,
+    }]);
+
+    if (evErr) {
+      // Rollback del gasto
+      await supabase.from("expenses").delete().eq("id", expRow.id);
+      return res.status(500).json({ error: `Error vinculando gasto con el vehículo: ${evErr.message}` });
+    }
+
+    if (receipt_url) {
+      await supabase.from("expense_attachments").insert([{
+        expense_id: expRow.id,
+        kind: "receipt",
+        url: receipt_url,
+      }]);
+    }
+
+    // 3. Actualizar monto temporalmente en payments
+    const origAmount = Number(payment.amount || 0);
+    const origNotes = payment.notes;
+    const newAmount = origAmount + expenseAmount;
+    const crossNote = `Cruce con Gasto #${expRow.id} ($${expenseAmount.toLocaleString("es-CO")} COP - ${cleanItem}). Valor total reconocido: $${origAmount.toLocaleString("es-CO")} (transferencia) + $${expenseAmount.toLocaleString("es-CO")} (gasto) = $${newAmount.toLocaleString("es-CO")} COP.`;
+    const updatedNotes = [origNotes, crossNote].filter(Boolean).join(" ");
+
+    await supabase.from("payments").update({
+      amount: newAmount,
+      notes: updatedNotes,
+      updated_at: new Date().toISOString(),
+    }).eq("id", payment.id);
+
+    // 4. Ejecutar la aprobación unificada con rollback y recalcSplit activo
+    const rollback = async () => {
+      await supabase.from("expense_vehicles").delete().eq("expense_id", expRow.id);
+      await supabase.from("expenses").delete().eq("id", expRow.id);
+      await supabase.from("payments").update({
+        amount: origAmount,
+        notes: origNotes,
+        updated_at: new Date().toISOString(),
+      }).eq("id", payment.id);
+    };
+
+    const approvalResult = await executePaymentApproval(payment.id, {
+      recalcSplit: true,
+      rollbackOnFailure: rollback,
+    });
+
+    if (!approvalResult.ok) {
+      return res.status(approvalResult.status).json({ error: approvalResult.error });
+    }
+
+    return res.json({
+      success: true,
+      message: `Gasto #${expRow.id} registrado y pago aprobado exitosamente por $${newAmount.toLocaleString("es-CO")} COP.`,
+      expense_id: expRow.id,
+      new_amount: newAmount,
+      cascade: approvalResult.cascade,
+    });
   } catch (err: any) {
-    console.error("[approve payment] error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err?.message || "Error interno al cruzar gasto" });
   }
 });
 

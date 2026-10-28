@@ -104,12 +104,20 @@ En el modal de aprobación, **"Ajustar monto o cuota del anticipo"** permite cor
 - `POST /reports/payments/:id/adjust` `{ amount?, installment_number?, notes? }`:
   - La cuota debe existir en el anticipo activo y no estar pagada. Si no, responde 400 con la cuota sugerida. `null` quita la cuota.
   - Recalcula el reparto (§3): la cuota solo se abona si `amount ≥ canon + cuota`. Si no alcanza, queda `pending` con el faltante.
-  - Si el monto queda **menor que el canon**, la nota es obligatoria.
+  - Si el monto queda **menor que el canon**, o si **supera el monto leído del comprobante** (`ocr_amount`), la nota es **obligatoria** (decisión 2026-10-27).
   - Si el monto ahora coincide con el comprobante, se quita la alerta `suspicious_amount_mismatch`.
   - Agrega a `notes` qué cambió (monto y cuota, antes → después). No toca el cronograma: la cuota se marca pagada al **aprobar**.
 - **Ajuste de un clic (decisión 2026-10-17):** si el pago `pending` tiene un monto distinto al del comprobante (`ocr_amount`), el modal de aprobación lo avisa arriba con el botón **"Ajustar a $X"**.
   - El botón llama a `adjust` con el monto del comprobante, la misma cuota y sin nota.
-  - Si el ajuste necesita nota (monto menor que el canon) o la cuota no es válida, abre el formulario de ajuste con el monto ya puesto y el motivo del error.
+  - Si el ajuste necesita nota (monto menor que el canon o superior al comprobante) o la cuota no es válida, abre el formulario de ajuste con el monto ya puesto y el motivo del error.
+
+### 5.0.1 Resoluciones de faltantes en aprobación (decisión 2026-10-27)
+
+Cuando el monto pagado no cubre el valor esperado del día (en leasing o renting), el modal de aprobación ofrece las siguientes salidas:
+1. **Micro-tolerancia automática (hasta $2.000 COP en leasing):** si el faltante es ≤ $2.000 COP (redondeos o comisiones bancarias), `can_approve = true`. Al presionar Aprobar, el backend absorbe la diferencia, ajusta el monto a la cuota exacta con nota automática y confirma. Los botones de cruce permanecen ocultos cuando el faltante es menor o igual a la tolerancia para evitar fricción innecesaria.
+2. **Cruzar con Gasto / Servicio (`POST /reports/payments/:id/cross-expense`):** cuando el conductor pagó menos porque asumió un gasto (repuesto del carro o carrera/servicio a la empresa). Pre-valida que la cuota exista y no esté pagada, y que el monto del gasto no supere el faltante (`expenseAmount <= shortfall`); inserta el gasto en `expenses` y `expense_vehicles`, suma el gasto al valor reconocido del pago y ejecuta la aprobación unificada con recálculo de reparto en renting. Si la aprobación falla, revierte el gasto y el monto del pago.
+3. **Ajuste con Nota:** para acuerdos donde el conductor transferirá la diferencia en el siguiente pago o correcciones justificadas. La nota es obligatoria si el monto supera al comprobante (`amount > receiptAmount`).
+4. **Cuota sin pagar (mora natural):** si el pago no cubre la tarifa y no hay gasto ni acuerdo, no se aprueba: la cuota o día permanece pendiente en mora, que es la verdadera deuda del conductor sin crear marcadores artificiales.
 
 ### 5.1 Marcar como día en mantenimiento (decisión 2026-10-16)
 

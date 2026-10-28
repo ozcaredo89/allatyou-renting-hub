@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
-import { Camera, CheckCircle2, AlertCircle, UploadCloud, Trash2, MessageCircle } from "lucide-react";
+import { Camera, CheckCircle2, AlertCircle, UploadCloud, Trash2, MessageCircle, Sparkles } from "lucide-react";
+import { compressImage } from "../utils/compressImage";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const SUPPORT_WHATSAPP = "573113738912";
@@ -83,7 +84,7 @@ function isGibberishText(v: string): boolean {
 export function VehicleApplicationForm() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [uploadingPhoto, setUploadingPhoto] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDuplicatePlateError, setIsDuplicatePlateError] = useState(false);
@@ -153,45 +154,56 @@ export function VehicleApplicationForm() {
     }));
   };
 
-  const handlePhotoUpload = async (kind: "exterior" | "interior", file: File) => {
-    setUploadingPhoto(kind);
+  const handleMultiplePhotosUpload = async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
     clearErrors();
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("folder", "vehicles");
-      const res = await fetch(`${API}/uploads`, {
-        method: "POST",
-        body: fd,
-      });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || "No se pudo subir la imagen");
+    setUploadProgress(`Procesando 1 de ${fileArray.length}...`);
+
+    const newPhotos: Array<{ kind: string; url: string }> = [];
+
+    for (let i = 0; i < fileArray.length; i++) {
+      const file = fileArray[i];
+      if (!file) continue;
+      setUploadProgress(`Subiendo foto ${i + 1} de ${fileArray.length}...`);
+
+      try {
+        const compressedFile = await compressImage(file, { maxWidth: 1600, maxHeight: 1600, quality: 0.8 });
+        const fd = new FormData();
+        fd.append("file", compressedFile);
+        fd.append("folder", "vehicles");
+        const res = await fetch(`${API}/uploads`, {
+          method: "POST",
+          body: fd,
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson.error || "No se pudo subir la imagen");
+        }
+        const data = await res.json();
+        newPhotos.push({ kind: "general", url: data.url });
+      } catch (err: any) {
+        showError(`Error subiendo foto: ${err.message}`);
+        break;
       }
-      const data = await res.json();
-      setFormData(prev => {
-        const otherPhotos = prev.photos.filter(p => p.kind !== kind);
-        return {
-          ...prev,
-          photos: [...otherPhotos, { kind, url: data.url }],
-        };
-      });
-    } catch (err: any) {
-      showError(`Error subiendo foto: ${err.message}`);
-    } finally {
-      setUploadingPhoto(null);
     }
+
+    if (newPhotos.length > 0) {
+      setFormData(prev => ({
+        ...prev,
+        photos: [...prev.photos, ...newPhotos],
+      }));
+    }
+    setUploadProgress(null);
   };
 
-  const removePhoto = (kind: "exterior" | "interior") => {
+  const removePhotoByIndex = (index: number) => {
     setFormData(prev => ({
       ...prev,
-      photos: prev.photos.filter(p => p.kind !== kind),
+      photos: prev.photos.filter((_, i) => i !== index),
     }));
   };
-
-  const getPhotoUrl = (kind: "exterior" | "interior") =>
-    formData.photos.find(p => p.kind === kind)?.url;
 
   const validateStep = (currentStep: number): boolean => {
     clearErrors();
@@ -772,70 +784,90 @@ export function VehicleApplicationForm() {
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-white">4. Fotos y Estado del Vehículo</h3>
 
-          {/* Subida de Fotos */}
-          <div>
-            <label className="text-xs text-slate-300 font-medium mb-2 flex items-center gap-1.5">
-              <Camera className="w-3.5 h-3.5 text-emerald-400" />
-              Fotos del vehículo (Exterior e Interior)
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { kind: "exterior" as const, title: "Foto Exterior", subtitle: "Frente o lateral" },
-                { kind: "interior" as const, title: "Foto Interior", subtitle: "Sillas o tablero" },
-              ].map(slot => {
-                const url = getPhotoUrl(slot.kind);
-                const isUploading = uploadingPhoto === slot.kind;
-                return (
-                  <div
-                    key={slot.kind}
-                    className={`relative rounded-xl border border-dashed p-3 flex flex-col items-center justify-center text-center transition-colors ${
-                      url
-                        ? "border-emerald-500/40 bg-emerald-500/5"
-                        : "border-white/15 bg-slate-950 hover:border-emerald-500/40"
-                    }`}
-                  >
-                    {url ? (
-                      <div className="w-full">
-                        <img
-                          src={url}
-                          alt={slot.title}
-                          className="h-24 w-full object-cover rounded-lg mb-2"
-                        />
-                        <div className="flex items-center justify-between px-1">
-                          <span className="text-[11px] font-semibold text-emerald-400">✓ Cargada</span>
-                          <button
-                            type="button"
-                            onClick={() => removePhoto(slot.kind)}
-                            className="text-red-400 hover:text-red-300 p-1"
-                            title="Quitar foto"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <label className="w-full py-3 cursor-pointer flex flex-col items-center">
-                        <UploadCloud className="w-7 h-7 text-slate-400 mb-1.5" />
-                        <span className="text-xs font-bold text-white">
-                          {isUploading ? "Subiendo..." : slot.title}
-                        </span>
-                        <span className="text-[10px] text-slate-400 mt-0.5">{slot.subtitle}</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          disabled={isUploading}
-                          onChange={e => {
-                            const f = e.target.files?.[0];
-                            if (f) handlePhotoUpload(slot.kind, f);
-                          }}
-                        />
-                      </label>
-                    )}
-                  </div>
-                );
-              })}
+          {/* Subida de Fotos Flexible con Auto-Etiquetado IA */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs text-slate-300 font-semibold flex items-center gap-1.5">
+                <Camera className="w-4 h-4 text-emerald-400" />
+                Fotos de tu vehículo (Opcional pero recomendado)
+              </label>
+              {formData.photos.length > 0 && (
+                <span className="text-[11px] font-bold text-emerald-400">
+                  {formData.photos.length} {formData.photos.length === 1 ? "foto agregada" : "fotos agregadas"}
+                </span>
+              )}
             </div>
+
+            {/* Guía visual con recomendaciones amigables */}
+            <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-3.5 text-xs text-emerald-200 space-y-1.5">
+              <div className="flex items-center gap-1.5 font-bold text-emerald-300 text-xs">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                Recomendaciones para mejores fotos (nuestra IA las organiza):
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-slate-300 mt-1">
+                <div className="flex items-center gap-1.5 bg-slate-950/50 rounded-lg p-2 border border-white/5">
+                  <span className="text-base">☀️</span>
+                  <span>Buena luz natural (de día)</span>
+                </div>
+                <div className="flex items-center gap-1.5 bg-slate-950/50 rounded-lg p-2 border border-white/5">
+                  <span className="text-base">🚗</span>
+                  <span>Carro completo (ángulo 3/4)</span>
+                </div>
+                <div className="flex items-center gap-1.5 bg-slate-950/50 rounded-lg p-2 border border-white/5">
+                  <span className="text-base">💺</span>
+                  <span>Tablero o silletería</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Galería de fotos subidas */}
+            {formData.photos.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {formData.photos.map((p, idx) => (
+                  <div key={idx} className="relative group rounded-xl border border-white/10 bg-slate-950 overflow-hidden shadow-sm">
+                    <img src={p.url} alt={`Foto ${idx + 1}`} className="h-24 w-full object-cover" />
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-between p-2">
+                      <span className="text-[10px] text-white font-mono bg-black/70 px-1.5 py-0.5 rounded">
+                        #{idx + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removePhotoByIndex(idx)}
+                        className="p-1 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors shadow-sm"
+                        title="Eliminar foto"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Dropzone / Botón de subida múltiple */}
+            <label className={`w-full border-2 border-dashed rounded-2xl p-4 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+              uploadProgress 
+                ? "border-emerald-500/50 bg-emerald-500/10 pointer-events-none" 
+                : "border-white/15 bg-slate-950 hover:border-emerald-500/40 hover:bg-slate-900/60"
+            }`}>
+              <UploadCloud className="w-7 h-7 text-emerald-400 mb-1.5" />
+              <span className="text-xs font-bold text-white">
+                {uploadProgress ? uploadProgress : formData.photos.length > 0 ? "+ Agregar más fotos" : "Subir o Tomar Fotos"}
+              </span>
+              <span className="text-[10px] text-slate-400 mt-0.5">
+                Selecciona 1 o varias fotos de tu galería o cámara
+              </span>
+              <input
+                type="file"
+                multiple
+                accept="image/*"
+                className="hidden"
+                disabled={!!uploadProgress}
+                onChange={e => {
+                  if (e.target.files) handleMultiplePhotosUpload(e.target.files);
+                }}
+              />
+            </label>
           </div>
 
           <div>
@@ -912,7 +944,7 @@ export function VehicleApplicationForm() {
               Atrás
             </button>
             <button
-              disabled={loading || !!uploadingPhoto}
+              disabled={loading || !!uploadProgress}
               onClick={handleSubmit}
               className="flex-[2] rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400 disabled:opacity-50 transition-colors shadow-lg shadow-emerald-500/20"
             >

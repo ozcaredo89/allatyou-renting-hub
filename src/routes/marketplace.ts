@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
+import { classifyVehiclePhotos } from "../lib/vehicleImageClassifier";
 
 const r = Router();
 
@@ -121,20 +122,44 @@ r.post("/upload", async (req: Request, res: Response) => {
       return res.status(422).json({ error: `Ingresa un año válido entre 1990 y ${currentYear + 1}.` });
     }
 
-    // 8. Validar URLs de fotos (solo permitir URLs de nuestro bucket R2 si vienen presentes)
+    // 8. Normalizar y validar fotos (soporta arreglo flexible photos[] o campos individuales)
     const allowedBucketPrefix = (process.env.R2_PUBLIC_URL || "").replace(/\/+$/, "");
+    const rawPhotosList = Array.isArray(body.photos) ? body.photos : [];
+    const validPhotoUrls: string[] = [];
+
+    // Validar fotos del arreglo photos[]
+    for (const p of rawPhotosList) {
+      const urlStr = typeof p === "string" ? p.trim() : (p && typeof p.url === "string") ? p.url.trim() : "";
+      if (urlStr) {
+        const isAllowedOrigin = allowedBucketPrefix
+          ? urlStr.startsWith(`${allowedBucketPrefix}/`)
+          : urlStr.startsWith("https://");
+        if (!isAllowedOrigin) {
+          return res.status(422).json({ error: "URL de fotografía no permitida o inválida." });
+        }
+        validPhotoUrls.push(urlStr);
+      }
+    }
+
+    // Compatibilidad hacia atrás con campos directos photo_exterior_url / photo_interior_url
     for (const photoField of ["photo_exterior_url", "photo_interior_url"] as const) {
       const rawUrl = body[photoField];
-      if (rawUrl) {
-        const urlStr = String(rawUrl).trim();
+      if (rawUrl && typeof rawUrl === "string") {
+        const urlStr = rawUrl.trim();
         const isAllowedOrigin = allowedBucketPrefix
           ? urlStr.startsWith(`${allowedBucketPrefix}/`)
           : urlStr.startsWith("https://");
         if (!isAllowedOrigin) {
           return res.status(422).json({ error: "URL de fotografía inválida." });
         }
+        if (!validPhotoUrls.includes(urlStr)) {
+          validPhotoUrls.push(urlStr);
+        }
       }
     }
+
+    const initialExterior = validPhotoUrls[0] || body.photo_exterior_url || null;
+    const initialInterior = validPhotoUrls[1] || body.photo_interior_url || null;
 
     // 9. Anti-duplicados por placa
     const existing = await supabase
@@ -168,14 +193,40 @@ r.post("/upload", async (req: Request, res: Response) => {
         fuel_type: body.fuel_type || "Gasolina",
         plate: normalizedPlate,
         price_per_day: Number(body.price_per_day) || 0,
-        photo_exterior_url: body.photo_exterior_url || null,
-        photo_interior_url: body.photo_interior_url || null,
+        photo_exterior_url: initialExterior,
+        photo_interior_url: initialInterior,
         status: "pending",
       })
       .select()
       .single();
 
     if (error) throw new Error(error.message);
+
+    // Auto-clasificación con IA en segundo plano para seleccionar la mejor portada
+    if (validPhotoUrls.length > 0) {
+      setImmediate(async () => {
+        try {
+          const classified = await classifyVehiclePhotos(validPhotoUrls.map(url => ({ url })));
+          const bestExterior = classified.find(p => p.is_cover_worthy) || classified.find(p => p.kind === "exterior");
+          const bestInterior = classified.find(p => p.kind === "interior");
+
+          const updates: Record<string, string | null> = {};
+          if (bestExterior && bestExterior.url !== initialExterior) {
+            updates.photo_exterior_url = bestExterior.url;
+          }
+          if (bestInterior && bestInterior.url !== initialInterior) {
+            updates.photo_interior_url = bestInterior.url;
+          }
+
+          if (Object.keys(updates).length > 0) {
+            await supabase.from("marketplace_cars").update(updates).eq("id", data.id);
+            console.log(`[AI] Portada y fotos optimizadas para Marketplace car #${data.id}`);
+          }
+        } catch (aiErr) {
+          console.warn("⚠️ Error en auto-etiquetado IA marketplace:", aiErr);
+        }
+      });
+    }
 
     return res.status(201).json({ success: true, car: data });
   } catch (err: any) {
