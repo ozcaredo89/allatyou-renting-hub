@@ -543,6 +543,8 @@ export default function Expenses() {
 
       if (!res.ok) {
         console.warn(`[Renewal] No se pudo actualizar ficha de ${plate}`);
+        const errText = await res.text().catch(() => "");
+        showToast(`⚠️ Gasto guardado, pero no se pudo actualizar la vigencia de ${plate}: ${errText || "Error del servidor"}`);
       } else {
         setFleet(prev => prev.map(v => {
           if (v.plate === plate) {
@@ -557,8 +559,10 @@ export default function Expenses() {
         }));
         showToast(`✓ Ficha de ${plate} actualizada con nueva vigencia (${newDate})`);
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("[Renewal] Error actualizando ficha del vehículo:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      showToast(`⚠️ Gasto guardado, pero falló la conexión al actualizar la ficha de ${plate} (${msg})`);
     }
   }
 

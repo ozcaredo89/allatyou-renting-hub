@@ -108,9 +108,10 @@ export function ExpenseRenewalModal({
           setSelectedDate(resData.data.expires_at);
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn("[ExpenseRenewalModal] Error en subida/OCR:", err);
-      setUploadError(err?.message || "No se pudo interpretar el archivo automáticamente.");
+      const msg = err instanceof Error ? err.message : String(err);
+      setUploadError(msg || "No se pudo interpretar el archivo automáticamente.");
     } finally {
       setIsUploading(false);
     }
