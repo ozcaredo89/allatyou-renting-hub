@@ -1,5 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { BillGeneratorModal } from "../components/BillGeneratorModal";
+import { ExpenseRenewalModal } from "../components/ExpenseRenewalModal";
+import { detectRenewalType, type RenewalType } from "../lib/expenseRenewal";
 import { Pencil, X, ChevronDown, AlertCircle, CheckCircle2, Download, Search, RotateCcw } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { requestWithBasicAuth } from "../lib/auth";
@@ -401,49 +403,27 @@ export default function Expenses() {
   const [saved, setSaved] = useState<SavedExpensePreview | null>(null);
   const [showModal, setShowModal] = useState(false);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitError(null);
+  // Estado para renovación opcional de SOAT / Tecnomecánica (Issue #4)
+  const [renewalPrompt, setRenewalPrompt] = useState<{
+    type: RenewalType;
+    plate: string;
+    vehicle: FleetVehicle | null;
+    resolved: { finalPlates: string[]; finalCart: CartItem[] };
+    willApplyLeasing: boolean;
+    advTerms: any;
+  } | null>(null);
 
-    // Auto-captura inteligente: resuelve placas/carrito desde el estado actual y los inputs
-    const resolved = resolveSubmission({
-      cart,
-      plates,
-      plateInput,
-      item,
-      category,
-      amountStr,
-      fleet,
-    });
+  const detectedItemRenewal = useMemo(() => {
+    return detectRenewalType([{ item, category }]);
+  }, [item, category]);
 
-    if (!resolved.ok) {
-      setSubmitError(resolved.error);
-      return;
-    }
-
-    const { finalPlates, finalCart } = resolved;
-
-    // Notificar al usuario si se auto-incorporaron elementos desde los inputs
-    if (plates.length === 0 && finalPlates.length > 0) {
-      showToast(`✓ ${finalPlates[0]} incorporado automáticamente`);
-    }
-    if (cart.length === 0 && finalCart.length > 0) {
-      showToast(`✓ ${finalCart[0].item} — $${fmtCOP.format(finalCart[0].amount)} incluido`);
-    }
-
-    // Anticipo por excedente de Nota Débito: tasa negativa bloquea, 0% pide confirmación
-    const willApplyLeasing = Boolean(applyToLeasing && leasingSummary?.has_leasing && finalPlates.length === 1);
-    const fundAvail = Number(leasingSummary?.maintenance_fund_available ?? leasingSummary?.maintenance_fund_accumulated ?? 0);
-    const excessAtSubmit = Math.max(0, finalCart.reduce((sum, c) => sum + c.amount, 0) - fundAvail);
-    const advTerms = advanceTerms(excessAtSubmit);
-    if (willApplyLeasing && excessAtSubmit > 0 && excessMethod === "advance") {
-      if (advTerms.check.error) {
-        setSubmitError(advTerms.check.error);
-        return;
-      }
-      if (advTerms.check.zero && !confirmZeroRate(excessAtSubmit, advTerms.daily, advanceInstallments)) return;
-    }
-
+  async function executeExpenseSave(
+    finalPlates: string[],
+    finalCart: CartItem[],
+    willApplyLeasing: boolean,
+    advTerms: any,
+    additionalAttachments: { kind: "evidence" | "invoice"; url: string }[] = []
+  ) {
     setLoading(true);
     try {
       const evUrls = await uploadMany(evidenceFiles);
@@ -451,10 +431,10 @@ export default function Expenses() {
       const attachments = [
         ...evUrls.map(u => ({ kind: "evidence" as const, url: u })),
         ...invUrls.map(u => ({ kind: "invoice" as const, url: u })),
+        ...additionalAttachments,
       ];
 
       const finalTotal = finalCart.reduce((sum, c) => sum + c.amount, 0);
-      // description: cadena vacía en lugar de null para respetar el NOT NULL constraint de la DB
       const shouldApplyLeasing = willApplyLeasing;
       const body = {
         date,
@@ -499,16 +479,13 @@ export default function Expenses() {
 
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : String(err);
-      // Detalles técnicos: solo para el dev en consola, nunca en la UI
       console.error("[Expenses] Error al guardar:", rawMsg);
 
       const { message, field } = parseServerError(rawMsg);
       setSubmitError(message);
 
-      // Marcar el campo problemático con error visual + mover el foco
       if (field) {
         setFieldErrors(prev => ({ ...prev, [field]: message }));
-        // Pequeño delay para que el estado se aplique antes del focus
         setTimeout(() => {
           if (field === "description") descriptionRef.current?.focus();
           else if (field === "date") dateRef.current?.focus();
@@ -516,9 +493,127 @@ export default function Expenses() {
           else document.getElementById(field)?.focus();
         }, 50);
       }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRenewalConfirm({ date: newDate, fileUrl }: { date: string; fileUrl?: string; file?: File }) {
+    if (!renewalPrompt) return;
+    const { plate, type, resolved, willApplyLeasing, advTerms } = renewalPrompt;
+
+    try {
+      const patchBody: Record<string, any> = {};
+      if (type === "soat") {
+        patchBody.soat_expires_at = newDate;
+        if (fileUrl) patchBody.soat_url = fileUrl;
+      } else {
+        patchBody.tecno_expires_at = newDate;
+      }
+
+      const res = await requestWithBasicAuth(`${API}/vehicles/${plate}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patchBody),
+      });
+
+      if (!res.ok) {
+        console.warn(`[Renewal] No se pudo actualizar ficha de ${plate}`);
+      } else {
+        setFleet(prev => prev.map(v => {
+          if (v.plate === plate) {
+            return {
+              ...v,
+              ...(type === "soat" ? { soat_expires_at: newDate, ...(fileUrl ? { soat_url: fileUrl } : {}) } : { tecno_expires_at: newDate }),
+            };
+          }
+          return v;
+        }));
+        showToast(`✓ Ficha de ${plate} actualizada con nueva vigencia`);
+      }
+
+      const extraAttachments: { kind: "evidence" | "invoice"; url: string }[] = [];
+      if (fileUrl) {
+        extraAttachments.push({ kind: "invoice", url: fileUrl });
+      }
+
+      setRenewalPrompt(null);
+      await executeExpenseSave(resolved.finalPlates, resolved.finalCart, willApplyLeasing, advTerms, extraAttachments);
+    } catch (e: any) {
+      console.error("[Renewal] Error confirmando renovación:", e);
+      setRenewalPrompt(null);
+      await executeExpenseSave(resolved.finalPlates, resolved.finalCart, willApplyLeasing, advTerms);
+    }
+  }
+
+  async function handleRenewalSkip() {
+    if (!renewalPrompt) return;
+    const { resolved, willApplyLeasing, advTerms } = renewalPrompt;
+    setRenewalPrompt(null);
+    await executeExpenseSave(resolved.finalPlates, resolved.finalCart, willApplyLeasing, advTerms);
+  }
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitError(null);
+
+    // Auto-captura inteligente: resuelve placas/carrito desde el estado actual y los inputs
+    const resolved = resolveSubmission({
+      cart,
+      plates,
+      plateInput,
+      item,
+      category,
+      amountStr,
+      fleet,
+    });
+
+    if (!resolved.ok) {
+      setSubmitError(resolved.error);
+      return;
     }
 
-    finally { setLoading(false); }
+    const { finalPlates, finalCart } = resolved;
+
+    // Notificar al usuario si se auto-incorporaron elementos desde los inputs
+    if (plates.length === 0 && finalPlates.length > 0) {
+      showToast(`✓ ${finalPlates[0]} incorporado automáticamente`);
+    }
+    if (cart.length === 0 && finalCart.length > 0) {
+      showToast(`✓ ${finalCart[0].item} — $${fmtCOP.format(finalCart[0].amount)} incluido`);
+    }
+
+    // Anticipo por excedente de Nota Débito: tasa negativa bloquea, 0% pide confirmación
+    const willApplyLeasing = Boolean(applyToLeasing && leasingSummary?.has_leasing && finalPlates.length === 1);
+    const fundAvail = Number(leasingSummary?.maintenance_fund_available ?? leasingSummary?.maintenance_fund_accumulated ?? 0);
+    const excessAtSubmit = Math.max(0, finalCart.reduce((sum, c) => sum + c.amount, 0) - fundAvail);
+    const advTerms = advanceTerms(excessAtSubmit);
+    if (willApplyLeasing && excessAtSubmit > 0 && excessMethod === "advance") {
+      if (advTerms.check.error) {
+        setSubmitError(advTerms.check.error);
+        return;
+      }
+      if (advTerms.check.zero && !confirmZeroRate(excessAtSubmit, advTerms.daily, advanceInstallments)) return;
+    }
+
+    // Detección inteligente de SOAT o Tecnomecánica (Issue #4)
+    if (finalPlates.length === 1) {
+      const renewalType = detectRenewalType(finalCart);
+      if (renewalType) {
+        const targetVehicle = fleet.find(v => v.plate === finalPlates[0]) || null;
+        setRenewalPrompt({
+          type: renewalType,
+          plate: finalPlates[0],
+          vehicle: targetVehicle,
+          resolved: { finalPlates, finalCart },
+          willApplyLeasing,
+          advTerms,
+        });
+        return;
+      }
+    }
+
+    await executeExpenseSave(finalPlates, finalCart, willApplyLeasing, advTerms);
   }
 
   function handleAddToCart() {
@@ -911,6 +1006,8 @@ export default function Expenses() {
                 <select className="w-full rounded-xl border px-3 py-2 bg-white" value={category} onChange={e => setCategory(e.target.value)}>
                   <option value="Mantenimiento">Mantenimiento</option>
                   <option value="Cambio de aceite">Cambio de aceite</option>
+                  <option value="SOAT">SOAT</option>
+                  <option value="Tecnomecánica">Tecnomecánica</option>
                   <option value="Otros">Otros</option>
                 </select>
               </div>
@@ -931,6 +1028,14 @@ export default function Expenses() {
                     }
                   }}
                 />
+                {detectedItemRenewal && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                    <span className="font-bold uppercase tracking-wider text-[10px] bg-emerald-200 text-emerald-800 px-1.5 py-0.5 rounded">
+                      {detectedItemRenewal === "soat" ? "SOAT" : "Tecnomecánica"}
+                    </span>
+                    <span>Al guardar el gasto podrás actualizar la vigencia del vehículo en un clic.</span>
+                  </div>
+                )}
                 {showSuggestions && item.length >= 2 && (
                   <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 flex flex-col overflow-hidden">
                     <div className="overflow-y-auto">
@@ -1597,6 +1702,19 @@ export default function Expenses() {
 
       {/* --- MODALES --- */}
       <BillGeneratorModal isOpen={showBillModal} onClose={() => setShowBillModal(false)} selectedExpenses={recent.filter(r => selectedIds.includes(r.id))} />
+
+      {/* MODAL RENOVACIÓN OPCIONAL DE SOAT / TECNOMECÁNICA (Issue #4) */}
+      <ExpenseRenewalModal
+        isOpen={Boolean(renewalPrompt)}
+        type={renewalPrompt?.type || "soat"}
+        plate={renewalPrompt?.plate || ""}
+        vehicle={renewalPrompt?.vehicle}
+        expenseDate={date}
+        onConfirm={handleRenewalConfirm}
+        onSkip={handleRenewalSkip}
+        onCancel={() => setRenewalPrompt(null)}
+        isSubmitting={loading}
+      />
 
       {/* MODAL NOTIFICACIÓN / NOTA DÉBITO / WHATSAPP */}
       {showModal && saved && (

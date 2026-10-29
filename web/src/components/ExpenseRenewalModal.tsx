@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   Calendar,
   UploadCloud,
@@ -15,7 +15,7 @@ import {
 import { requestWithBasicAuth } from "../lib/auth";
 import type { FleetVehicle } from "../lib/resolveSubmission";
 import {
-  RenewalType,
+  type RenewalType,
   computeSuggestedRenewalDate,
   formatDisplayDate,
 } from "../lib/expenseRenewal";

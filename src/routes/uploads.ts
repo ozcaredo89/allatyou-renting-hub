@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import multer from "multer";
 import { uploadToR2 } from "../lib/r2";
 import { parseReceipt, normalizeOcrDate, normalizeOcrTime } from "../lib/ocr";
+import { parseSoatDocument } from "../lib/soatParser";
 import { supabase } from "../lib/supabase";
 import { NO_DRIVER_IMAGE_HASHES } from "../lib/knownReceiptTemplates";
 
@@ -121,6 +122,64 @@ r.post("/", (req: Request, res: Response, next) => {
 
   } catch (e: any) {
     console.error("❌ Error en upload:", e);
+    return res.status(500).json({ error: e.message || "upload failed" });
+  }
+});
+
+/**
+ * POST /uploads/soat
+ * Sube el documento del SOAT (PDF o imagen) a Cloudflare R2 ('vehicles')
+ * y extrae la vigencia y metadatos con IA (Gemini Vision).
+ */
+r.post("/soat", (req: Request, res: Response, next) => {
+  upload.single("file")(req, res, (err: any) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return res.status(400).json({ 
+            error: "El archivo es demasiado pesado (máximo 30MB). Por favor comprímelo antes de subirlo." 
+          });
+        }
+        return res.status(400).json({ error: `Error en la subida: ${err.message}` });
+      }
+      return res.status(500).json({ error: err.message || "Error procesando el archivo" });
+    }
+    next();
+  });
+}, async (req: Request, res: Response) => {
+  try {
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: "file is required" });
+
+    const isImage = file.mimetype.startsWith("image/");
+    const isPdf = file.mimetype === "application/pdf";
+
+    if (!isImage && !isPdf) {
+      return res.status(400).json({ error: "Only image files and PDFs are allowed" });
+    }
+
+    const folder = req.body.folder || "vehicles";
+    console.log(`📤 Subiendo SOAT a R2 [${folder}]: ${file.originalname}`);
+
+    const [publicUrl, soatData] = await Promise.all([
+      uploadToR2(file, folder),
+      parseSoatDocument(file.buffer, file.mimetype).catch(err => {
+        console.warn("⚠️ Error analizando SOAT con OCR:", err);
+        return {
+          plate: null,
+          start_date: null,
+          expires_at: null,
+          insurance_company: null,
+          policy_number: null,
+          error: err?.message,
+        };
+      }),
+    ]);
+
+    console.log(`✅ SOAT subido: ${publicUrl}, vencimiento: ${soatData.expires_at || 'no detectado'}`);
+    return res.status(201).json({ url: publicUrl, data: soatData });
+  } catch (e: any) {
+    console.error("❌ Error en upload SOAT:", e);
     return res.status(500).json({ error: e.message || "upload failed" });
   }
 });
