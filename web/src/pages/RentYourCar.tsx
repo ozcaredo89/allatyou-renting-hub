@@ -14,41 +14,14 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { compressImage } from "../utils/compressImage";
+import { BRANDS } from "../constants/vehicleCatalog";
+import { VehicleModelCombobox } from "../components/VehicleModelCombobox";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
 // Número para el servicio de GPS y soporte
 const GPS_SERVICE_PHONE = "573238035356";
 const SUPPORT_WHATSAPP = "573113738912";
-
-const BRANDS = [
-  "Chevrolet",
-  "Kia",
-  "Renault",
-  "Mazda",
-  "Nissan",
-  "Suzuki",
-  "Honda",
-  "Toyota",
-  "Hyundai",
-  "Ford",
-  "Volkswagen",
-  "Otra",
-];
-
-const BRAND_LINES: Record<string, string[]> = {
-  Chevrolet: ["Spark GT", "Spark Life", "Beat", "Sail", "Onix", "Joy", "Aveo", "Sonic", "Tracker", "Captiva", "Cruze"],
-  Kia: ["Picanto", "Rio", "Soluto", "Cerato", "Stonic", "Sonet", "Sportage", "Seltos"],
-  Renault: ["Kwid", "Logan", "Sandero", "Stepway", "Duster", "Twingo", "Symbol", "Clio", "Captur", "Kardian"],
-  Mazda: ["Mazda 2", "Mazda 3", "CX-30", "CX-5", "CX-3", "Mazda 6"],
-  Nissan: ["March", "Versa", "Sentra", "Kicks", "Qashqai", "Tiida", "Note"],
-  Suzuki: ["Swift", "Alto", "S-Presso", "Baleno", "Celerio", "Dzire", "Vitara", "S-Cross", "Ertiga"],
-  Honda: ["City", "Civic", "Fit", "WR-V", "HR-V", "CR-V", "Accord", "Pilot"],
-  Toyota: ["Corolla", "Yaris", "Etios", "Corolla Cross", "RAV4", "Hilux", "Fortuner", "Prado"],
-  Hyundai: ["Grand i10", "HB20", "Accent", "i20", "Elantra", "Tucson", "Creta", "Kona"],
-  Ford: ["Fiesta", "Focus", "Fusion", "EcoSport", "Escape", "Explorer"],
-  Volkswagen: ["Gol", "Voyage", "Polo", "Virtus", "Jetta", "T-Cross", "Nivus", "Tiguan"],
-};
 
 function sanitizeColombianPhone(raw: string): string {
   let digits = raw.replace(/\D/g, "");
@@ -95,10 +68,6 @@ export default function RentYourCar() {
   });
 
   const [customBrand, setCustomBrand] = useState("");
-  const [isCustomModel, setIsCustomModel] = useState(false);
-  const [customModel, setCustomModel] = useState("");
-
-  const currentBrandLines = BRAND_LINES[form.brand] || [];
 
   const showError = (msg: string, isDuplicate = false) => {
     setFormError(msg);
@@ -227,7 +196,7 @@ export default function RentYourCar() {
     setIsDuplicatePlateError(false);
 
     const effectiveBrand = form.brand === "Otra" ? customBrand.trim() : form.brand.trim();
-    const effectiveModel = form.brand === "Otra" || isCustomModel ? customModel.trim() : form.model.trim();
+    const effectiveModel = form.model.trim();
     const normalizedPlate = form.plate.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
     const cleanPhone = sanitizeColombianPhone(form.owner_phone);
     const parsedYear = parseInt(form.year, 10);
@@ -420,8 +389,7 @@ export default function RentYourCar() {
                   onChange={e => {
                     const nextBrand = e.target.value;
                     setForm({ ...form, brand: nextBrand, model: "" });
-                    setIsCustomModel(nextBrand === "Otra");
-                    setCustomModel("");
+                    setCustomBrand("");
                   }}
                 >
                   {BRANDS.map(b => (
@@ -432,45 +400,30 @@ export default function RentYourCar() {
                 </select>
               </div>
 
-              {form.brand === "Otra" ? (
+              {form.brand === "Otra" && (
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-2">¿Cuál marca?</label>
                   <input
                     required
                     type="text"
-                    placeholder="Ej: BYD, Subaru..."
+                    placeholder="Ej: Subaru, Volvo, JAC..."
                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
                     value={customBrand}
                     onChange={e => setCustomBrand(e.target.value)}
                   />
                 </div>
-              ) : (
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Modelo / Línea</label>
-                  <select
-                    required={!isCustomModel}
-                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
-                    value={isCustomModel ? "__custom__" : form.model}
-                    onChange={e => {
-                      if (e.target.value === "__custom__") {
-                        setIsCustomModel(true);
-                        setForm({ ...form, model: "" });
-                      } else {
-                        setIsCustomModel(false);
-                        setForm({ ...form, model: e.target.value });
-                      }
-                    }}
-                  >
-                    <option value="">Selecciona la línea...</option>
-                    {currentBrandLines.map(l => (
-                      <option key={l} value={l}>
-                        {l}
-                      </option>
-                    ))}
-                    <option value="__custom__">Otra línea...</option>
-                  </select>
-                </div>
               )}
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">Modelo / Línea</label>
+                <VehicleModelCombobox
+                  brand={form.brand === "Otra" ? customBrand || "Otra" : form.brand}
+                  value={form.model}
+                  onChange={val => setForm(prev => ({ ...prev, model: val }))}
+                  variant="light"
+                  placeholder={form.brand === "Otra" ? "Escribe el modelo (ej: Forester, XC60...)" : undefined}
+                />
+              </div>
 
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">Año</label>
@@ -485,20 +438,6 @@ export default function RentYourCar() {
                   onChange={e => setForm({ ...form, year: e.target.value })}
                 />
               </div>
-
-              {(form.brand === "Otra" || isCustomModel) && (
-                <div className="md:col-span-3">
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Escribe la línea del vehículo</label>
-                  <input
-                    required
-                    type="text"
-                    placeholder="Ej: Picanto, Civic, Onix..."
-                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
-                    value={customModel}
-                    onChange={e => setCustomModel(e.target.value)}
-                  />
-                </div>
-              )}
 
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">Transmisión</label>

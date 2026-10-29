@@ -1,41 +1,14 @@
 import { useState, useRef } from "react";
 import { Camera, CheckCircle2, AlertCircle, UploadCloud, Trash2, MessageCircle, Sparkles } from "lucide-react";
 import { compressImage } from "../utils/compressImage";
+import { BRANDS, BRAND_LINES } from "../constants/vehicleCatalog";
+import { VehicleModelCombobox } from "./VehicleModelCombobox";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const SUPPORT_WHATSAPP = "573113738912";
 
 // Listas estáticas para facilitar el llenado y evitar datos basura
 const CITIES = ["Cali", "Jamundí", "Yumbo", "Palmira", "Buga", "Otra"];
-
-const BRANDS = [
-  "Chevrolet",
-  "Kia",
-  "Renault",
-  "Mazda",
-  "Nissan",
-  "Suzuki",
-  "Honda",
-  "Toyota",
-  "Hyundai",
-  "Ford",
-  "Volkswagen",
-  "Otra",
-];
-
-const BRAND_LINES: Record<string, string[]> = {
-  Chevrolet: ["Spark GT", "Spark Life", "Beat", "Sail", "Onix", "Joy", "Aveo", "Sonic", "Tracker", "Captiva", "Cruze"],
-  Kia: ["Picanto", "Rio", "Soluto", "Cerato", "Stonic", "Sonet", "Sportage", "Seltos"],
-  Renault: ["Kwid", "Logan", "Sandero", "Stepway", "Duster", "Twingo", "Symbol", "Clio", "Captur", "Kardian"],
-  Mazda: ["Mazda 2", "Mazda 3", "CX-30", "CX-5", "CX-3", "Mazda 6"],
-  Nissan: ["March", "Versa", "Sentra", "Kicks", "Qashqai", "Tiida", "Note"],
-  Suzuki: ["Swift", "Alto", "S-Presso", "Baleno", "Celerio", "Dzire", "Vitara", "S-Cross", "Ertiga"],
-  Honda: ["City", "Civic", "Fit", "WR-V", "HR-V", "CR-V", "Accord", "Pilot"],
-  Toyota: ["Corolla", "Yaris", "Etios", "Corolla Cross", "RAV4", "Hilux", "Fortuner", "Prado"],
-  Hyundai: ["Grand i10", "HB20", "Accent", "i20", "Elantra", "Tucson", "Creta", "Kona"],
-  Ford: ["Fiesta", "Focus", "Fusion", "EcoSport", "Escape", "Explorer"],
-  Volkswagen: ["Gol", "Voyage", "Polo", "Virtus", "Jetta", "T-Cross", "Nivus", "Tiguan"],
-};
 
 const COMMON_COLORS = ["Blanco", "Gris", "Plata", "Negro", "Rojo", "Azul", "Beige"];
 const FUELS = ["Gasolina", "Gas/Gasolina", "Diesel", "Eléctrico", "Híbrido"];
@@ -128,12 +101,8 @@ export function VehicleApplicationForm() {
     photos: [] as { kind: string; url: string }[],
   });
 
-  // Manejo para marca o línea personalizada ("Otra")
+  // Manejo para marca personalizada ("Otra")
   const [customBrand, setCustomBrand] = useState("");
-  const [isCustomLine, setIsCustomLine] = useState(false);
-  const [customLine, setCustomLine] = useState("");
-
-  const currentBrandLines = BRAND_LINES[formData.vehicle.brand] || [];
 
   const clearErrors = () => {
     setError(null);
@@ -142,8 +111,7 @@ export function VehicleApplicationForm() {
 
   const handleBrandChange = (newBrand: string) => {
     clearErrors();
-    setIsCustomLine(newBrand === "Otra");
-    setCustomLine("");
+    setCustomBrand("");
     setFormData(prev => ({
       ...prev,
       vehicle: {
@@ -251,11 +219,9 @@ export function VehicleApplicationForm() {
         return false;
       }
 
-      const effectiveLine = (formData.vehicle.brand === "Otra" || isCustomLine)
-        ? customLine.trim()
-        : formData.vehicle.line.trim();
+      const effectiveLine = formData.vehicle.line.trim();
       if (!effectiveLine || effectiveLine.length < 1 || isGibberishText(effectiveLine)) {
-        showError("Por favor selecciona o escribe la línea de tu vehículo (ej: Picanto, Civic, Onix).");
+        showError("Por favor selecciona o escribe la línea de tu vehículo (ej: Odyssey, Civic, Picanto).");
         return false;
       }
 
@@ -303,9 +269,10 @@ export function VehicleApplicationForm() {
     clearErrors();
 
     const effectiveBrand = formData.vehicle.brand === "Otra" ? customBrand.trim() : formData.vehicle.brand.trim();
-    const effectiveLine = (formData.vehicle.brand === "Otra" || isCustomLine)
-      ? customLine.trim()
-      : formData.vehicle.line.trim();
+    const effectiveLine = formData.vehicle.line.trim();
+    const isBrandNew = formData.vehicle.brand === "Otra";
+    const knownLines = BRAND_LINES[effectiveBrand] || [];
+    const isLineNew = isBrandNew || !knownLines.some(l => l.toLowerCase() === effectiveLine.toLowerCase());
 
     const payload = {
       ...formData,
@@ -313,9 +280,9 @@ export function VehicleApplicationForm() {
       vehicle: {
         ...formData.vehicle,
         brand: effectiveBrand,
-        isBrandNewSuggestion: formData.vehicle.brand === "Otra",
+        isBrandNewSuggestion: isBrandNew,
         line: effectiveLine,
-        isLineNewSuggestion: formData.vehicle.brand === "Otra" || isCustomLine,
+        isLineNewSuggestion: isLineNew,
       },
     };
 
@@ -561,13 +528,12 @@ export function VehicleApplicationForm() {
               </select>
             </div>
 
-            {/* Si eligió Marca = "Otra", pedimos el nombre de la marca SIN ocultar el campo de Línea */}
-            {formData.vehicle.brand === "Otra" ? (
+            {formData.vehicle.brand === "Otra" && (
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">¿Cuál marca? *</label>
                 <input
                   className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
-                  placeholder="Ej: BYD, Subaru, Chery..."
+                  placeholder="Ej: Volvo, Subaru, JAC..."
                   value={customBrand}
                   onChange={e => {
                     clearErrors();
@@ -575,50 +541,25 @@ export function VehicleApplicationForm() {
                   }}
                 />
               </div>
-            ) : (
-              <div>
-                <label className="text-xs text-slate-400 mb-1 block">Línea / Referencia *</label>
-                <select
-                  className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
-                  value={isCustomLine ? "__custom__" : formData.vehicle.line}
-                  onChange={e => {
-                    clearErrors();
-                    if (e.target.value === "__custom__") {
-                      setIsCustomLine(true);
-                      setFormData({ ...formData, vehicle: { ...formData.vehicle, line: "" } });
-                    } else {
-                      setIsCustomLine(false);
-                      setFormData({ ...formData, vehicle: { ...formData.vehicle, line: e.target.value } });
-                    }
-                  }}
-                >
-                  <option value="">Selecciona la línea...</option>
-                  {currentBrandLines.map(l => (
-                    <option key={l} value={l}>
-                      {l}
-                    </option>
-                  ))}
-                  <option value="__custom__">Otra línea...</option>
-                </select>
-              </div>
             )}
-          </div>
 
-          {/* Input para escribir la línea cuando eligió "Otra" marca o "Otra línea..." */}
-          {(formData.vehicle.brand === "Otra" || isCustomLine) && (
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">Escribe la línea del vehículo *</label>
-              <input
-                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
-                placeholder="Ej: Picanto, Civic, Onix, Yuan Plus..."
-                value={customLine}
-                onChange={e => {
+              <label className="text-xs text-slate-400 mb-1 block">Línea / Referencia *</label>
+              <VehicleModelCombobox
+                brand={formData.vehicle.brand === "Otra" ? customBrand || "Otra" : formData.vehicle.brand}
+                value={formData.vehicle.line}
+                onChange={val => {
                   clearErrors();
-                  setCustomLine(e.target.value);
+                  setFormData(prev => ({
+                    ...prev,
+                    vehicle: { ...prev.vehicle, line: val },
+                  }));
                 }}
+                variant="dark"
+                placeholder={formData.vehicle.brand === "Otra" ? "Escribe la línea (ej: XC60, Forester...)" : undefined}
               />
             </div>
-          )}
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
