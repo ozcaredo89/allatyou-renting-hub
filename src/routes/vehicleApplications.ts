@@ -278,8 +278,12 @@ r.post("/", async (req: Request, res: Response) => {
     }
 
     // -----------------------------
-    // Validate: Photos (Solo URLs de nuestro bucket R2)
+    // Validate: Photos (Solo URLs de nuestro bucket R2, máximo 8 fotos)
     // -----------------------------
+    if (photos.length > 8) {
+      fields.push({ path: "photos", issue: "max_photos_exceeded", label: "Máximo 8 fotografías permitidas" });
+    }
+
     const allowedBucketPrefix = (process.env.R2_PUBLIC_URL || "").replace(/\/+$/, "");
     const sanitizedPhotos: Array<{ url: string; kind: string }> = [];
 

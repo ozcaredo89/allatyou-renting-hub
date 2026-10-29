@@ -92,21 +92,33 @@ export default function RentYourCar() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    if (photos.length >= 2) {
+      showError("Ya has subido el máximo permitido de 2 fotos (exterior e interior).");
+      if (e.target) e.target.value = "";
+      return;
+    }
+
+    const remainingSlots = 2 - photos.length;
+    const fileArray = Array.from(files).slice(0, remainingSlots);
+
+    if (files.length > remainingSlots) {
+      showError(`Solo se subieron ${fileArray.length} ${fileArray.length === 1 ? "foto" : "fotos"} (máximo 2 permitidas para el marketplace).`);
+    }
+
     setLoading(true);
-    const newPhotos: Array<{ url: string; kind?: string }> = [];
 
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
         if (!file.type.startsWith("image/")) continue;
-        setUploadProgress(`Comprimiendo y subiendo foto ${i + 1} de ${files.length}...`);
+        setUploadProgress(`Comprimiendo y subiendo foto ${i + 1} de ${fileArray.length}...`);
         const compressed = await compressImage(file, { maxWidth: 1600, maxHeight: 1600, quality: 0.8 });
         const url = await uploadFile(compressed);
-        newPhotos.push({ url, kind: "general" });
+        // Guardar progresivamente para que no se pierdan las anteriores si una falla
+        setPhotos(prev => [...prev, { url, kind: "general" }]);
       }
-      setPhotos(prev => [...prev, ...newPhotos]);
     } catch {
-      alert("Error al procesar o subir las fotos.");
+      showError("Error al procesar o subir una de las fotos. Se conservaron las fotos ya subidas.");
     } finally {
       setLoading(false);
       setUploadProgress(null);
@@ -147,6 +159,11 @@ export default function RentYourCar() {
 
   const capturePhoto = () => {
     if (!videoRef.current || !canvasRef.current) return;
+    if (photos.length >= 2) {
+      showError("Ya has subido el máximo permitido de 2 fotos.");
+      stopCamera();
+      return;
+    }
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
@@ -177,7 +194,7 @@ export default function RentYourCar() {
               const url = await uploadFile(file);
               setPhotos(prev => [...prev, { url, kind: "general" }]);
             } catch {
-              alert("Error guardando la foto");
+              showError("Error guardando la foto capturada con la cámara.");
             } finally {
               setLoading(false);
               setUploadProgress(null);
@@ -243,7 +260,7 @@ export default function RentYourCar() {
           owner_phone: cleanPhone,
           photos: photos.map(p => ({ url: p.url, kind: p.kind || "general" })),
           photo_exterior_url: photos[0]?.url || "",
-          photo_interior_url: photos[1]?.url || photos[0]?.url || "",
+          photo_interior_url: photos[1]?.url || null,
         }),
       });
 
@@ -522,98 +539,97 @@ export default function RentYourCar() {
             </div>
           </div>
 
-          {/* SECCIÓN 3: FOTOS (FLEXIBLE CON IA Y RECOMENDACIONES) */}
+          {/* SECCIÓN 3: FOTOS (HASTA 2 FOTOS PARA MARKETPLACE) */}
           <div className="p-8">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-emerald-600 uppercase tracking-wider flex items-center gap-2">
                 <Camera className="w-4 h-4" /> 3. Fotos del Vehículo
               </h3>
-              {photos.length > 0 && (
-                <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full">
-                  {photos.length} {photos.length === 1 ? "foto agregada" : "fotos agregadas"}
-                </span>
-              )}
+              <span className={`text-xs font-bold px-3 py-1 rounded-full ${
+                photos.length >= 2 
+                  ? "text-emerald-800 bg-emerald-100" 
+                  : photos.length === 1
+                  ? "text-blue-800 bg-blue-100"
+                  : "text-slate-500 bg-slate-100"
+              }`}>
+                {photos.length}/2 fotos {photos.length >= 2 ? "(Máximo alcanzado)" : ""}
+              </span>
             </div>
 
             {/* Guía visual con recomendaciones amigables */}
             <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4 text-xs text-emerald-950 space-y-2 mb-6">
               <div className="flex items-center gap-1.5 font-bold text-emerald-800 text-sm">
                 <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
-                Recomendaciones para mejores fotos (nuestra IA las organiza):
+                Sube hasta 2 fotos (1 Portada Exterior obligatoria y 1 Interior opcional):
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-700 mt-2">
-                <div className="flex items-center gap-2 bg-white rounded-xl p-3 border border-emerald-100 shadow-sm">
-                  <span className="text-xl">☀️</span>
-                  <div>
-                    <strong className="block text-slate-900">Buena luz natural</strong>
-                    <span className="text-slate-500 text-[11px]">De día, sin sombras fuertes</span>
-                  </div>
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-700 mt-2">
                 <div className="flex items-center gap-2 bg-white rounded-xl p-3 border border-emerald-100 shadow-sm">
                   <span className="text-xl">🚗</span>
                   <div>
-                    <strong className="block text-slate-900">Carro completo</strong>
-                    <span className="text-slate-500 text-[11px]">Ángulo frontal o 3/4</span>
+                    <strong className="block text-slate-900">1. Foto Exterior (Obligatoria)</strong>
+                    <span className="text-slate-500 text-[11px]">Carro completo en ángulo 3/4 con buena luz</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 bg-white rounded-xl p-3 border border-emerald-100 shadow-sm">
                   <span className="text-xl">💺</span>
                   <div>
-                    <strong className="block text-slate-900">Interior y tablero</strong>
-                    <span className="text-slate-500 text-[11px]">Limpio y bien iluminado</span>
+                    <strong className="block text-slate-900">2. Foto Interior (Opcional)</strong>
+                    <span className="text-slate-500 text-[11px]">Tablero o silletería limpia y bien iluminada</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Galería de fotos subidas */}
+            {/* Galería de fotos subidas (Botón de borrar siempre visible para celulares) */}
             {photos.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              <div className="grid grid-cols-2 gap-4 mb-4 max-w-lg">
                 {photos.map((p, idx) => (
-                  <div key={idx} className="relative group rounded-xl border border-slate-200 bg-slate-100 overflow-hidden shadow-sm aspect-[4/3]">
+                  <div key={idx} className="relative rounded-2xl border-2 border-slate-200 bg-slate-100 overflow-hidden shadow-sm aspect-[4/3]">
                     <img src={p.url} alt={`Foto ${idx + 1}`} className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-between p-2">
-                      <span className="text-[11px] text-white font-bold bg-black/60 px-2 py-0.5 rounded">
-                        {idx === 0 ? "Portada" : `#${idx + 1}`}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removePhotoByIndex(idx)}
-                        className="p-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors shadow-sm"
-                        title="Eliminar foto"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                    
+                    {/* Badge informativo en esquina izquierda */}
+                    <span className="absolute top-2.5 left-2.5 text-[10px] text-white font-bold bg-black/75 backdrop-blur-xs px-2.5 py-1 rounded-lg shadow-sm z-10">
+                      {idx === 0 ? "★ Portada (Exterior)" : "Interior"}
+                    </span>
+
+                    {/* Botón Eliminar SIEMPRE VISIBLE para celulares táctiles */}
+                    <button
+                      type="button"
+                      onClick={() => removePhotoByIndex(idx)}
+                      className="absolute top-2.5 right-2.5 w-7 h-7 bg-red-600 hover:bg-red-700 active:scale-90 text-white rounded-full transition-all shadow-md flex items-center justify-center cursor-pointer z-10"
+                      title="Eliminar foto"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Botones de acción: Tomar Foto o Subir desde Galería */}
+            {/* Botones de acción: Tomar Foto o Subir desde Galería (Deshabilitados si ya hay 2) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={startCamera}
-                disabled={loading}
-                className="flex items-center justify-center gap-2.5 p-4 rounded-xl border-2 border-dashed border-emerald-300 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-800 font-bold text-sm transition-all active:scale-[0.99] disabled:opacity-50"
+                disabled={loading || photos.length >= 2}
+                className="flex items-center justify-center gap-2.5 p-4 rounded-xl border-2 border-dashed border-emerald-300 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-800 font-bold text-sm transition-all active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Camera className="w-5 h-5 text-emerald-600" />
-                <span>Tomar Foto con Cámara</span>
+                <span>{photos.length >= 2 ? "Límite de 2 fotos alcanzado" : "Tomar Foto con Cámara"}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={loading}
-                className="flex items-center justify-center gap-2.5 p-4 rounded-xl border-2 border-dashed border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-sm transition-all active:scale-[0.99] disabled:opacity-50"
+                disabled={loading || photos.length >= 2}
+                className="flex items-center justify-center gap-2.5 p-4 rounded-xl border-2 border-dashed border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-sm transition-all active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <UploadCloud className="w-5 h-5 text-slate-500" />
-                <span>{uploadProgress ? uploadProgress : "Subir desde Galería / Archivos"}</span>
+                <span>{uploadProgress ? uploadProgress : photos.length >= 2 ? "Límite de 2 fotos alcanzado" : "Subir desde Galería / Archivos"}</span>
               </button>
             </div>
             <p className="text-center text-xs text-slate-400 mt-2">
-              Puedes subir una o varias fotos. No te preocupes por el orden ni el lado, nuestra IA las clasifica automáticamente.
+              Máximo 2 fotos para el marketplace. La primera será la portada de tu carro en el catálogo.
             </p>
           </div>
 

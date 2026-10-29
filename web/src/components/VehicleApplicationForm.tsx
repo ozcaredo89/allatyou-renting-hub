@@ -127,15 +127,26 @@ export function VehicleApplicationForm() {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
+    if (formData.photos.length >= 8) {
+      showError("Ya has subido el máximo permitido de 8 fotos para el vehículo.");
+      return;
+    }
+
+    const remainingSlots = 8 - formData.photos.length;
+    const filesToUpload = fileArray.slice(0, remainingSlots);
+
     clearErrors();
-    setUploadProgress(`Procesando 1 de ${fileArray.length}...`);
+    if (fileArray.length > remainingSlots) {
+      showError(`Solo se subieron ${filesToUpload.length} ${filesToUpload.length === 1 ? "foto" : "fotos"} (máximo 8 permitidas para el registro).`);
+    }
+    setUploadProgress(`Procesando 1 de ${filesToUpload.length}...`);
 
     const newPhotos: Array<{ kind: string; url: string }> = [];
 
-    for (let i = 0; i < fileArray.length; i++) {
-      const file = fileArray[i];
+    for (let i = 0; i < filesToUpload.length; i++) {
+      const file = filesToUpload[i];
       if (!file) continue;
-      setUploadProgress(`Subiendo foto ${i + 1} de ${fileArray.length}...`);
+      setUploadProgress(`Subiendo foto ${i + 1} de ${filesToUpload.length}...`);
 
       try {
         const compressedFile = await compressImage(file, { maxWidth: 1600, maxHeight: 1600, quality: 0.8 });
@@ -153,7 +164,7 @@ export function VehicleApplicationForm() {
         const data = await res.json();
         newPhotos.push({ kind: "general", url: data.url });
       } catch (err: any) {
-        showError(`Error subiendo foto: ${err.message}`);
+        showError(`Error subiendo foto: ${err.message}. Se conservaron las fotos ya subidas.`);
         break;
       }
     }
@@ -734,8 +745,8 @@ export function VehicleApplicationForm() {
                 Fotos de tu vehículo (Opcional pero recomendado)
               </label>
               {formData.photos.length > 0 && (
-                <span className="text-[11px] font-bold text-emerald-400">
-                  {formData.photos.length} {formData.photos.length === 1 ? "foto agregada" : "fotos agregadas"}
+                <span className="text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                  {formData.photos.length}/8 fotos {formData.photos.length >= 8 ? "(Máximo)" : ""}
                 </span>
               )}
             </div>
@@ -762,25 +773,27 @@ export function VehicleApplicationForm() {
               </div>
             </div>
 
-            {/* Galería de fotos subidas */}
+            {/* Galería de fotos subidas (Botón de borrar siempre visible para celulares táctiles) */}
             {formData.photos.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 {formData.photos.map((p, idx) => (
-                  <div key={idx} className="relative group rounded-xl border border-white/10 bg-slate-950 overflow-hidden shadow-sm">
-                    <img src={p.url} alt={`Foto ${idx + 1}`} className="h-24 w-full object-cover" />
-                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-between p-2">
-                      <span className="text-[10px] text-white font-mono bg-black/70 px-1.5 py-0.5 rounded">
-                        #{idx + 1}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removePhotoByIndex(idx)}
-                        className="p-1 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors shadow-sm"
-                        title="Eliminar foto"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                  <div key={idx} className="relative rounded-xl border border-white/10 bg-slate-950 overflow-hidden shadow-sm aspect-[4/3]">
+                    <img src={p.url} alt={`Foto ${idx + 1}`} className="h-full w-full object-cover" />
+                    
+                    {/* Badge informativo en esquina izquierda */}
+                    <span className="absolute top-1.5 left-1.5 text-[10px] text-white font-mono bg-black/75 backdrop-blur-xs px-2 py-0.5 rounded-md shadow-sm z-10">
+                      #{idx + 1}
+                    </span>
+
+                    {/* Botón Eliminar SIEMPRE VISIBLE para celulares táctiles */}
+                    <button
+                      type="button"
+                      onClick={() => removePhotoByIndex(idx)}
+                      className="absolute top-1.5 right-1.5 w-6 h-6 bg-red-600 hover:bg-red-500 active:scale-90 text-white rounded-full transition-all shadow-md flex items-center justify-center cursor-pointer z-10"
+                      title="Eliminar foto"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -788,25 +801,34 @@ export function VehicleApplicationForm() {
 
             {/* Dropzone / Botón de subida múltiple */}
             <label className={`w-full border-2 border-dashed rounded-2xl p-4 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
-              uploadProgress 
-                ? "border-emerald-500/50 bg-emerald-500/10 pointer-events-none" 
+              uploadProgress || formData.photos.length >= 8
+                ? "border-white/10 bg-slate-950/50 opacity-60 pointer-events-none" 
                 : "border-white/15 bg-slate-950 hover:border-emerald-500/40 hover:bg-slate-900/60"
             }`}>
               <UploadCloud className="w-7 h-7 text-emerald-400 mb-1.5" />
               <span className="text-xs font-bold text-white">
-                {uploadProgress ? uploadProgress : formData.photos.length > 0 ? "+ Agregar más fotos" : "Subir o Tomar Fotos"}
+                {uploadProgress
+                  ? uploadProgress
+                  : formData.photos.length >= 8
+                  ? "Límite máximo de 8 fotos alcanzado"
+                  : formData.photos.length > 0
+                  ? "+ Agregar más fotos"
+                  : "Subir o Tomar Fotos"}
               </span>
               <span className="text-[10px] text-slate-400 mt-0.5">
-                Selecciona 1 o varias fotos de tu galería o cámara
+                {formData.photos.length >= 8
+                  ? "Para cambiar fotos, elimina una de las anteriores"
+                  : "Selecciona 1 o varias fotos de tu galería o cámara"}
               </span>
               <input
                 type="file"
                 multiple
                 accept="image/*"
                 className="hidden"
-                disabled={!!uploadProgress}
+                disabled={!!uploadProgress || formData.photos.length >= 8}
                 onChange={e => {
                   if (e.target.files) handleMultiplePhotosUpload(e.target.files);
+                  e.target.value = ""; // Limpiar input para permitir re-seleccionar el mismo archivo
                 }}
               />
             </label>

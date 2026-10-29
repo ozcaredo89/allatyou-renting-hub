@@ -158,8 +158,17 @@ r.post("/upload", async (req: Request, res: Response) => {
       }
     }
 
-    const initialExterior = validPhotoUrls[0] || body.photo_exterior_url || null;
-    const initialInterior = validPhotoUrls[1] || body.photo_interior_url || null;
+    // Tope de seguridad: Máximo 2 fotos en Marketplace
+    if (validPhotoUrls.length > 2) {
+      return res.status(422).json({ error: "En el Marketplace se permite un máximo de 2 fotografías (exterior e interior)." });
+    }
+
+    const initialExterior = validPhotoUrls[0] || (typeof body.photo_exterior_url === "string" ? body.photo_exterior_url.trim() : null) || null;
+    let initialInterior = validPhotoUrls[1] || (typeof body.photo_interior_url === "string" ? body.photo_interior_url.trim() : null) || null;
+    // Si la foto interior es idéntica a la exterior, dejarla en null para no duplicar
+    if (initialInterior === initialExterior) {
+      initialInterior = null;
+    }
 
     // 9. Anti-duplicados por placa
     const existing = await supabase
@@ -210,17 +219,40 @@ r.post("/upload", async (req: Request, res: Response) => {
           const bestExterior = classified.find(p => p.is_cover_worthy) || classified.find(p => p.kind === "exterior");
           const bestInterior = classified.find(p => p.kind === "interior");
 
-          const updates: Record<string, string | null> = {};
-          if (bestExterior && bestExterior.url !== initialExterior) {
-            updates.photo_exterior_url = bestExterior.url;
+          let finalExterior = initialExterior;
+          let finalInterior = initialInterior;
+
+          if (validPhotoUrls.length === 2) {
+            const [photoA, photoB] = validPhotoUrls;
+            // Si la IA eligió photoB como la mejor portada, intercambiarlas para no duplicar
+            if (bestExterior && bestExterior.url === photoB) {
+              finalExterior = photoB;
+              finalInterior = photoA;
+            } else if (bestInterior && bestInterior.url === photoA && (!bestExterior || bestExterior.url === photoB)) {
+              finalExterior = photoB;
+              finalInterior = photoA;
+            }
+          } else if (validPhotoUrls.length === 1) {
+            finalExterior = validPhotoUrls[0] || null;
+            finalInterior = null;
           }
-          if (bestInterior && bestInterior.url !== initialInterior) {
-            updates.photo_interior_url = bestInterior.url;
+
+          // Invariante de negocio: la foto interior NUNCA puede ser idéntica a la exterior
+          if (finalInterior === finalExterior) {
+            finalInterior = null;
+          }
+
+          const updates: Record<string, string | null> = {};
+          if (finalExterior !== initialExterior) {
+            updates.photo_exterior_url = finalExterior;
+          }
+          if (finalInterior !== initialInterior) {
+            updates.photo_interior_url = finalInterior;
           }
 
           if (Object.keys(updates).length > 0) {
             await supabase.from("marketplace_cars").update(updates).eq("id", data.id);
-            console.log(`[AI] Portada y fotos optimizadas para Marketplace car #${data.id}`);
+            console.log(`[AI] Portada y fotos optimizadas para Marketplace car #${data.id}:`, updates);
           }
         } catch (aiErr) {
           console.warn("⚠️ Error en auto-etiquetado IA marketplace:", aiErr);

@@ -1,10 +1,12 @@
 import { SchemaType } from "@google/generative-ai";
 import { executeWithModel, geminiClient, openaiClient } from "./ai-registry";
 
+export type VehiclePhotoKind = "exterior" | "interior" | "detail" | "general" | "other";
+
 export interface ClassifiedPhoto {
   url: string;
-  kind: "exterior" | "interior" | "detail" | "other";
-  sub_tag: string; // "frente", "lateral", "trasera", "tres_cuartos", "tablero", "silleteria", "motor", "otro"
+  kind: VehiclePhotoKind;
+  sub_tag: string; // "frente", "lateral", "trasera", "tres_cuartos", "tablero", "silleteria", "motor", "sin_clasificar", "otro"
   label: string; // Ej: "Exterior Frente", "Tablero y Mandos"
   is_vehicle: boolean;
   is_cover_worthy: boolean;
@@ -46,11 +48,11 @@ async function fetchImageBuffer(url: string, timeoutMs = 7000): Promise<{ buffer
 export async function classifyVehiclePhoto(url: string): Promise<ClassifiedPhoto> {
   const fallback: ClassifiedPhoto = {
     url,
-    kind: "exterior",
-    sub_tag: "tres_cuartos",
+    kind: "general",
+    sub_tag: "sin_clasificar",
     label: "Foto de Vehículo",
     is_vehicle: true,
-    is_cover_worthy: true,
+    is_cover_worthy: false,
   };
 
   try {
@@ -167,8 +169,8 @@ export async function classifyVehiclePhotos(
     const original = photos[i];
     return {
       url: original ? original.url : "",
-      kind: "exterior" as const,
-      sub_tag: "tres_cuartos",
+      kind: "general" as const,
+      sub_tag: "sin_clasificar",
       label: "Foto de Vehículo",
       is_vehicle: true,
       is_cover_worthy: i === 0,

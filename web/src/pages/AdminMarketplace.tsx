@@ -14,6 +14,7 @@ type Listing = {
   year: number;
   price_per_day: number;
   photo_exterior_url: string;
+  photo_interior_url?: string | null;
   status: "pending" | "approved" | "rejected";
   created_at: string;
   plate: string;
@@ -112,8 +113,21 @@ export default function AdminMarketplace() {
                         </div>
 
                         {/* Imagen */}
-                        <div className="h-48 bg-slate-200 relative">
-                            <img src={car.photo_exterior_url} alt="Car" className="w-full h-full object-cover" />
+                        <div className="h-48 bg-slate-200 relative flex overflow-hidden">
+                            <a href={car.photo_exterior_url} target="_blank" rel="noreferrer" className="flex-1 h-full block relative group" title="Ver foto exterior">
+                                <img src={car.photo_exterior_url} alt="Exterior" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                                <span className="absolute top-2 left-2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded font-bold backdrop-blur-xs">
+                                    Exterior
+                                </span>
+                            </a>
+                            {car.photo_interior_url && (
+                                <a href={car.photo_interior_url} target="_blank" rel="noreferrer" className="w-28 h-full border-l border-white/60 block relative group" title="Ver foto interior">
+                                    <img src={car.photo_interior_url} alt="Interior" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                                    <span className="absolute top-2 left-2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded font-bold backdrop-blur-xs">
+                                        Interior
+                                    </span>
+                                </a>
+                            )}
                             <div className="absolute bottom-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded backdrop-blur-sm font-bold">
                                 {car.plate}
                             </div>

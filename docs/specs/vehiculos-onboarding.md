@@ -48,18 +48,26 @@
   4. **Semáforo en tiempo real:** Muestra badge `✓ Vigente` (verde) si la fecha es futura, o `⚠️ Vencido` (ámbar) si es pasada.
   5. **Borrado limpio:** Botón `(X)` para dejarlo vacío si el usuario desea no especificarlo (campos opcionales).
 
-### 2.3 Subida Flexible de Fotos y Visión con IA
-* **Sin ranuras rígidas:** No se exige al usuario encasillar fotos por ángulos estrictos ("exterior" e "interior" por separado).
-* **Guía visual amigable:** Bloque de ayuda que aconseja:
-  - ☀️ Buena luz natural de día.
-  - 🚗 Carro completo en ángulo 3/4.
-  - 💺 Interior y tablero limpio.
-* **Captura múltiple:** Permite tomar foto directamente con la cámara (WebRTC o nativo) o seleccionar múltiples imágenes de la galería a la vez.
-* **Compresión en cliente (`compressImage.ts`):** Antes de enviar a `${API}/uploads`, se redimensiona a máx `1600px` y se comprime en canvas a JPEG `0.8`. Reduce el peso de 5-15MB a ~150-300KB (>95% ahorro) y protege la cuota de Cloudflare R2.
+### 2.3 Subida de Fotos, Protección de Cuota y Visión IA
+* **Diferencia de obligatoriedad según el modelo de negocio:**
+  - **Marketplace (`RentYourCar`):** Alquiler directo en catálogo público P2P. **Obligatoria mínimo 1 foto** (portada), máximo **2 fotos** (1 exterior + 1 interior opcional). Si no hay foto interior, queda en `null` (nunca duplicar la exterior).
+  - **Landing (`VehicleApplicationForm`):** Captación de flota administrada. Fotos **opcionales pero muy recomendadas**, con un tope estricto de **máximo 8 fotos**. Si el dueño no las tiene, se toman durante el peritaje presencial.
+* **Tope estricto de fotos (Protección de costos IA y cuota R2):**
+  - Backend rechaza con `422` peticiones con más de 2 fotos en Marketplace o más de 8 fotos en Landing.
+  - Evita ataques de denegación o saturación de cuota en Gemini/OpenAI que puedan frenar la cola concurrente de OCR de pagos.
+* **UX Móvil: Botón de eliminación siempre visible:**
+  - En pantallas táctiles de celular no existe el evento `hover`. El botón de eliminar (🗑️) debe estar **permanentemente visible** en la esquina superior derecha de cada miniatura con área táctil cómoda (`w-7 h-7`), junto con el badge indicador de posición a la izquierda.
+* **Resiliencia en subida por lote y límite notificado:**
+  - El estado local se actualiza progresivamente foto por foto. Si una imagen falla a mitad del lote, las anteriores exitosas **no se descartan** y el mensaje de error se reporta en el banner sin usar `alert()`.
+  - Si el usuario selecciona en la galería más fotos del límite permitido (más de 2 en marketplace o más de 8 en landing), la UI no hace un recorte silencioso: sube las permitidas y muestra un aviso informando cuántas se cargaron por tope de cupo.
+  - El input tipo archivo siempre resetea su valor (`e.target.value = ""`) para permitir volver a elegir la misma foto si el usuario la borró por error.
+* **Compresión en cliente (`compressImage.ts`):** Antes de enviar a `${API}/uploads`, se redimensiona a máx `1600px` y se comprime en canvas a JPEG `0.8`. Reduce el peso de 5-15MB a ~150-300KB (>95% ahorro).
 * **Carpeta R2 obligatoria:** `fd.append("folder", "vehicles")`. **NUNCA omitir**: si se omite, el backend asume `"proofs"` y dispara el OCR concurrente de pagos, saturando el servidor.
 * **Clasificador IA en segundo plano (`vehicleImageClassifier.ts`):**
   - Se ejecuta asíncronamente vía `setImmediate` tras responder HTTP `200/201`. No agrega latencia al usuario.
   - Valida si es vehículo (`is_vehicle`), identifica ángulo (`frente`, `tres_cuartos`, `tablero`, etc.) y auto-asigna la mejor portada en Marketplace.
+  - **Intercambio inteligente anti-duplicados:** Si la IA detecta que la segunda foto es la mejor portada exterior, intercambia las fotos (`photo_exterior_url` $\leftrightarrow$ `photo_interior_url`), garantizando que la foto interior nunca quede duplicada con la exterior.
+  - **Fallback sin etiquetas inventadas:** Si la IA falla o se agota la cuota, la foto se marca como `kind: "general"`, `tag: "sin_clasificar"`. Jamás inventa etiquetas anatómicas falsas que confundan al administrador.
 
 ---
 
