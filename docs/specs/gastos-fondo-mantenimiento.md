@@ -93,3 +93,20 @@ Numeración `ND-00001` (id con padding). PDF generado en el navegador (`debitNot
   - `items`: Arreglo extraído de `items_factura` de la orden de taller (filtrando montos `> 0`). Cada ítem se clasifica bajo categoría `"Mantenimiento"`.
 - **Idempotencia:** La sincronización se dispara únicamente en la transición de estado hacia `entregado` (`isTransitioningToEntregado`), garantizando que ediciones posteriores no dupliquen gastos.
 - **Resiliencia:** La llamada se ejecuta asíncronamente en segundo plano (fire-and-forget con logging de errores) para no bloquear la salida del vehículo en el taller si la red o API externa presenta demoras.
+
+---
+
+## 7. Actualización Opcional de Vigencias: SOAT y Tecnomecánica (Decisión 2026-10-29 — Issue #4)
+
+Al registrar un gasto individual para un vehículo en `/expenses`:
+- **Disparador:** Si algún ítem o categoría incluye "SOAT" o "Tecno" / "Tecnomecánica".
+- **Carácter Opcional:** Es 100% opcional; el gasto se puede guardar de inmediato omitiendo este paso.
+- **SOAT:**
+  1. **Fecha sugerida:** Si el vehículo ya tiene `soat_expires_at`, sugiere exactamente un año después con el mismo día y mes. Si no tiene fecha previa, sugiere +1 año a partir de la fecha del gasto reportado.
+  2. **Carga de PDF:** Soporte para subir el PDF del SOAT. El backend procesa el archivo con Gemini OCR para extraer la fecha de vigencia (`vigencia_hasta`) y el número de póliza, sugiriéndola en pantalla y almacenando el archivo en Cloudflare R2 (`vehicles.soat_url`).
+  3. Al confirmar, actualiza `vehicles.soat_expires_at` y `vehicles.soat_url`.
+- **Tecnomecánica:**
+  1. **Fecha sugerida:** Sugiere exactamente un año después de la vigencia actual o de la fecha del gasto.
+  2. **Sin documento:** No requiere ni solicita archivo adjunto.
+  3. Al confirmar, actualiza `vehicles.tecno_expires_at`.
+- **Trazabilidad:** Toda actualización sobre el vehículo se realiza sincronizadamente al guardar el gasto o vía `PATCH /vehicles/:plate`.

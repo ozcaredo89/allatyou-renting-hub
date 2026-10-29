@@ -76,10 +76,12 @@ Business rules live in `docs/specs/` (index: `docs/specs/README.md`). **Before c
 - Operational advances (driver loans) → `docs/specs/anticipos.md`
 - Expenses, maintenance fund, debit notes → `docs/specs/gastos-fondo-mantenimiento.md`
 - Profit/rentabilidad panel (`/profit`, `routes/profit.ts`, `vehicle_month_*` views) → `docs/specs/utilidades.md`
+- Flujo Git & Tickets (Issue obligatorio, ramas y commits con #ID) → `docs/specs/flujo-git-tickets.md`
 
 Never resolve a business ambiguity by inventing a rule: if the spec doesn't cover it, ask the user and record the answer in the spec.
 
 ## Conventions specific to this repo
+- **Trazabilidad 1 Requerimiento = 1 Ticket = 1 Rama**: Todo desarrollo debe iniciar creando un Issue en GitHub (`#ID`). La rama DEBE llamarse `<tipo>/<id>-<slug>` (ej. `feat/4-expense-soat-tecno-renewal`). Todo commit DEBE referenciar el ticket (ej. `feat(#4): ...`). Ver `docs/specs/flujo-git-tickets.md`.
 - Code comments, commit-adjacent inline notes, and route docstrings are written in **Spanish**; match that when editing existing files.
 - Route files are organized by resource/domain, one Express `Router` per file, default-exported and mounted by name in `src/index.ts` — follow this pattern for new endpoints rather than adding routes inline.
 - The backend `tsconfig.json` excludes `web/` entirely (root TS project only compiles `src/`); the two halves have fully separate TypeScript configs and are never built together.
