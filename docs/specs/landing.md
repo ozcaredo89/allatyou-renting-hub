@@ -49,10 +49,15 @@ El enrutamiento público se maneja bajo el `PublicLayout` (Header blanco/transpa
 * **Moderación / Vista Admin:** `web.allatyou.com/recruitment` -> Pestaña **"Vehículos"** (`AdminRecruitment.tsx`).
 * **Validaciones y UX:**
   * Formulario en 4 pasos con validación secuencial antes de permitir avanzar (`handleNext`).
-  * Marcas predefinidas (incluye Honda) y catálogo de líneas sugeridas por marca con opción "Otra línea".
+  * **Buscador interactivo de Marca y Modelo (`VehicleModelCombobox`):** Autocomplete en tiempo real con catálogo unificado (`vehicleCatalog.ts`), soporte para modelos personalizados (ej. Honda Odyssey) sin fricción de selects rígidos ni pasos ocultos.
   * Al seleccionar marca "Otra", se solicita la marca personalizada sin ocultar el campo de línea.
   * Chips de disponibilidad rápida para agendar cita de peritaje (*"Mañana en la mañana"*, *"Esta semana"*, etc.).
-  * Subida de fotos exterior/interior a la carpeta `vehicles` de Cloudflare R2 con previsualización.
+  * **Fechas de SOAT y Tecnomecánica con UX asistida (`VehicleDateField`):**
+    * Se inicializan por defecto asumiendo vigencia aproximada (+6 meses) para evitar campos vacíos que desorientan al usuario.
+    * Apertura directa del calendario con `showPicker()` al hacer clic en el campo.
+    * Chips rápidos de 1-toque: `+6 meses`, `Fin de año`, `+1 año`.
+    * Semáforo de vigencia en tiempo real (`✓ Vigente` / `⚠️ Vencido`).
+  * Subida flexible de fotos (cámara o galería) a la carpeta `vehicles` de Cloudflare R2 con previsualización y clasificación IA en segundo plano.
   * Auto-scroll al banner de error (`scrollIntoView`) para garantizar visibilidad en dispositivos móviles.
 
 ### 3.3 `RentYourCar` (Marketplace P2P - Alquiler Directo)

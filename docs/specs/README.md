@@ -6,6 +6,7 @@ Fuente de verdad de las **reglas de negocio** de cada módulo. Las leen tanto pe
 
 | Dominio | Archivo | Leer antes de tocar |
 |---|---|---|
+| Onboarding de Vehículos | [vehiculos-onboarding.md](vehiculos-onboarding.md) | `VehicleApplicationForm.tsx`, `RentYourCar.tsx`, `VehicleModelCombobox.tsx`, `VehicleDateField.tsx`, `routes/vehicleApplications.ts`, `routes/marketplace.ts` |
 | Leasing / Rent-to-Own | [leasing.md](leasing.md) | `leasingCascade.ts`, `contractGenerator.ts`, `templates/contrato.html`, `routes/leasing.ts`, `AdminAmortization.tsx`, migraciones `*leasing*` |
 | Pagos diarios | [pagos.md](pagos.md) | `routes/payments.ts`, aprobación en `routes/reports.ts`, `Pay.tsx`, `Reports.tsx` |
 | Anticipos operativos | [anticipos.md](anticipos.md) | `routes/advances.ts`, `operational_advance*` |
@@ -14,8 +15,8 @@ Fuente de verdad de las **reglas de negocio** de cada módulo. Las leen tanto pe
 | Conductores | [conductores.md](conductores.md) | `routes/drivers.ts`, directorio de conductores |
 | Cobranza (CRM) | [cobranza-collections.md](cobranza-collections.md) | módulo de cobranza |
 | Inspecciones | [inspecciones.md](inspecciones.md), [inspecciones-dashboard.md](inspecciones-dashboard.md) | `routes/inspections.ts` |
-| Marketplace | [marketplace.md](marketplace.md) | `routes/marketplace.ts` |
-| Landing | [landing.md](landing.md) | sitio público |
+| Marketplace | [marketplace.md](marketplace.md) | `routes/marketplace.ts`, `RentYourCar.tsx`, `AdminMarketplace.tsx` |
+| Landing | [landing.md](landing.md) | sitio público, `Landing.tsx`, `VehicleApplicationForm.tsx` |
 | Arquitectura | [arquitectura.md](arquitectura.md) | visión general de repos y tecnologías |
 
 > Los specs de conductores, cobranza, inspecciones, marketplace, landing y arquitectura son de feb-2026 y están orientados a lo técnico; revisarlos contra el código antes de confiar en ellos.

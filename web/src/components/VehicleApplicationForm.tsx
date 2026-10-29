@@ -3,6 +3,7 @@ import { Camera, CheckCircle2, AlertCircle, UploadCloud, Trash2, MessageCircle, 
 import { compressImage } from "../utils/compressImage";
 import { BRANDS, BRAND_LINES } from "../constants/vehicleCatalog";
 import { VehicleModelCombobox } from "./VehicleModelCombobox";
+import { VehicleDateField, getFutureDate } from "./VehicleDateField";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 const SUPPORT_WHATSAPP = "573113738912";
@@ -94,8 +95,8 @@ export function VehicleApplicationForm() {
     },
     status: {
       mileage: 0,
-      soatDate: "",
-      technoDate: "",
+      soatDate: getFutureDate(6), // Se asume vigente (aprox 6 meses adelante)
+      technoDate: getFutureDate(6), // Se asume vigente (aprox 6 meses adelante)
       hasInsurance: false,
     },
     photos: [] as { kind: string; url: string }[],
@@ -828,35 +829,29 @@ export function VehicleApplicationForm() {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[11px] text-slate-400 mb-1 block">Vencimiento SOAT (Opcional)</label>
-              <input
-                type="date"
-                value={formData.status.soatDate}
-                className="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 text-xs text-white"
-                onChange={e =>
-                  setFormData({
-                    ...formData,
-                    status: { ...formData.status, soatDate: e.target.value },
-                  })
-                }
-              />
-            </div>
-            <div>
-              <label className="text-[11px] text-slate-400 mb-1 block">Vencimiento Tecno (Opcional)</label>
-              <input
-                type="date"
-                value={formData.status.technoDate}
-                className="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 text-xs text-white"
-                onChange={e =>
-                  setFormData({
-                    ...formData,
-                    status: { ...formData.status, technoDate: e.target.value },
-                  })
-                }
-              />
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+            <VehicleDateField
+              label="Vencimiento SOAT"
+              value={formData.status.soatDate}
+              onChange={val =>
+                setFormData(prev => ({
+                  ...prev,
+                  status: { ...prev.status, soatDate: val },
+                }))
+              }
+              defaultMonthsAhead={6}
+            />
+            <VehicleDateField
+              label="Vencimiento Tecnomecánica"
+              value={formData.status.technoDate}
+              onChange={val =>
+                setFormData(prev => ({
+                  ...prev,
+                  status: { ...prev.status, technoDate: val },
+                }))
+              }
+              defaultMonthsAhead={6}
+            />
           </div>
 
           <label className="flex items-center gap-3 rounded-xl bg-slate-950 p-3 border border-white/5 cursor-pointer hover:bg-slate-900 transition-colors">
