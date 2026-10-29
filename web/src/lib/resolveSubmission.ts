@@ -27,6 +27,9 @@ export type FleetVehicle = {
   brand?: string | null;
   line?: string | null;
   model_year?: number | null;
+  soat_expires_at?: string | null;
+  soat_url?: string | null;
+  tecno_expires_at?: string | null;
 };
 
 export type ResolveSubmissionInput = {

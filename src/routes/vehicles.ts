@@ -213,8 +213,18 @@ r.patch("/:plate", async (req: Request, res: Response) => {
       updated_at: new Date().toISOString(),
     };
 
-    if (body.precio_venta !== undefined) {
-      updates.precio_venta = body.precio_venta;
+    // Scope estricto para este endpoint: solo campos de vigencias (Issue #4) y precio_venta
+    const allowedFields = [
+      "precio_venta",
+      "soat_expires_at",
+      "soat_url",
+      "tecno_expires_at",
+    ];
+
+    for (const f of allowedFields) {
+      if (body[f] !== undefined) {
+        updates[f] = body[f];
+      }
     }
 
     const { data, error } = await supabase

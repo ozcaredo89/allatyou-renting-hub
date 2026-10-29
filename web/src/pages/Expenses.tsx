@@ -1,5 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { BillGeneratorModal } from "../components/BillGeneratorModal";
+import { ExpenseRenewalModal } from "../components/ExpenseRenewalModal";
+import { detectRenewalType, type RenewalType } from "../lib/expenseRenewal";
 import { Pencil, X, ChevronDown, AlertCircle, CheckCircle2, Download, Search, RotateCcw } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { requestWithBasicAuth } from "../lib/auth";
@@ -401,6 +403,176 @@ export default function Expenses() {
   const [saved, setSaved] = useState<SavedExpensePreview | null>(null);
   const [showModal, setShowModal] = useState(false);
 
+  // Estado para renovación opcional de SOAT / Tecnomecánica (Issue #4)
+  const [renewalPrompt, setRenewalPrompt] = useState<{
+    type: RenewalType;
+    plate: string;
+    vehicle: FleetVehicle | null;
+    resolved: { finalPlates: string[]; finalCart: CartItem[] };
+    willApplyLeasing: boolean;
+    advTerms: any;
+  } | null>(null);
+
+  const detectedItemRenewal = useMemo(() => {
+    return detectRenewalType([{ item, category }]);
+  }, [item, category]);
+
+  async function executeExpenseSave(
+    finalPlates: string[],
+    finalCart: CartItem[],
+    willApplyLeasing: boolean,
+    advTerms: any,
+    additionalAttachments: { kind: "evidence" | "invoice"; url: string }[] = []
+  ): Promise<boolean> {
+    setLoading(true);
+    try {
+      const evUrls = await uploadMany(evidenceFiles);
+      const invUrls = await uploadMany(invoiceFiles);
+      const attachments = [
+        ...evUrls.map(u => ({ kind: "evidence" as const, url: u })),
+        ...invUrls.map(u => ({ kind: "invoice" as const, url: u })),
+        ...additionalAttachments,
+      ];
+
+      const finalTotal = finalCart.reduce((sum, c) => sum + c.amount, 0);
+      const shouldApplyLeasing = willApplyLeasing;
+      const body = {
+        date,
+        description: description || "",
+        items: finalCart,
+        plates: finalPlates,
+        attachments,
+        apply_to_leasing: shouldApplyLeasing,
+        leasing_excess_method: excessMethod,
+        leasing_advance_installments: advanceInstallments,
+        leasing_advance_start_date: advanceStartDate,
+        leasing_advance_rate_percent: Math.max(0, Math.round(advTerms.rate * 100) / 100),
+        leasing_advance_daily_installment: advTerms.daily,
+      };
+      const rs = await requestWithBasicAuth(`${API}/expenses`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!rs.ok) {
+        const detail = await rs.text();
+        throw new Error(detail);
+      }
+
+      const resData = await rs.json().catch(() => null);
+      if (resData?.debit_note) {
+        setCreatedDebitNote(resData.debit_note);
+        setDebitNoteError(null);
+      } else {
+        setCreatedDebitNote(null);
+        setDebitNoteError(resData?.debit_note_error || null);
+      }
+
+      const firstItemName = finalCart.length === 1 ? finalCart[0].item : `Factura Varia (${finalCart.length} items)`;
+      setSaved({ date, item: firstItemName, category: "Varios", description, total: finalTotal, plates: [...finalPlates], perVehicle: Math.floor(finalTotal / finalPlates.length) });
+      setShowModal(true);
+      await loadRecent(limit);
+
+      // Reset form
+      setCart([]); setItem(""); setCategory("Mantenimiento"); setDescription(""); setAmountStr(""); setPlates([]); setPlateInput(""); setEvidenceFiles([]); setInvoiceFiles([]);
+      setApplyToLeasing(false); setLeasingSummary(null); setExcessMethod("cash");
+      setAdvanceRateStr(String(DEFAULT_ADVANCE_RATE)); setAdvanceDailyStr("");
+      setSubmitError(null); setFieldErrors({});
+      return true;
+
+    } catch (err) {
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      console.error("[Expenses] Error al guardar:", rawMsg);
+
+      const { message, field } = parseServerError(rawMsg);
+      setSubmitError(message);
+
+      if (field) {
+        setFieldErrors(prev => ({ ...prev, [field]: message }));
+        setTimeout(() => {
+          if (field === "description") descriptionRef.current?.focus();
+          else if (field === "date") dateRef.current?.focus();
+          else if (field === "plate-input") plateInputRef.current?.focus();
+          else document.getElementById(field)?.focus();
+        }, 50);
+      }
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRenewalConfirm({ date: newDate, fileUrl }: { date: string; fileUrl?: string; file?: File }) {
+    if (!renewalPrompt) return;
+    const { plate, type, resolved, willApplyLeasing, advTerms } = renewalPrompt;
+
+    const extraAttachments: { kind: "evidence" | "invoice"; url: string }[] = [];
+    if (fileUrl) {
+      extraAttachments.push({ kind: "invoice", url: fileUrl });
+    }
+
+    setRenewalPrompt(null);
+
+    // 1. Guardar el gasto PRIMERO (transaccionalidad y consistencia)
+    const savedOk = await executeExpenseSave(
+      resolved.finalPlates,
+      resolved.finalCart,
+      willApplyLeasing,
+      advTerms,
+      extraAttachments
+    );
+
+    // 2. Si el gasto falló, NO tocamos el vehículo ni modificamos fleet para evitar sumar años en falso
+    if (!savedOk) {
+      return;
+    }
+
+    // 3. Con el gasto guardado exitosamente, actualizamos la ficha del vehículo
+    try {
+      const patchBody: Record<string, any> = {};
+      if (type === "soat") {
+        patchBody.soat_expires_at = newDate;
+        if (fileUrl) patchBody.soat_url = fileUrl;
+      } else {
+        patchBody.tecno_expires_at = newDate;
+      }
+
+      const res = await requestWithBasicAuth(`${API}/vehicles/${plate}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patchBody),
+      });
+
+      if (!res.ok) {
+        console.warn(`[Renewal] No se pudo actualizar ficha de ${plate}`);
+        const errText = await res.text().catch(() => "");
+        showToast(`⚠️ Gasto guardado, pero no se pudo actualizar la vigencia de ${plate}: ${errText || "Error del servidor"}`);
+      } else {
+        setFleet(prev => prev.map(v => {
+          if (v.plate === plate) {
+            return {
+              ...v,
+              ...(type === "soat"
+                ? { soat_expires_at: newDate, ...(fileUrl ? { soat_url: fileUrl } : {}) }
+                : { tecno_expires_at: newDate }),
+            };
+          }
+          return v;
+        }));
+        showToast(`✓ Ficha de ${plate} actualizada con nueva vigencia (${newDate})`);
+      }
+    } catch (e: unknown) {
+      console.error("[Renewal] Error actualizando ficha del vehículo:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      showToast(`⚠️ Gasto guardado, pero falló la conexión al actualizar la ficha de ${plate} (${msg})`);
+    }
+  }
+
+  async function handleRenewalSkip() {
+    if (!renewalPrompt) return;
+    const { resolved, willApplyLeasing, advTerms } = renewalPrompt;
+    setRenewalPrompt(null);
+    await executeExpenseSave(resolved.finalPlates, resolved.finalCart, willApplyLeasing, advTerms);
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitError(null);
@@ -444,81 +616,24 @@ export default function Expenses() {
       if (advTerms.check.zero && !confirmZeroRate(excessAtSubmit, advTerms.daily, advanceInstallments)) return;
     }
 
-    setLoading(true);
-    try {
-      const evUrls = await uploadMany(evidenceFiles);
-      const invUrls = await uploadMany(invoiceFiles);
-      const attachments = [
-        ...evUrls.map(u => ({ kind: "evidence" as const, url: u })),
-        ...invUrls.map(u => ({ kind: "invoice" as const, url: u })),
-      ];
-
-      const finalTotal = finalCart.reduce((sum, c) => sum + c.amount, 0);
-      // description: cadena vacía en lugar de null para respetar el NOT NULL constraint de la DB
-      const shouldApplyLeasing = willApplyLeasing;
-      const body = {
-        date,
-        description: description || "",
-        items: finalCart,
-        plates: finalPlates,
-        attachments,
-        apply_to_leasing: shouldApplyLeasing,
-        leasing_excess_method: excessMethod,
-        leasing_advance_installments: advanceInstallments,
-        leasing_advance_start_date: advanceStartDate,
-        leasing_advance_rate_percent: Math.max(0, Math.round(advTerms.rate * 100) / 100),
-        leasing_advance_daily_installment: advTerms.daily,
-      };
-      const rs = await requestWithBasicAuth(`${API}/expenses`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-      });
-      if (!rs.ok) {
-        const detail = await rs.text();
-        throw new Error(detail);
-      }
-
-      const resData = await rs.json().catch(() => null);
-      if (resData?.debit_note) {
-        setCreatedDebitNote(resData.debit_note);
-        setDebitNoteError(null);
-      } else {
-        setCreatedDebitNote(null);
-        setDebitNoteError(resData?.debit_note_error || null);
-      }
-
-      const firstItemName = finalCart.length === 1 ? finalCart[0].item : `Factura Varia (${finalCart.length} items)`;
-      setSaved({ date, item: firstItemName, category: "Varios", description, total: finalTotal, plates: [...finalPlates], perVehicle: Math.floor(finalTotal / finalPlates.length) });
-      setShowModal(true);
-      await loadRecent(limit);
-
-      // Reset form
-      setCart([]); setItem(""); setCategory("Mantenimiento"); setDescription(""); setAmountStr(""); setPlates([]); setPlateInput(""); setEvidenceFiles([]); setInvoiceFiles([]);
-      setApplyToLeasing(false); setLeasingSummary(null); setExcessMethod("cash");
-      setAdvanceRateStr(String(DEFAULT_ADVANCE_RATE)); setAdvanceDailyStr("");
-      setSubmitError(null); setFieldErrors({});
-
-    } catch (err) {
-      const rawMsg = err instanceof Error ? err.message : String(err);
-      // Detalles técnicos: solo para el dev en consola, nunca en la UI
-      console.error("[Expenses] Error al guardar:", rawMsg);
-
-      const { message, field } = parseServerError(rawMsg);
-      setSubmitError(message);
-
-      // Marcar el campo problemático con error visual + mover el foco
-      if (field) {
-        setFieldErrors(prev => ({ ...prev, [field]: message }));
-        // Pequeño delay para que el estado se aplique antes del focus
-        setTimeout(() => {
-          if (field === "description") descriptionRef.current?.focus();
-          else if (field === "date") dateRef.current?.focus();
-          else if (field === "plate-input") plateInputRef.current?.focus();
-          else document.getElementById(field)?.focus();
-        }, 50);
+    // Detección inteligente de SOAT o Tecnomecánica (Issue #4)
+    if (finalPlates.length === 1) {
+      const renewalType = detectRenewalType(finalCart);
+      if (renewalType) {
+        const targetVehicle = fleet.find(v => v.plate === finalPlates[0]) || null;
+        setRenewalPrompt({
+          type: renewalType,
+          plate: finalPlates[0],
+          vehicle: targetVehicle,
+          resolved: { finalPlates, finalCart },
+          willApplyLeasing,
+          advTerms,
+        });
+        return;
       }
     }
 
-    finally { setLoading(false); }
+    await executeExpenseSave(finalPlates, finalCart, willApplyLeasing, advTerms);
   }
 
   function handleAddToCart() {
@@ -911,6 +1026,8 @@ export default function Expenses() {
                 <select className="w-full rounded-xl border px-3 py-2 bg-white" value={category} onChange={e => setCategory(e.target.value)}>
                   <option value="Mantenimiento">Mantenimiento</option>
                   <option value="Cambio de aceite">Cambio de aceite</option>
+                  <option value="SOAT">SOAT</option>
+                  <option value="Tecnomecánica">Tecnomecánica</option>
                   <option value="Otros">Otros</option>
                 </select>
               </div>
@@ -931,6 +1048,14 @@ export default function Expenses() {
                     }
                   }}
                 />
+                {detectedItemRenewal && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                    <span className="font-bold uppercase tracking-wider text-[10px] bg-emerald-200 text-emerald-800 px-1.5 py-0.5 rounded">
+                      {detectedItemRenewal === "soat" ? "SOAT" : "Tecnomecánica"}
+                    </span>
+                    <span>Al guardar el gasto podrás actualizar la vigencia del vehículo en un clic.</span>
+                  </div>
+                )}
                 {showSuggestions && item.length >= 2 && (
                   <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 flex flex-col overflow-hidden">
                     <div className="overflow-y-auto">
@@ -1597,6 +1722,19 @@ export default function Expenses() {
 
       {/* --- MODALES --- */}
       <BillGeneratorModal isOpen={showBillModal} onClose={() => setShowBillModal(false)} selectedExpenses={recent.filter(r => selectedIds.includes(r.id))} />
+
+      {/* MODAL RENOVACIÓN OPCIONAL DE SOAT / TECNOMECÁNICA (Issue #4) */}
+      <ExpenseRenewalModal
+        isOpen={Boolean(renewalPrompt)}
+        type={renewalPrompt?.type || "soat"}
+        plate={renewalPrompt?.plate || ""}
+        vehicle={renewalPrompt?.vehicle}
+        expenseDate={date}
+        onConfirm={handleRenewalConfirm}
+        onSkip={handleRenewalSkip}
+        onCancel={() => setRenewalPrompt(null)}
+        isSubmitting={loading}
+      />
 
       {/* MODAL NOTIFICACIÓN / NOTA DÉBITO / WHATSAPP */}
       {showModal && saved && (

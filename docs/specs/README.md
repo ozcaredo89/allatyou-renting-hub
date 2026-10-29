@@ -18,6 +18,7 @@ Fuente de verdad de las **reglas de negocio** de cada módulo. Las leen tanto pe
 | Marketplace | [marketplace.md](marketplace.md) | `routes/marketplace.ts`, `RentYourCar.tsx`, `AdminMarketplace.tsx` |
 | Landing | [landing.md](landing.md) | sitio público, `Landing.tsx`, `VehicleApplicationForm.tsx` |
 | Arquitectura | [arquitectura.md](arquitectura.md) | visión general de repos y tecnologías |
+| Flujo Git & Tickets | [flujo-git-tickets.md](flujo-git-tickets.md) | Política obligatoria: GitHub Issue -> Rama con #ID -> Commits con #ID |
 
 > Los specs de conductores, cobranza, inspecciones, marketplace, landing y arquitectura son de feb-2026 y están orientados a lo técnico; revisarlos contra el código antes de confiar en ellos.
 
