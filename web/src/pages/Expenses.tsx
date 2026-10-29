@@ -423,7 +423,7 @@ export default function Expenses() {
     willApplyLeasing: boolean,
     advTerms: any,
     additionalAttachments: { kind: "evidence" | "invoice"; url: string }[] = []
-  ) {
+  ): Promise<boolean> {
     setLoading(true);
     try {
       const evUrls = await uploadMany(evidenceFiles);
@@ -476,6 +476,7 @@ export default function Expenses() {
       setApplyToLeasing(false); setLeasingSummary(null); setExcessMethod("cash");
       setAdvanceRateStr(String(DEFAULT_ADVANCE_RATE)); setAdvanceDailyStr("");
       setSubmitError(null); setFieldErrors({});
+      return true;
 
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : String(err);
@@ -493,6 +494,7 @@ export default function Expenses() {
           else document.getElementById(field)?.focus();
         }, 50);
       }
+      return false;
     } finally {
       setLoading(false);
     }
@@ -502,6 +504,28 @@ export default function Expenses() {
     if (!renewalPrompt) return;
     const { plate, type, resolved, willApplyLeasing, advTerms } = renewalPrompt;
 
+    const extraAttachments: { kind: "evidence" | "invoice"; url: string }[] = [];
+    if (fileUrl) {
+      extraAttachments.push({ kind: "invoice", url: fileUrl });
+    }
+
+    setRenewalPrompt(null);
+
+    // 1. Guardar el gasto PRIMERO (transaccionalidad y consistencia)
+    const savedOk = await executeExpenseSave(
+      resolved.finalPlates,
+      resolved.finalCart,
+      willApplyLeasing,
+      advTerms,
+      extraAttachments
+    );
+
+    // 2. Si el gasto falló, NO tocamos el vehículo ni modificamos fleet para evitar sumar años en falso
+    if (!savedOk) {
+      return;
+    }
+
+    // 3. Con el gasto guardado exitosamente, actualizamos la ficha del vehículo
     try {
       const patchBody: Record<string, any> = {};
       if (type === "soat") {
@@ -524,25 +548,17 @@ export default function Expenses() {
           if (v.plate === plate) {
             return {
               ...v,
-              ...(type === "soat" ? { soat_expires_at: newDate, ...(fileUrl ? { soat_url: fileUrl } : {}) } : { tecno_expires_at: newDate }),
+              ...(type === "soat"
+                ? { soat_expires_at: newDate, ...(fileUrl ? { soat_url: fileUrl } : {}) }
+                : { tecno_expires_at: newDate }),
             };
           }
           return v;
         }));
-        showToast(`✓ Ficha de ${plate} actualizada con nueva vigencia`);
+        showToast(`✓ Ficha de ${plate} actualizada con nueva vigencia (${newDate})`);
       }
-
-      const extraAttachments: { kind: "evidence" | "invoice"; url: string }[] = [];
-      if (fileUrl) {
-        extraAttachments.push({ kind: "invoice", url: fileUrl });
-      }
-
-      setRenewalPrompt(null);
-      await executeExpenseSave(resolved.finalPlates, resolved.finalCart, willApplyLeasing, advTerms, extraAttachments);
     } catch (e: any) {
-      console.error("[Renewal] Error confirmando renovación:", e);
-      setRenewalPrompt(null);
-      await executeExpenseSave(resolved.finalPlates, resolved.finalCart, willApplyLeasing, advTerms);
+      console.error("[Renewal] Error actualizando ficha del vehículo:", e);
     }
   }
 

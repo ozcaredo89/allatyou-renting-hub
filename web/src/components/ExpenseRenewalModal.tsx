@@ -11,6 +11,7 @@ import {
   Loader2,
   ShieldCheck,
   Wrench,
+  AlertTriangle,
 } from "lucide-react";
 import { requestWithBasicAuth } from "../lib/auth";
 import type { FleetVehicle } from "../lib/resolveSubmission";
@@ -43,8 +44,6 @@ export function ExpenseRenewalModal({
   onCancel,
   isSubmitting = false,
 }: ExpenseRenewalModalProps) {
-  if (!isOpen) return null;
-
   const currentExpiry =
     type === "soat" ? vehicle?.soat_expires_at : vehicle?.tecno_expires_at;
 
@@ -54,22 +53,27 @@ export function ExpenseRenewalModal({
   const [soatFile, setSoatFile] = useState<File | null>(null);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [isConfirming, setIsConfirming] = useState<boolean>(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [aiDetectedData, setAiDetectedData] = useState<{
+    plate?: string | null;
     expires_at?: string | null;
     start_date?: string | null;
     insurance_company?: string | null;
     policy_number?: string | null;
   } | null>(null);
 
-  // Reiniciar estado cada vez que se abre
+  // Reiniciar estado cada vez que se abre (siempre dentro de los hooks)
   useEffect(() => {
-    setSelectedDate(initialSuggested);
-    setSoatFile(null);
-    setUploadedUrl(null);
-    setIsUploading(false);
-    setUploadError(null);
-    setAiDetectedData(null);
+    if (isOpen) {
+      setSelectedDate(initialSuggested);
+      setSoatFile(null);
+      setUploadedUrl(null);
+      setIsUploading(false);
+      setIsConfirming(false);
+      setUploadError(null);
+      setAiDetectedData(null);
+    }
   }, [isOpen, type, plate, currentExpiry, initialSuggested]);
 
   // Manejar subida automática y extracción por IA cuando se selecciona archivo
@@ -112,12 +116,52 @@ export function ExpenseRenewalModal({
     }
   }
 
+  // Prevenir doble clic y estados intermedios
+  async function handleConfirmClick() {
+    if (isSubmitting || isUploading || isConfirming || !selectedDate) return;
+    setIsConfirming(true);
+    try {
+      await onConfirm({
+        date: selectedDate,
+        fileUrl: uploadedUrl || undefined,
+        file: soatFile || undefined,
+      });
+    } finally {
+      setIsConfirming(false);
+    }
+  }
+
+  async function handleSkipClick() {
+    if (isSubmitting || isUploading || isConfirming) return;
+    setIsConfirming(true);
+    try {
+      await onSkip();
+    } finally {
+      setIsConfirming(false);
+    }
+  }
+
+  // ⚠️ Retornar null DESPUÉS de haber ejecutado todos los hooks de React (Regla de Hooks)
+  if (!isOpen) return null;
+
   const isSoat = type === "soat";
   const title = isSoat ? "Renovación de SOAT" : "Renovación de Tecnomecánica";
   const icon = isSoat ? (
     <ShieldCheck className="w-6 h-6 text-emerald-600" />
   ) : (
     <Wrench className="w-6 h-6 text-blue-600" />
+  );
+
+  const isCurrentActive = Boolean(currentExpiry && currentExpiry >= expenseDate);
+  const actionDisabled = isSubmitting || isUploading || isConfirming;
+
+  // Comparar placa detectada con la placa del vehículo
+  const detectedPlate = aiDetectedData?.plate
+    ? aiDetectedData.plate.toUpperCase().replace(/[^A-Z0-9]/g, "")
+    : null;
+  const currentVehiclePlate = plate.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const plateMismatch = Boolean(
+    detectedPlate && currentVehiclePlate && detectedPlate !== currentVehiclePlate
   );
 
   return (
@@ -147,8 +191,8 @@ export function ExpenseRenewalModal({
           </div>
           <button
             onClick={onCancel}
-            disabled={isSubmitting || isUploading}
-            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"
+            disabled={actionDisabled}
+            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors disabled:opacity-50"
           >
             <X className="w-5 h-5" />
           </button>
@@ -174,8 +218,19 @@ export function ExpenseRenewalModal({
 
             <div className="text-right">
               <div className="text-[11px] text-slate-400 font-medium">Vigencia actual</div>
-              <div className="text-xs font-bold text-slate-700">
-                {formatDisplayDate(currentExpiry)}
+              <div className="text-xs font-bold text-slate-700 flex items-center justify-end gap-1">
+                <span>{formatDisplayDate(currentExpiry)}</span>
+                {currentExpiry && (
+                  <span
+                    className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                      isCurrentActive
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-red-100 text-red-800"
+                    }`}
+                  >
+                    {isCurrentActive ? "Vigente" : "Vencido"}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -194,17 +249,17 @@ export function ExpenseRenewalModal({
 
             <input
               type="date"
-              className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm shadow-sm"
+              className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm shadow-sm disabled:opacity-60"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              disabled={isSubmitting || isUploading}
+              disabled={actionDisabled}
             />
 
             <p className="text-[11px] text-slate-500 flex items-center gap-1">
               <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              {currentExpiry
-                ? "Calculada exactamente un año después manteniendo el mismo día y mes."
-                : "Calculada exactamente a un año a partir de la fecha del gasto reportado."}
+              {isCurrentActive
+                ? "Calculada a +1 año manteniendo el mismo mes y día de la vigencia activa."
+                : "Calculada exactamente a 1 año a partir del día del gasto reportado (inicia nueva vigencia)."}
             </p>
           </div>
 
@@ -234,7 +289,7 @@ export function ExpenseRenewalModal({
                     type="file"
                     accept=".pdf,image/*"
                     className="hidden"
-                    disabled={isSubmitting || isUploading}
+                    disabled={actionDisabled}
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
                         handleFileSelect(e.target.files[0]);
@@ -257,7 +312,7 @@ export function ExpenseRenewalModal({
                       </div>
                     </div>
 
-                    {!isUploading && (
+                    {!isUploading && !actionDisabled && (
                       <button
                         type="button"
                         onClick={() => {
@@ -281,18 +336,26 @@ export function ExpenseRenewalModal({
                   )}
 
                   {aiDetectedData && (
-                    <div className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-900 p-2.5 rounded-lg space-y-1">
+                    <div className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-900 p-2.5 rounded-lg space-y-1.5">
                       <div className="flex items-center gap-1.5 font-bold text-emerald-800">
                         <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
                         <span>Datos detectados por IA:</span>
                       </div>
-                      <div className="grid grid-cols-2 gap-1 text-[11px] pt-1">
+                      <div className="grid grid-cols-2 gap-1 text-[11px] pt-0.5">
                         <div>
                           <span className="text-emerald-700">Vigencia hasta: </span>
                           <strong className="text-emerald-900 font-bold">
                             {aiDetectedData.expires_at || "No visible"}
                           </strong>
                         </div>
+                        {aiDetectedData.plate && (
+                          <div>
+                            <span className="text-emerald-700">Placa en doc: </span>
+                            <strong className="text-emerald-900 font-bold">
+                              {aiDetectedData.plate}
+                            </strong>
+                          </div>
+                        )}
                         {aiDetectedData.insurance_company && (
                           <div>
                             <span className="text-emerald-700">Aseguradora: </span>
@@ -302,13 +365,25 @@ export function ExpenseRenewalModal({
                           </div>
                         )}
                         {aiDetectedData.policy_number && (
-                          <div className="col-span-2">
+                          <div>
                             <span className="text-emerald-700">Póliza: </span>
                             <span className="text-emerald-900">
                               {aiDetectedData.policy_number}
                             </span>
                           </div>
                         )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Alerta de discrepancia de placa */}
+                  {plateMismatch && (
+                    <div className="flex items-start gap-2 p-2.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800">
+                      <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                      <div>
+                        <strong className="font-bold">¡Atención, placa diferente!</strong> El SOAT
+                        indica placa <strong>{aiDetectedData?.plate}</strong>, pero este gasto se
+                        está registrando para el vehículo <strong>{plate}</strong>.
                       </div>
                     </div>
                   )}
@@ -337,30 +412,24 @@ export function ExpenseRenewalModal({
         <div className="p-6 pt-4 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row gap-2 justify-end">
           <button
             type="button"
-            onClick={onSkip}
-            disabled={isSubmitting || isUploading}
-            className="w-full sm:w-auto px-4 py-2.5 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl transition-colors shadow-sm"
+            onClick={handleSkipClick}
+            disabled={actionDisabled}
+            className="w-full sm:w-auto px-4 py-2.5 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl transition-colors shadow-sm disabled:opacity-50"
           >
             Omitir y Solo Guardar Gasto
           </button>
 
           <button
             type="button"
-            onClick={() =>
-              onConfirm({
-                date: selectedDate,
-                fileUrl: uploadedUrl || undefined,
-                file: soatFile || undefined,
-              })
-            }
-            disabled={isSubmitting || isUploading || !selectedDate}
-            className={`w-full sm:w-auto px-5 py-2.5 text-xs font-bold text-white rounded-xl shadow-md transition-all flex items-center justify-center gap-2 ${
+            onClick={handleConfirmClick}
+            disabled={actionDisabled || !selectedDate}
+            className={`w-full sm:w-auto px-5 py-2.5 text-xs font-bold text-white rounded-xl shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 ${
               isSoat
                 ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200"
                 : "bg-blue-600 hover:bg-blue-700 shadow-blue-200"
             }`}
           >
-            {isSubmitting ? (
+            {isSubmitting || isConfirming ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Guardando...

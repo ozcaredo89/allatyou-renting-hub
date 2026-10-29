@@ -213,24 +213,12 @@ r.patch("/:plate", async (req: Request, res: Response) => {
       updated_at: new Date().toISOString(),
     };
 
+    // Scope estricto para este endpoint: solo campos de vigencias (Issue #4) y precio_venta
     const allowedFields = [
       "precio_venta",
       "soat_expires_at",
       "soat_url",
       "tecno_expires_at",
-      "extinguisher_expiry",
-      "gps_renewal_date",
-      "alarm_code",
-      "status",
-      "current_driver_id",
-      "timing_belt_last_date",
-      "timing_belt_last_km",
-      "battery_brand",
-      "battery_install_date",
-      "tires_notes",
-      "gps_imei",
-      "ownership_card_front",
-      "ownership_card_back",
     ];
 
     for (const f of allowedFields) {

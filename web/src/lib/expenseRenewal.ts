@@ -48,11 +48,12 @@ export function detectRenewalType(
 
 /**
  * Calcula la fecha sugerida de renovación exactamente 1 año después.
- * - Si el vehículo ya tiene una fecha de vencimiento previa:
- *   Suma 1 año manteniendo el mismo mes y día. Si la fecha previa ya pasó hace más de un año,
- *   toma el año siguiente a la fecha del gasto para no sugerir fechas pasadas.
- * - Si no tiene fecha previa:
- *   Suma exactamente 1 año a partir de la fecha de reporte del gasto.
+ * - Si la vigencia actual está vigente (es igual o posterior a la fecha del gasto reportado):
+ *   Se trata de una renovación anticipada. Se suma 1 año a la vigencia actual manteniendo
+ *   el mismo mes y día.
+ * - Si la vigencia actual ya está vencida (anterior a la fecha del gasto) o no existe fecha previa:
+ *   La nueva póliza o revisión inicia a partir del día de compra/reporte.
+ *   Se suma exactamente 1 año a partir de la fecha del gasto reportado.
  */
 export function computeSuggestedRenewalDate(
   currentExpiry: string | null | undefined,
@@ -72,37 +73,23 @@ export function computeSuggestedRenewalDate(
     d: new Date().getDate(),
   };
 
-  if (currentExpiry && /^\d{4}-\d{2}-\d{2}$/.test(currentExpiry)) {
-    const curr = parseYmd(currentExpiry);
-    if (curr) {
-      let targetYear = curr.y + 1;
-      // Si la fecha actual ya estaba vencida antes del año del gasto actual, proyectamos hacia el año siguiente al gasto
-      if (targetYear <= expParsed.y) {
-        targetYear = expParsed.y + 1;
-      }
+  const isCurrentStillActive = Boolean(
+    currentExpiry &&
+    /^\d{4}-\d{2}-\d{2}$/.test(currentExpiry) &&
+    currentExpiry >= expenseDate
+  );
 
-      let targetDay = curr.d;
-      // Control de año bisiesto (29 de febrero -> 28 en año normal)
-      if (curr.m === 2 && curr.d === 29) {
-        const isLeap = (targetYear % 4 === 0 && targetYear % 100 !== 0) || (targetYear % 400 === 0);
-        if (!isLeap) targetDay = 28;
-      }
+  const base = isCurrentStillActive ? parseYmd(currentExpiry!)! : expParsed;
 
-      const mm = String(curr.m).padStart(2, "0");
-      const dd = String(targetDay).padStart(2, "0");
-      return `${targetYear}-${mm}-${dd}`;
-    }
-  }
-
-  // Fallback: 1 año después de la fecha del gasto
-  const targetYear = expParsed.y + 1;
-  let targetDay = expParsed.d;
-  if (expParsed.m === 2 && expParsed.d === 29) {
+  const targetYear = base.y + 1;
+  let targetDay = base.d;
+  // Control de año bisiesto (29 de febrero -> 28 en año común)
+  if (base.m === 2 && base.d === 29) {
     const isLeap = (targetYear % 4 === 0 && targetYear % 100 !== 0) || (targetYear % 400 === 0);
     if (!isLeap) targetDay = 28;
   }
 
-  const mm = String(expParsed.m).padStart(2, "0");
+  const mm = String(base.m).padStart(2, "0");
   const dd = String(targetDay).padStart(2, "0");
   return `${targetYear}-${mm}-${dd}`;
 }

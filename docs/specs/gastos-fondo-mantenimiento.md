@@ -102,11 +102,13 @@ Al registrar un gasto individual para un vehículo en `/expenses`:
 - **Disparador:** Si algún ítem o categoría incluye "SOAT" o "Tecno" / "Tecnomecánica".
 - **Carácter Opcional:** Es 100% opcional; el gasto se puede guardar de inmediato omitiendo este paso.
 - **SOAT:**
-  1. **Fecha sugerida:** Si el vehículo ya tiene `soat_expires_at`, sugiere exactamente un año después con el mismo día y mes. Si no tiene fecha previa, sugiere +1 año a partir de la fecha del gasto reportado.
-  2. **Carga de PDF:** Soporte para subir el PDF del SOAT. El backend procesa el archivo con Gemini OCR para extraer la fecha de vigencia (`vigencia_hasta`) y el número de póliza, sugiriéndola en pantalla y almacenando el archivo en Cloudflare R2 (`vehicles.soat_url`).
-  3. Al confirmar, actualiza `vehicles.soat_expires_at` y `vehicles.soat_url`.
+  1. **Fecha sugerida (+1 año):**
+     - Si la vigencia actual está activa (`soat_expires_at >= fecha_gasto`), se trata de una renovación anticipada: sugiere exactamente 1 año después de la vigencia actual con el mismo día y mes.
+     - Si la vigencia actual ya está vencida (`soat_expires_at < fecha_gasto`) o no existe fecha previa registrada, la nueva póliza inicia con la compra: sugiere exactamente 1 año a partir de la fecha del gasto reportado.
+  2. **Carga de PDF:** Soporte para subir el PDF del SOAT. El backend procesa el archivo con Gemini OCR para extraer la fecha de vigencia (`vigencia_hasta`), el número de póliza y la placa para validación contra el vehículo. Almacena el documento en Cloudflare R2 (`vehicles.soat_url`).
+  3. Al confirmar, actualiza `vehicles.soat_expires_at` y `vehicles.soat_url` solo tras el guardado exitoso del gasto.
 - **Tecnomecánica:**
-  1. **Fecha sugerida:** Sugiere exactamente un año después de la vigencia actual o de la fecha del gasto.
+  1. **Fecha sugerida (+1 año):** Aplica la misma regla que SOAT: +1 año de la vigencia previa si aún está activa, o +1 año de la fecha del gasto si está vencida o sin registro.
   2. **Sin documento:** No requiere ni solicita archivo adjunto.
-  3. Al confirmar, actualiza `vehicles.tecno_expires_at`.
+  3. Al confirmar, actualiza `vehicles.tecno_expires_at` solo tras el guardado exitoso del gasto.
 - **Trazabilidad:** Toda actualización sobre el vehículo se realiza sincronizadamente al guardar el gasto o vía `PATCH /vehicles/:plate`.

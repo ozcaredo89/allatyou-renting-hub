@@ -3,6 +3,7 @@ import multer from "multer";
 import { uploadToR2 } from "../lib/r2";
 import { parseReceipt, normalizeOcrDate, normalizeOcrTime } from "../lib/ocr";
 import { parseSoatDocument } from "../lib/soatParser";
+import { basicAuth } from "../middleware/basicAuth";
 import { supabase } from "../lib/supabase";
 import { NO_DRIVER_IMAGE_HASHES } from "../lib/knownReceiptTemplates";
 
@@ -128,10 +129,10 @@ r.post("/", (req: Request, res: Response, next) => {
 
 /**
  * POST /uploads/soat
- * Sube el documento del SOAT (PDF o imagen) a Cloudflare R2 ('vehicles')
- * y extrae la vigencia y metadatos con IA (Gemini Vision).
+ * Requiere autenticación de administrador (Basic Auth) para prevenir consumo
+ * no autorizado de créditos de IA (Gemini) y almacenamiento en Cloudflare R2.
  */
-r.post("/soat", (req: Request, res: Response, next) => {
+r.post("/soat", basicAuth, (req: Request, res: Response, next) => {
   upload.single("file")(req, res, (err: any) => {
     if (err) {
       if (err instanceof multer.MulterError) {

@@ -70,7 +70,7 @@ export async function parseSoatDocument(buffer: Buffer, mimeType: string): Promi
       const normalizedStart = normalizeOcrDate(raw.start_date);
 
       return {
-        plate: cleanPlate && /^[A-Z]{3}\d{3}$/.test(cleanPlate) ? cleanPlate : cleanPlate,
+        plate: cleanPlate && /^[A-Z]{3}\d{3}$/.test(cleanPlate) ? cleanPlate : null,
         start_date: normalizedStart,
         expires_at: normalizedExpires,
         insurance_company: raw.insurance_company ? String(raw.insurance_company).trim() : null,
