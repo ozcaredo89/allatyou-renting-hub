@@ -63,7 +63,9 @@ export default function RentYourCar() {
     transmission: "Automática",
     fuel_type: "Gasolina",
     plate: "",
+    listing_type: "rent" as "rent" | "sale" | "both",
     price_per_day: "",
+    sale_price: "",
     has_gps: "Sí",
   });
 
@@ -244,6 +246,20 @@ export default function RentYourCar() {
       return;
     }
 
+    // Validaciones de precios según modalidad
+    const numPricePerDay = Number(form.price_per_day) || 0;
+    const numSalePrice = Number(form.sale_price) || 0;
+
+    if ((form.listing_type === "rent" || form.listing_type === "both") && numPricePerDay <= 0) {
+      showError("Por favor ingresa un precio esperado por día para alquiler.");
+      return;
+    }
+
+    if ((form.listing_type === "sale" || form.listing_type === "both") && numSalePrice <= 0) {
+      showError("Por favor ingresa el precio de venta deseado para tu vehículo.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -258,6 +274,9 @@ export default function RentYourCar() {
           year: parsedYear,
           plate: normalizedPlate,
           owner_phone: cleanPhone,
+          listing_type: form.listing_type,
+          price_per_day: form.listing_type === "sale" ? 0 : numPricePerDay,
+          sale_price: form.listing_type === "rent" ? null : numSalePrice,
           photos: photos.map(p => ({ url: p.url, kind: p.kind || "general" })),
           photo_exterior_url: photos[0]?.url || "",
           photo_interior_url: photos[1]?.url || null,
@@ -312,9 +331,12 @@ export default function RentYourCar() {
       <div className="max-w-3xl mx-auto">
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-4xl font-black text-slate-900 mb-4 tracking-tight">Pon tu carro a trabajar 💸</h1>
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-50 px-4 py-1.5 text-xs font-bold text-emerald-700 mb-3 shadow-xs">
+            ✨ MARKETPLACE ALLATYOU
+          </div>
+          <h1 className="text-4xl font-black text-slate-900 mb-3 tracking-tight">Publica tu Carro para Alquiler o Venta 🚗💨</h1>
           <p className="text-lg text-slate-600 max-w-xl mx-auto">
-            Convierte tu vehículo en un activo que genera ingresos pasivos.
+            Pon tu vehículo a generar ingresos pasivos en alquiler o encuéntrale un comprador de forma segura.
           </p>
         </div>
 
@@ -483,59 +505,146 @@ export default function RentYourCar() {
                 />
               </div>
 
-              {/* --- PREGUNTA GPS --- */}
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">¿Tiene GPS Satelital?</label>
-                <select
-                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
-                  value={form.has_gps}
-                  onChange={e => setForm({ ...form, has_gps: e.target.value })}
-                >
-                  <option value="Sí">Sí, ya tiene</option>
-                  <option value="No">No tiene</option>
-                </select>
+              {/* --- MODALIDAD DE PUBLICACIÓN --- */}
+              <div className="col-span-1 md:col-span-3 border-t border-slate-200/80 pt-6 mt-2">
+                <label className="block text-sm font-bold text-slate-800 mb-2">
+                  ¿Para qué deseas publicar tu vehículo?
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, listing_type: "rent" })}
+                    className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
+                      form.listing_type === "rent"
+                        ? "border-emerald-500 bg-emerald-50/70 text-emerald-950 ring-2 ring-emerald-500"
+                        : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    <div className="text-lg mb-1">🔑</div>
+                    <div className="font-bold text-sm">Solo Alquiler</div>
+                    <div className="text-xs text-slate-500 mt-1">Genera ingresos recurrentes por días o meses.</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, listing_type: "sale" })}
+                    className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
+                      form.listing_type === "sale"
+                        ? "border-indigo-500 bg-indigo-50/70 text-indigo-950 ring-2 ring-indigo-500"
+                        : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    <div className="text-lg mb-1">🏷️</div>
+                    <div className="font-bold text-sm">Solo Venta</div>
+                    <div className="text-xs text-slate-500 mt-1">Véndelo directamente con clientes verificados.</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, listing_type: "both" })}
+                    className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
+                      form.listing_type === "both"
+                        ? "border-emerald-600 bg-emerald-50/50 text-slate-900 ring-2 ring-emerald-600"
+                        : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    <div className="text-lg mb-1">🔄</div>
+                    <div className="font-bold text-sm">Alquiler o Venta</div>
+                    <div className="text-xs text-slate-500 mt-1">Abierto a ambas opciones según oportunidad.</div>
+                  </button>
+                </div>
               </div>
 
-              {/* --- CARD DE SERVICIO GPS (SOLO SI DICE NO) --- */}
-              {form.has_gps === "No" && (
-                <div className="col-span-1 md:col-span-3 bg-blue-50 border border-blue-100 rounded-2xl p-4 flex flex-col sm:flex-row items-center gap-4 animate-in fade-in slide-in-from-top-2">
-                  <div className="bg-blue-100 p-3 rounded-full text-blue-600 shrink-0">
-                    <MapPin className="w-6 h-6" />
+              {/* --- PREGUNTA GPS (Solo requerida si incluye Alquiler) --- */}
+              {form.listing_type !== "sale" && (
+                <>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">¿Tiene GPS Satelital?</label>
+                    <select
+                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                      value={form.has_gps}
+                      onChange={e => setForm({ ...form, has_gps: e.target.value })}
+                    >
+                      <option value="Sí">Sí, ya tiene</option>
+                      <option value="No">No tiene</option>
+                    </select>
                   </div>
-                  <div className="flex-1 text-center sm:text-left">
-                    <h4 className="font-bold text-slate-800 text-sm flex items-center justify-center sm:justify-start gap-2">
-                      <AlertCircle className="w-4 h-4 text-orange-500" /> Requisito Obligatorio
-                    </h4>
-                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                      Para rentar en AllAtYou es <strong>obligatorio</strong> tener GPS. <br />
-                      No te preocupes, nosotros recogemos tu carro, lo instalamos y te lo devolvemos listo.
-                    </p>
+
+                  {/* --- CARD DE SERVICIO GPS (SOLO SI DICE NO) --- */}
+                  {form.has_gps === "No" && (
+                    <div className="col-span-1 md:col-span-3 bg-blue-50 border border-blue-100 rounded-2xl p-4 flex flex-col sm:flex-row items-center gap-4 animate-in fade-in slide-in-from-top-2">
+                      <div className="bg-blue-100 p-3 rounded-full text-blue-600 shrink-0">
+                        <MapPin className="w-6 h-6" />
+                      </div>
+                      <div className="flex-1 text-center sm:text-left">
+                        <h4 className="font-bold text-slate-800 text-sm flex items-center justify-center sm:justify-start gap-2">
+                          <AlertCircle className="w-4 h-4 text-orange-500" /> Requisito de Alquiler
+                        </h4>
+                        <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                          Para rentar en AllAtYou es <strong>obligatorio</strong> contar con GPS. <br />
+                          Nosotros recogemos tu carro, lo instalamos y te lo devolvemos listo.
+                        </p>
+                      </div>
+                      <a
+                        href={`https://wa.me/${GPS_SERVICE_PHONE}?text=${encodeURIComponent("Necesito ayuda para poner GPS en mi carro.")}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="whitespace-nowrap px-5 py-3 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-colors flex items-center gap-2 shadow-lg shadow-emerald-200"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        Solicitar Instalación
+                      </a>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* CAMPOS DE PRECIO SEGÚN MODALIDAD */}
+              {(form.listing_type === "rent" || form.listing_type === "both") && (
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">
+                    Precio Alquiler / Día (COP)
+                  </label>
+                  <div className="relative">
+                    <DollarSign className="absolute left-3 top-3.5 w-4 h-4 text-slate-400" />
+                    <input
+                      type="number"
+                      placeholder="Ej: 120000"
+                      className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                      value={form.price_per_day}
+                      onChange={e => setForm({ ...form, price_per_day: e.target.value })}
+                    />
                   </div>
-                  <a
-                    href={`https://wa.me/${GPS_SERVICE_PHONE}?text=${encodeURIComponent("Necesito ayuda para poner GPS en mi carro.")}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="whitespace-nowrap px-5 py-3 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-colors flex items-center gap-2 shadow-lg shadow-emerald-200"
-                  >
-                    <MessageCircle className="w-4 h-4" />
-                    Solicitar Instalación
-                  </a>
+                  {Number(form.price_per_day) > 0 && (
+                    <span className="text-[11px] font-bold text-emerald-600 mt-1 block">
+                      ≈ ${Number(form.price_per_day).toLocaleString("es-CO")} COP por día
+                    </span>
+                  )}
                 </div>
               )}
 
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">Precio Esperado / Día</label>
-                <div className="relative">
-                  <DollarSign className="absolute left-3 top-3.5 w-4 h-4 text-slate-400" />
-                  <input
-                    type="number"
-                    placeholder="120000"
-                    className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-3 font-medium outline-none focus:ring-2 focus:ring-emerald-500"
-                    value={form.price_per_day}
-                    onChange={e => setForm({ ...form, price_per_day: e.target.value })}
-                  />
+              {(form.listing_type === "sale" || form.listing_type === "both") && (
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">
+                    Precio de Venta Deseado (COP)
+                  </label>
+                  <div className="relative">
+                    <DollarSign className="absolute left-3 top-3.5 w-4 h-4 text-slate-400" />
+                    <input
+                      type="number"
+                      placeholder="Ej: 45000000"
+                      className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-3 font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                      value={form.sale_price}
+                      onChange={e => setForm({ ...form, sale_price: e.target.value })}
+                    />
+                  </div>
+                  {Number(form.sale_price) > 0 && (
+                    <span className="text-[11px] font-bold text-indigo-600 mt-1 block">
+                      ${Number(form.sale_price).toLocaleString("es-CO")} COP precio final
+                    </span>
+                  )}
                 </div>
-              </div>
+              )}
             </div>
           </div>
 
