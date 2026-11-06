@@ -62,12 +62,43 @@ El usuario elige cómo se cubre:
 
 Numeración `ND-00001` (id con padding). PDF generado en el navegador (`debitNotePdf.ts`) con datos del vehículo, conductor, gasto, movimiento del fondo, excedente y firmas. Se descarga desde Expenses (fila del gasto o modal de éxito) y desde el drawer de leasing en AdminVehicles (pestaña "Notas Débito").
 
-## 4. Borrar un gasto con nota débito (decisión 2026-10-12)
+## 4. Edición, reasignación y borrado de gastos
 
-- **Regla:** al borrar un gasto que tiene nota débito, el descuento al fondo **se revierte** (el fondo vuelve a tener disponible ese valor).
-- **Antes de borrar**, la pantalla debe mostrar una **advertencia** con la afectación: número de nota débito, valor que vuelve al fondo y, si hubo excedente financiado con anticipo, el anticipo asociado.
-- ⚠️ **Pendiente de desarrollo:** hoy la nota queda con `expense_id = NULL` (`ON DELETE SET NULL`) y el descuento **sigue vigente**. No hay advertencia en pantalla.
-- Por definir al implementarlo: qué pasa con el anticipo creado por el excedente si ya tiene cuotas pagadas.
+### 4.1. Estado actual de la Edición (UI y API)
+- El modal de edición en `web/src/pages/Expenses.tsx` y el endpoint `PUT /expenses/:id` solo permiten modificar: **fecha, categoría, ítem, monto, descripción** y **agregar nuevos soportes**.
+- ⚠️ **Limitación:** **No es posible cambiar ni reasignar vehículos/placas desde la aplicación.** Las placas se guardan en `expense_vehicles` al crearse y el endpoint de edición no las toca.
+
+### 4.2. Estado actual del Borrado
+- No existe botón de eliminar ni endpoint `DELETE /expenses/:id` en la API (solo rollback interno si la creación transaccional falla).
+- **Regla de negocio definida (decisión 2026-10-12):** al borrar un gasto que tiene nota débito de leasing, el descuento al fondo **debe revertirse** (el fondo vuelve a tener disponible ese valor).
+- ⚠️ **Pendiente de desarrollo:** hoy si se borrase por BD, la nota quedaría con `expense_id = NULL` (`ON DELETE SET NULL`) y el descuento seguiría vigente sin advertencia.
+
+### 4.3. Procedimiento Operativo (SOP) ante error de asignación de vehículo
+Cuando un usuario reporta: *"Creé un gasto para el carro X y era para el Y"*:
+
+1. **Paso 1: Identificar placas completas** (usar `flota-referencia.md` si el usuario solo dio los 3 dígitos, ej. "132" → `JKR132`, "228" → `UGN228`).
+2. **Paso 2: Verificar afectación de Leasing**:
+   - Consultar `leasing_maintenance_debits` para el `expense_id`.
+   - **Caso A (Sin débito de leasing):**
+     - Actualizar `expense_vehicles` (`plate = NUEVA_PLACA`).
+     - Si hay alerta en `expense_alerts`, actualizar `vehicle_plate = NUEVA_PLACA`.
+     - Insertar en `expense_audit_log` con acción `plate_reassigned` detallando placas anterior/nueva y motivo.
+   - **Caso B (Con débito de leasing):**
+     - Requiere anular la nota débito vieja (reintegrar saldo al fondo del contrato anterior), y si el nuevo vehículo también tiene leasing activo con fondo disponible, generar la nota débito correspondiente sobre el contrato del nuevo vehículo. Si hubo anticipo operativo (`operational_advances`), verificar si tiene cuotas pagadas antes de revertir.
+
+### 4.4. Especificación técnica para la solución definitiva (Feature en App)
+Para que el usuario pueda resolverlo directamente en la aplicación:
+1. **API (`PUT /expenses/:id`)**:
+   - Aceptar campo opcional `plates: string[]`.
+   - Si cambia la placa:
+     - Validar que las placas existan en `vehicles`.
+     - Si el gasto anterior tenía nota débito de leasing, bloquear con error indicando que los gastos con débito de leasing requieren anulación/reversión previa.
+     - Actualizar `expense_vehicles` prorrateando el monto entre las nuevas placas.
+     - Actualizar `expense_alerts` o re-evaluar reglas con `checkExpenseAuditRules`.
+     - Registrar en `expense_audit_log` con `action = 'updated'` indicando el cambio de placas.
+2. **Frontend (`Expenses.tsx`)**:
+   - En el modal `editingExpense`, mostrar selector/input de placa(s) con autocompletado de la flota.
+   - Si tiene nota débito de leasing asociada (`e.leasing_debit_note`), deshabilitar el cambio de placa y mostrar badge explicativo: *"Gasto ligado a Nota Débito de Leasing ND-XXXXX. No se puede transferir de vehículo directamente"*.
 
 ## 5. Preguntas abiertas
 

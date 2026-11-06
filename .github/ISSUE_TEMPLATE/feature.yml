@@ -1,0 +1,30 @@
+name: Feature
+description: Proponer una nueva funcionalidad o cambio de comportamiento
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Objetivo
+      description: ¿Qué necesidad de negocio resuelve y por qué? (1–3 frases)
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Criterios de Aceptación
+      description: Lista de verificación de cuándo se considera completado.
+      value: |
+        - [ ] 
+    validations:
+      required: true
+  - type: textarea
+    id: out
+    attributes:
+      label: Fuera de alcance (Out of scope)
+      description: ¿Qué NO se debe tocar o modificar?
+  - type: dropdown
+    id: size
+    attributes:
+      label: Estimación / Tamaño
+      options: ["S (≤ 1 h)", "M (≤ ½ día)", "L (requiere dividir en subtareas)"]
