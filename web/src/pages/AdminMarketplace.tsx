@@ -68,10 +68,10 @@ export default function AdminMarketplace() {
           if (!res.ok) throw new Error("Error actualizando");
           
           setListings(prev => prev.map(item => 
-              item.id === id ? { ...item, status: newStatus as any } : item
+              item.id === id ? { ...item, status: newStatus as Listing["status"] } : item
           ));
 
-      } catch (error) {
+      } catch {
           alert("Error al actualizar estado");
       }
   };

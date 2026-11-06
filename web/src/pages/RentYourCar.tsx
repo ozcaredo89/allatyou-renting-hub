@@ -40,6 +40,9 @@ export default function RentYourCar() {
   // Honeypot anti-bots
   const [website, setWebsite] = useState("");
 
+  // Consentimiento para publicar nombre y WhatsApp en el catálogo (Ley 1581 Habeas Data)
+  const [acceptsPublicContact, setAcceptsPublicContact] = useState(false);
+
   // --- ESTADOS PARA FOTOS Y CÁMARA ---
   const [photos, setPhotos] = useState<Array<{ url: string; kind?: string }>>([]);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
@@ -246,6 +249,11 @@ export default function RentYourCar() {
       return;
     }
 
+    if (!acceptsPublicContact) {
+      showError("Debes autorizar que tu nombre y WhatsApp se muestren en el catálogo para que los interesados te contacten.");
+      return;
+    }
+
     // Validaciones de precios según modalidad
     const numPricePerDay = Number(form.price_per_day) || 0;
     const numSalePrice = Number(form.sale_price) || 0;
@@ -292,8 +300,9 @@ export default function RentYourCar() {
 
       setSuccess(true);
       window.scrollTo(0, 0);
-    } catch (error: any) {
-      showError(error.message || "Error de conexión al enviar la solicitud");
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Error de conexión al enviar la solicitud";
+      showError(msg);
     } finally {
       setLoading(false);
     }
@@ -768,6 +777,20 @@ export default function RentYourCar() {
                 )}
               </div>
             )}
+
+            {/* Consentimiento de datos públicos (contacto directo con el dueño) */}
+            <label className="flex items-start gap-3 rounded-xl bg-white p-4 border border-slate-200 cursor-pointer">
+              <input
+                type="checkbox"
+                className="accent-emerald-600 h-5 w-5 mt-0.5 shrink-0"
+                checked={acceptsPublicContact}
+                onChange={e => setAcceptsPublicContact(e.target.checked)}
+              />
+              <span className="text-sm text-slate-600 leading-relaxed">
+                Autorizo que mi <strong>nombre</strong> y mi <strong>WhatsApp</strong> se muestren en el catálogo de AllAtYou
+                una vez aprobado el vehículo, para que los interesados me contacten directamente. Mi correo no será público.
+              </span>
+            </label>
 
             <button
               disabled={loading}
