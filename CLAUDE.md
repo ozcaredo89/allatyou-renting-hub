@@ -85,6 +85,7 @@ Business rules live in `docs/specs/` (index: `docs/specs/README.md`). **Before c
 - Expenses, maintenance fund, debit notes → `docs/specs/gastos-fondo-mantenimiento.md`
 - Reminders (public subscriptions + daily fleet SOAT/Tecno digest) → `docs/specs/recordatorios.md`
 - Profit/rentabilidad panel (`/profit`, `routes/profit.ts`, `vehicle_month_*` views) → `docs/specs/utilidades.md`
+- Environment variables (registry, boot check, CI check, Railway healthcheck) → `docs/specs/variables-entorno.md`. Any new `process.env.X` / `import.meta.env.VITE_X` must be declared in `src/lib/env.ts` / `web/src/vite-env-required.ts` in the same PR, or CI fails.
 - Flujo Git & Tickets (Issue obligatorio, ramas y commits con #ID) → `docs/specs/flujo-git-tickets.md`
 
 Never resolve a business ambiguity by inventing a rule: if the spec doesn't cover it, ask the user and record the answer in the spec.
