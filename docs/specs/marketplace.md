@@ -50,7 +50,7 @@ El módulo Marketplace transforma la plataforma en un modelo de negocio híbrido
 * `listing_type`: Text (`rent`, `sale`, `both`).
 * `price_per_day`: Numeric (canon diario en COP).
 * `sale_price`: Numeric (precio final de venta en COP).
-* `owner_info`: Datos de contacto sensibles (teléfono, email) no se exponen en el catálogo público, solo al admin.
+* `owner_info`: El nombre (`owner_name`) y el WhatsApp (`owner_phone`) del dueño **sí se exponen** en el catálogo público (`GET /marketplace/catalog`) para el contacto directo con el vendedor (ticket #6). El dueño lo autoriza con una casilla obligatoria en el formulario `/rent-your-car` (Ley 1581 Habeas Data). El email (`owner_email`) y la placa nunca se exponen: solo los ve el admin.
 * `vehicle_info`: Marca, modelo, año, transmisión, fotos (exterior e interior).
 
 ---
