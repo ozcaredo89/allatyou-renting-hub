@@ -2,7 +2,7 @@
 
 **Estado:** Vigente · **Última revisión:** 2026-10-22
 **Código principal:** `src/routes/expenses.ts`, `src/routes/leasing.ts` (debit-notes), `web/src/pages/Expenses.tsx`, `web/src/utils/debitNotePdf.ts`
-**Migraciones:** `20261009_leasing_maintenance_debits.sql`
+**Migraciones:** `2026100900_leasing_maintenance_debits.sql`
 
 ---
 
