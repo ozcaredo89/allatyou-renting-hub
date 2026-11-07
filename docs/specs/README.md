@@ -12,6 +12,7 @@ Fuente de verdad de las **reglas de negocio** de cada módulo. Las leen tanto pe
 | Anticipos operativos | [anticipos.md](anticipos.md) | `routes/advances.ts`, `operational_advance*` |
 | Gastos y fondo de mantenimiento | [gastos-fondo-mantenimiento.md](gastos-fondo-mantenimiento.md) | `routes/expenses.ts`, `Expenses.tsx`, notas débito |
 | Flota y Directorio Rápido | [flota-referencia.md](flota-referencia.md) | Mapeo rápido de placas por terminación (ej: "132" = JKR132), modalidad y estado |
+| Recordatorios (SOAT, Tecno, Pico y Placa) | [recordatorios.md](recordatorios.md) | `routes/reminders.ts`, `lib/fleetReminders.ts`, `reminders.yml` |
 | Utilidades y rentabilidad | [utilidades.md](utilidades.md) | `routes/profit.ts`, `AdminProfit.tsx`, vistas `vehicle_month_*` |
 | Conductores | [conductores.md](conductores.md) | `routes/drivers.ts`, directorio de conductores |
 | Cobranza (CRM) | [cobranza-collections.md](cobranza-collections.md) | módulo de cobranza |

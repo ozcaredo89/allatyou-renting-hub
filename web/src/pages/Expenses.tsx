@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { BillGeneratorModal } from "../components/BillGeneratorModal";
-import { ExpenseRenewalModal } from "../components/ExpenseRenewalModal";
-import { detectRenewalType, type RenewalType } from "../lib/expenseRenewal";
+import { ExpenseRenewalModal, type RenewalConfirmData } from "../components/ExpenseRenewalModal";
+import { detectRenewalTypes, type RenewalType } from "../lib/expenseRenewal";
 import { Pencil, X, ChevronDown, AlertCircle, CheckCircle2, Download, Search, RotateCcw } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import { requestWithBasicAuth } from "../lib/auth";
@@ -405,7 +405,9 @@ export default function Expenses() {
 
   // Estado para renovación opcional de SOAT / Tecnomecánica (Issue #4)
   const [renewalPrompt, setRenewalPrompt] = useState<{
-    type: RenewalType;
+    key: number;
+    types: RenewalType[];
+    expenseDate: string;
     plate: string;
     vehicle: FleetVehicle | null;
     resolved: { finalPlates: string[]; finalCart: CartItem[] };
@@ -414,7 +416,7 @@ export default function Expenses() {
   } | null>(null);
 
   const detectedItemRenewal = useMemo(() => {
-    return detectRenewalType([{ item, category }]);
+    return detectRenewalTypes([{ item, category }]);
   }, [item, category]);
 
   async function executeExpenseSave(
@@ -500,18 +502,19 @@ export default function Expenses() {
     }
   }
 
-  async function handleRenewalConfirm({ date: newDate, fileUrl }: { date: string; fileUrl?: string; file?: File }) {
+  async function handleRenewalConfirm(data: RenewalConfirmData) {
     if (!renewalPrompt) return;
-    const { plate, type, resolved, willApplyLeasing, advTerms } = renewalPrompt;
+    const { plate, resolved, willApplyLeasing, advTerms } = renewalPrompt;
+    const fileUrl = data.soat?.fileUrl;
 
     const extraAttachments: { kind: "evidence" | "invoice"; url: string }[] = [];
     if (fileUrl) {
       extraAttachments.push({ kind: "invoice", url: fileUrl });
     }
 
-    setRenewalPrompt(null);
+    setSubmitError(null);
 
-    // 1. Guardar el gasto PRIMERO (transaccionalidad y consistencia)
+    // 1. Guardar el gasto PRIMERO. El modal sigue abierto: si falla, conserva fecha y PDF (Issue #13)
     const savedOk = await executeExpenseSave(
       resolved.finalPlates,
       resolved.finalCart,
@@ -520,21 +523,27 @@ export default function Expenses() {
       extraAttachments
     );
 
-    // 2. Si el gasto falló, NO tocamos el vehículo ni modificamos fleet para evitar sumar años en falso
+    // 2. Si el gasto falló, NO tocamos el vehículo; el error se muestra dentro del modal
     if (!savedOk) {
       return;
     }
+    setRenewalPrompt(null);
 
-    // 3. Con el gasto guardado exitosamente, actualizamos la ficha del vehículo
+    // 3. Con el gasto guardado, actualizamos la ficha del vehículo en un solo PATCH (SOAT y/o Tecno)
+    const patchBody: Partial<Pick<FleetVehicle, "soat_expires_at" | "soat_url" | "tecno_expires_at">> = {};
+    if (data.soat) {
+      patchBody.soat_expires_at = data.soat.date;
+      if (fileUrl) patchBody.soat_url = fileUrl;
+    }
+    if (data.tecno) {
+      patchBody.tecno_expires_at = data.tecno.date;
+    }
+    const summary = [
+      data.soat ? `SOAT ${data.soat.date}` : null,
+      data.tecno ? `Tecnomecánica ${data.tecno.date}` : null,
+    ].filter(Boolean).join(", ");
+
     try {
-      const patchBody: Record<string, any> = {};
-      if (type === "soat") {
-        patchBody.soat_expires_at = newDate;
-        if (fileUrl) patchBody.soat_url = fileUrl;
-      } else {
-        patchBody.tecno_expires_at = newDate;
-      }
-
       const res = await requestWithBasicAuth(`${API}/vehicles/${plate}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -546,18 +555,8 @@ export default function Expenses() {
         const errText = await res.text().catch(() => "");
         showToast(`⚠️ Gasto guardado, pero no se pudo actualizar la vigencia de ${plate}: ${errText || "Error del servidor"}`);
       } else {
-        setFleet(prev => prev.map(v => {
-          if (v.plate === plate) {
-            return {
-              ...v,
-              ...(type === "soat"
-                ? { soat_expires_at: newDate, ...(fileUrl ? { soat_url: fileUrl } : {}) }
-                : { tecno_expires_at: newDate }),
-            };
-          }
-          return v;
-        }));
-        showToast(`✓ Ficha de ${plate} actualizada con nueva vigencia (${newDate})`);
+        setFleet(prev => prev.map(v => (v.plate === plate ? { ...v, ...patchBody } : v)));
+        showToast(`✓ Ficha de ${plate} actualizada (${summary})`);
       }
     } catch (e: unknown) {
       console.error("[Renewal] Error actualizando ficha del vehículo:", e);
@@ -569,8 +568,9 @@ export default function Expenses() {
   async function handleRenewalSkip() {
     if (!renewalPrompt) return;
     const { resolved, willApplyLeasing, advTerms } = renewalPrompt;
-    setRenewalPrompt(null);
-    await executeExpenseSave(resolved.finalPlates, resolved.finalCart, willApplyLeasing, advTerms);
+    setSubmitError(null);
+    const savedOk = await executeExpenseSave(resolved.finalPlates, resolved.finalCart, willApplyLeasing, advTerms);
+    if (savedOk) setRenewalPrompt(null);
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -616,13 +616,15 @@ export default function Expenses() {
       if (advTerms.check.zero && !confirmZeroRate(excessAtSubmit, advTerms.daily, advanceInstallments)) return;
     }
 
-    // Detección inteligente de SOAT o Tecnomecánica (Issue #4)
+    // Detección inteligente de SOAT y/o Tecnomecánica (Issue #4, #13)
     if (finalPlates.length === 1) {
-      const renewalType = detectRenewalType(finalCart);
-      if (renewalType) {
+      const renewalTypes = detectRenewalTypes(finalCart);
+      if (renewalTypes.length > 0) {
         const targetVehicle = fleet.find(v => v.plate === finalPlates[0]) || null;
         setRenewalPrompt({
-          type: renewalType,
+          key: Date.now(),
+          types: renewalTypes,
+          expenseDate: date,
           plate: finalPlates[0],
           vehicle: targetVehicle,
           resolved: { finalPlates, finalCart },
@@ -1048,11 +1050,13 @@ export default function Expenses() {
                     }
                   }}
                 />
-                {detectedItemRenewal && (
+                {detectedItemRenewal.length > 0 && (
                   <div className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                    <span className="font-bold uppercase tracking-wider text-[10px] bg-emerald-200 text-emerald-800 px-1.5 py-0.5 rounded">
-                      {detectedItemRenewal === "soat" ? "SOAT" : "Tecnomecánica"}
-                    </span>
+                    {detectedItemRenewal.map(t => (
+                      <span key={t} className="font-bold uppercase tracking-wider text-[10px] bg-emerald-200 text-emerald-800 px-1.5 py-0.5 rounded">
+                        {t === "soat" ? "SOAT" : "Tecnomecánica"}
+                      </span>
+                    ))}
                     <span>Al guardar el gasto podrás actualizar la vigencia del vehículo en un clic.</span>
                   </div>
                 )}
@@ -1724,17 +1728,20 @@ export default function Expenses() {
       <BillGeneratorModal isOpen={showBillModal} onClose={() => setShowBillModal(false)} selectedExpenses={recent.filter(r => selectedIds.includes(r.id))} />
 
       {/* MODAL RENOVACIÓN OPCIONAL DE SOAT / TECNOMECÁNICA (Issue #4) */}
-      <ExpenseRenewalModal
-        isOpen={Boolean(renewalPrompt)}
-        type={renewalPrompt?.type || "soat"}
-        plate={renewalPrompt?.plate || ""}
-        vehicle={renewalPrompt?.vehicle}
-        expenseDate={date}
-        onConfirm={handleRenewalConfirm}
-        onSkip={handleRenewalSkip}
-        onCancel={() => setRenewalPrompt(null)}
-        isSubmitting={loading}
-      />
+      {renewalPrompt && (
+        <ExpenseRenewalModal
+          key={renewalPrompt.key}
+          types={renewalPrompt.types}
+          plate={renewalPrompt.plate}
+          vehicle={renewalPrompt.vehicle}
+          expenseDate={renewalPrompt.expenseDate}
+          onConfirm={handleRenewalConfirm}
+          onSkip={handleRenewalSkip}
+          onCancel={() => setRenewalPrompt(null)}
+          isSubmitting={loading}
+          errorMessage={submitError}
+        />
+      )}
 
       {/* MODAL NOTIFICACIÓN / NOTA DÉBITO / WHATSAPP */}
       {showModal && saved && (

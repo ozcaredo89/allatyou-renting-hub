@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 import { sendEmail } from "../lib/email";
 import { sendWhatsApp } from "../lib/whatsapp";
 import { isNoPayDay } from "../lib/noPay";
+import { runFleetReminders, type FleetReminderResult } from "../lib/fleetReminders";
 
 const r = Router();
 const PLATE_RE = /^[A-Z]{3}\d{3}$/;
@@ -117,6 +118,8 @@ r.get("/log", async (req: Request, res: Response) => {
  * POST /reminders/run
  * Ejecuta el envío masivo (Cron Job).
  * Verifica hora Y día de la semana para Pico y Placa.
+ * Además envía el resumen diario de vencimientos de la flota (Issue #15).
+ * Query `force_fleet=1`: dispara el resumen de flota sin importar la hora.
  */
 r.post("/run", async (req: Request, res: Response) => {
   const secretHeader = (req.headers["x-internal-secret"] || "") as string;
@@ -220,8 +223,18 @@ r.post("/run", async (req: Request, res: Response) => {
       }
     }
 
+    // Resumen de vencimientos de la flota (Issue #15): independiente de las suscripciones públicas
+    let fleet: FleetReminderResult;
+    try {
+      fleet = await runFleetReminders(todayStr, currentHour, String(req.query.force_fleet || "") === "1");
+    } catch (e: any) {
+      console.error("❌ [Reminders] Error en resumen de flota:", e?.message || e);
+      fleet = { errors: [{ to: "*", error: e?.message || String(e) }] };
+    }
+
     return res.json({ 
         date: todayStr, 
+        fleet,
         hour: currentHour, 
         checked: rows.length, 
         sent: sentCount,

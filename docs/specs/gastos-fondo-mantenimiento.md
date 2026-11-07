@@ -1,6 +1,6 @@
 # Spec — Gastos y Fondo de Mantenimiento (Notas Débito)
 
-**Estado:** Vigente · **Última revisión:** 2026-10-22
+**Estado:** Vigente · **Última revisión:** 2026-11-07
 **Código principal:** `src/routes/expenses.ts`, `src/routes/leasing.ts` (debit-notes), `web/src/pages/Expenses.tsx`, `web/src/utils/debitNotePdf.ts`
 **Migraciones:** `20261009_leasing_maintenance_debits.sql`
 
@@ -125,21 +125,39 @@ Para que el usuario pueda resolverlo directamente en la aplicación:
 - **Idempotencia:** La sincronización se dispara únicamente en la transición de estado hacia `entregado` (`isTransitioningToEntregado`), garantizando que ediciones posteriores no dupliquen gastos.
 - **Resiliencia:** La llamada se ejecuta asíncronamente en segundo plano (fire-and-forget con logging de errores) para no bloquear la salida del vehículo en el taller si la red o API externa presenta demoras.
 
+### Descuento del fondo de mantenimiento (leasing) desde el Taller (Decisión 2026-11-06)
+**Origen:** la orden de DBC859 del 2026-11-06 (gastos 1130–1135, $310.000) entró sin `apply_to_leasing` y no generó nota débito. Se corrigió a mano llamando al RPC `create_leasing_maintenance_debit` (nota #7). La API no cambió: el descuento ya existía, pero el Taller no lo pedía.
+
+Para que un gasto del Taller descuente el fondo, el `POST /expenses` debe cumplir esto:
+- **Campos obligatorios:** `apply_to_leasing: true` y `leasing_excess_method: "cash"`. No usar `"advance"`: si la placa ya tiene un anticipo activo, o si la tasa o la cuota no son válidas, la API responde 400 y **no guarda el gasto**. Con fire-and-forget, ese gasto se perdería.
+- **Una sola placa:** con varias placas, la API ignora `apply_to_leasing` y no genera nota.
+- **Un solo POST por orden:** todos los ítems van en `items[]` para que salga una sola nota por el total. Si se hace un POST por ítem, sale una nota por cada ítem.
+- **Contrato activo:** si la placa no tiene contrato de leasing, la API guarda el gasto sin nota y responde 201 sin avisar. El Taller puede consultar antes `GET /leasing/summary?plate=`.
+- **Revisar la respuesta:**
+  - `201` con `debit_note` en `null` cuando se esperaba nota quiere decir que no se descontó nada.
+  - `207` quiere decir que el gasto se guardó pero la nota falló (`debit_note_error`).
+
+  En los dos casos, el Taller debe registrar o avisar el problema, no solo dejarlo en un log.
+- **No hay corrección por edición:** la nota solo se genera al crear el gasto. Editar el gasto después no la genera. La corrección se hace llamando al RPC `create_leasing_maintenance_debit` con el contrato, el gasto principal (el de menor id de la orden), la placa, el total y el método.
+
 ---
 
 ## 7. Actualización Opcional de Vigencias: SOAT y Tecnomecánica (Decisión 2026-10-29 — Issue #4)
 
 Al registrar un gasto individual para un vehículo en `/expenses`:
-- **Disparador:** Si algún ítem o categoría incluye "SOAT" o "Tecno" / "Tecnomecánica".
+- **Disparador:** Si algún ítem o categoría incluye "SOAT" o "Tecno" / "Tecnomecánica" (también "técnico-mecánica" con guion). Si el gasto trae **ambos** tipos, el modal ofrece actualizar las dos vigencias en un mismo paso; cada una se puede desmarcar (Issue #13).
 - **Carácter Opcional:** Es 100% opcional; el gasto se puede guardar de inmediato omitiendo este paso.
 - **SOAT:**
   1. **Fecha sugerida (+1 año):**
      - Si la vigencia actual está activa (`soat_expires_at >= fecha_gasto`), se trata de una renovación anticipada: sugiere exactamente 1 año después de la vigencia actual con el mismo día y mes.
      - Si la vigencia actual ya está vencida (`soat_expires_at < fecha_gasto`) o no existe fecha previa registrada, la nueva póliza inicia con la compra: sugiere exactamente 1 año a partir de la fecha del gasto reportado.
   2. **Carga de PDF:** Soporte para subir el PDF del SOAT. El backend procesa el archivo con Gemini OCR para extraer la fecha de vigencia (`vigencia_hasta`), el número de póliza y la placa para validación contra el vehículo. Almacena el documento en Cloudflare R2 (`vehicles.soat_url`).
+     - **Validación de la fecha leída (Issue #13):** se pre-llena solo si está entre la fecha del gasto y 1 mes después de la fecha sugerida. Fuera de ese rango se advierte al usuario y se mantiene la sugerida.
+     - **Placa distinta (Issue #13):** si la placa leída no coincide con la del vehículo, el usuario debe marcar una confirmación explícita antes de poder actualizar la ficha.
   3. Al confirmar, actualiza `vehicles.soat_expires_at` y `vehicles.soat_url` solo tras el guardado exitoso del gasto.
 - **Tecnomecánica:**
-  1. **Fecha sugerida (+1 año):** Aplica la misma regla que SOAT: +1 año de la vigencia previa si aún está activa, o +1 año de la fecha del gasto si está vencida o sin registro.
+  1. **Fecha sugerida (+1 año):** Aplica la misma regla que SOAT: +1 año de la vigencia previa si aún está activa, o +1 año de la fecha del gasto si está vencida o sin registro. *Decisión 2026-11-07 (#13):* se mantiene esta regla por ahora aunque una RTM anticipada podría no acumular vigencia; la fecha es editable y el usuario ingresa la exacta del certificado cuando difiera.
   2. **Sin documento:** No requiere ni solicita archivo adjunto.
   3. Al confirmar, actualiza `vehicles.tecno_expires_at` solo tras el guardado exitoso del gasto.
+- **Fallo al guardar el gasto (Issue #13):** el modal permanece abierto mostrando el error y conserva fechas y PDF para reintentar; la ficha solo se actualiza tras el guardado exitoso.
 - **Trazabilidad:** Toda actualización sobre el vehículo se realiza sincronizadamente al guardar el gasto o vía `PATCH /vehicles/:plate`.
