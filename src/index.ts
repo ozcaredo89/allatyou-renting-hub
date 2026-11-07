@@ -31,7 +31,7 @@ import marketingRoutes from "./routes/marketing";
 import chatRoutes from "./routes/chat";
 
 // --- MÓDULO INSPECCIONES ---
-import inspectionsRoutes from "./routes/inspections";
+import inspectionsRoutes, { publicInspectionsRoutes } from "./routes/inspections";
 
 // --- MÓDULO MARKETPLACE (TURO CRIOLLO) ---
 import marketplaceRoutes from "./routes/marketplace";
@@ -133,6 +133,7 @@ import driverApplicationsRoutes from "./routes/driverApplications";
 import vehicleApplicationsRoutes from "./routes/vehicleApplications";
 app.use("/driver-applications", driverApplicationsRoutes);
 app.use("/vehicle-applications", vehicleApplicationsRoutes);
+app.use("/public/inspections", publicInspectionsRoutes);
 
 /** Rutas protegidas con Basic Auth (monta el middleware en la misma línea) */
 app.use("/companies", basicAuth, companiesRoutes);

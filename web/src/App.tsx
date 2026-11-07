@@ -30,6 +30,7 @@ import AdminMarketplace from "./pages/AdminMarketplace";
 // Inspecciones
 import NewInspection from "./pages/NewInspection";
 import AdminInspections from "./pages/AdminInspections";
+import PublicInspectionView from "./pages/PublicInspectionView";
 
 // Auditorías & Oráculo
 import AdminTrips from "./pages/AdminTrips";
@@ -80,6 +81,8 @@ export default function App() {
               {/* RUTA DE PRUEBAS LOCALES PARA LA LANDING */}
               <Route path="/landing-test" element={<Landing />} />
               <Route path="/bid/:id" element={<BidTrip />} />
+              <Route path="/inspection/:id" element={<PublicInspectionView />} />
+              <Route path="/inspections/view/:id" element={<PublicInspectionView />} />
             </Route>
 
             {/* --- B. Rutas Administrativas (CON Sidebar) --- */}
@@ -130,6 +133,8 @@ export default function App() {
             <Route path="/pay" element={<Pay />} />
             <Route path="/assistance" element={<Assistance />} />
             <Route path="/bid/:id" element={<BidTrip />} />
+            <Route path="/inspection/:id" element={<PublicInspectionView />} />
+            <Route path="/inspections/view/:id" element={<PublicInspectionView />} />
             {/* Cualquier otra cosa en la landing va al home */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
