@@ -125,21 +125,6 @@ Para que el usuario pueda resolverlo directamente en la aplicación:
 - **Idempotencia:** La sincronización se dispara únicamente en la transición de estado hacia `entregado` (`isTransitioningToEntregado`), garantizando que ediciones posteriores no dupliquen gastos.
 - **Resiliencia:** La llamada se ejecuta asíncronamente en segundo plano (fire-and-forget con logging de errores) para no bloquear la salida del vehículo en el taller si la red o API externa presenta demoras.
 
-### Descuento del fondo de mantenimiento (leasing) desde el Taller (Decisión 2026-11-06)
-**Origen:** la orden de DBC859 del 2026-11-06 (gastos 1130–1135, $310.000) entró sin `apply_to_leasing` y no generó nota débito. Se corrigió a mano llamando al RPC `create_leasing_maintenance_debit` (nota #7). La API no cambió: el descuento ya existía, pero el Taller no lo pedía.
-
-Para que un gasto del Taller descuente el fondo, el `POST /expenses` debe cumplir esto:
-- **Campos obligatorios:** `apply_to_leasing: true` y `leasing_excess_method: "cash"`. No usar `"advance"`: si la placa ya tiene un anticipo activo, o si la tasa o la cuota no son válidas, la API responde 400 y **no guarda el gasto**. Con fire-and-forget, ese gasto se perdería.
-- **Una sola placa:** con varias placas, la API ignora `apply_to_leasing` y no genera nota.
-- **Un solo POST por orden:** todos los ítems van en `items[]` para que salga una sola nota por el total. Si se hace un POST por ítem, sale una nota por cada ítem.
-- **Contrato activo:** si la placa no tiene contrato de leasing, la API guarda el gasto sin nota y responde 201 sin avisar. El Taller puede consultar antes `GET /leasing/summary?plate=`.
-- **Revisar la respuesta:**
-  - `201` con `debit_note` en `null` cuando se esperaba nota quiere decir que no se descontó nada.
-  - `207` quiere decir que el gasto se guardó pero la nota falló (`debit_note_error`).
-
-  En los dos casos, el Taller debe registrar o avisar el problema, no solo dejarlo en un log.
-- **No hay corrección por edición:** la nota solo se genera al crear el gasto. Editar el gasto después no la genera. La corrección se hace llamando al RPC `create_leasing_maintenance_debit` con el contrato, el gasto principal (el de menor id de la orden), la placa, el total y el método.
-
 ---
 
 ## 7. Actualización Opcional de Vigencias: SOAT y Tecnomecánica (Decisión 2026-10-29 — Issue #4)
