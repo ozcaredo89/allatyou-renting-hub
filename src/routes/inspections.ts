@@ -9,7 +9,7 @@ r.get("/", async (req: Request, res: Response) => {
     try {
         const { data, error } = await supabase
             .from("inspections")
-            .select("*, driver:drivers(full_name)") // Traemos el nombre del conductor
+            .select("*, driver:drivers(id, full_name, phone)") // Traemos conductor y teléfono
             .order("created_at", { ascending: false })
             .limit(100);
             
@@ -31,20 +31,45 @@ r.post("/", async (req: Request, res: Response) => {
         return res.status(400).json({ error: "Debes subir al menos una foto" });
     }
 
+    const mileageNum = body.mileage !== undefined && body.mileage !== null && body.mileage !== ""
+      ? Number(body.mileage)
+      : null;
+
+    const validFuelLevels = ["empty", "1/4", "1/2", "3/4", "full"];
+    const fuelLevel = body.fuel_level && validFuelLevels.includes(body.fuel_level)
+      ? body.fuel_level
+      : null;
+
     const { data, error } = await supabase
       .from("inspections")
       .insert({
-        vehicle_plate: body.vehicle_plate,
+        vehicle_plate: String(body.vehicle_plate).toUpperCase().trim(),
         driver_id: body.driver_id || null,
-        type: body.type || 'general',
+        type: body.type || "general",
+        mileage: mileageNum,
+        fuel_level: fuelLevel,
         photos: body.photos, // El objeto JSON con las URLs
         comments: body.comments,
         inspector_name: body.inspector_name
       })
-      .select()
+      .select("*, driver:drivers(id, full_name, phone)")
       .single();
 
     if (error) throw new Error(error.message);
+
+    // Si se registró kilometraje válido, sincronizar en vehicle_mileage_logs para telemetría y mantenimientos
+    if (mileageNum && !isNaN(mileageNum) && mileageNum > 0) {
+      try {
+        await supabase.from("vehicle_mileage_logs").insert({
+          plate: String(body.vehicle_plate).toUpperCase().trim(),
+          mileage_km: mileageNum,
+          source: "manual",
+          notes: `Inspección de ${body.type || "general"} (ID: ${data.id})`
+        });
+      } catch (logErr) {
+        console.warn("No se pudo insertar en vehicle_mileage_logs (no crítico):", logErr);
+      }
+    }
 
     return res.status(201).json(data);
   } catch (err: any) {
@@ -57,14 +82,12 @@ r.post("/", async (req: Request, res: Response) => {
 r.get("/:plate", async (req: Request, res: Response) => {
     const plate = String(req.params.plate || "");
 
-    // Validación simple para evitar colisión con rutas que no sean placas
-    // (Aunque por la estructura de URL no debería chocar con /logs si se llama bien)
     if (!plate) return res.status(400).json({ error: "Plate required" });
     
     try {
         const { data, error } = await supabase
             .from("inspections")
-            .select("*, driver:drivers(full_name)")
+            .select("*, driver:drivers(id, full_name, phone)")
             .eq("vehicle_plate", plate.toUpperCase())
             .order("created_at", { ascending: false });
             
@@ -81,20 +104,31 @@ r.put("/:id", async (req: Request, res: Response) => {
   const body = req.body;
 
   try {
+    const validFuelLevels = ["empty", "1/4", "1/2", "3/4", "full"];
+    const fuelLevel = body.fuel_level && validFuelLevels.includes(body.fuel_level)
+      ? body.fuel_level
+      : body.fuel_level === null ? null : undefined;
+
+    const mileageNum = body.mileage !== undefined
+      ? (body.mileage !== null && body.mileage !== "" ? Number(body.mileage) : null)
+      : undefined;
+
     // A. Preparamos los datos a actualizar en la tabla principal
-    const updates = {
+    const updates: Record<string, any> = {
       photos: body.photos,
       comments: body.comments,
       type: body.type, // Por si cambiaron el tipo (Entrega/Recepción)
-      // Nota: No permitimos cambiar vehicle_plate o driver_id para no romper la integridad histórica
     };
+
+    if (fuelLevel !== undefined) updates.fuel_level = fuelLevel;
+    if (mileageNum !== undefined) updates.mileage = mileageNum;
 
     // B. Ejecutamos la actualización
     const { data: updatedInspection, error: updateError } = await supabase
       .from("inspections")
       .update(updates)
       .eq("id", id)
-      .select()
+      .select("*, driver:drivers(id, full_name, phone)")
       .single();
 
     if (updateError) throw new Error(updateError.message);
@@ -134,6 +168,26 @@ r.get("/:id/logs", async (req: Request, res: Response) => {
     } catch (err: any) {
         return res.status(500).json({ error: err.message });
     }
+});
+
+// 6. Router Público para compartir reporte por WhatsApp (solo lectura por ID sin Basic Auth)
+export const publicInspectionsRoutes = Router();
+publicInspectionsRoutes.get("/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const { data, error } = await supabase
+      .from("inspections")
+      .select("id, vehicle_plate, created_at, type, mileage, fuel_level, comments, inspector_name, photos, driver:drivers(full_name)")
+      .eq("id", id)
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: "Inspección no encontrada" });
+    }
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 export default r;
