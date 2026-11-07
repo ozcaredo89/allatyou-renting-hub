@@ -1,0 +1,35 @@
+name: Migraciones Supabase
+
+# Aplica supabase/migrations/ a producción antes del deploy de Railway.
+# Railway debe tener activado "Wait for CI" para desplegar solo si este job pasa.
+on:
+  push:
+    branches: [main]
+    paths: ["supabase/migrations/**"]
+  pull_request:
+    paths: ["supabase/migrations/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: supabase-migrations
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 3.0.0
+
+      # En PR solo muestra qué migraciones se aplicarían, sin tocar la base.
+      - name: Revisar migraciones pendientes (dry run)
+        if: github.event_name == 'pull_request'
+        run: supabase db push --db-url "$SUPABASE_DB_URL" --dry-run
+
+      - name: Aplicar migraciones
+        if: github.event_name != 'pull_request'
+        run: supabase db push --db-url "$SUPABASE_DB_URL"

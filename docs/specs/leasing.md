@@ -2,7 +2,7 @@
 
 **Estado:** Vigente · **Última revisión:** 2026-10-23
 **Código principal:** `src/lib/leasingCascade.ts`, `src/lib/contractGenerator.ts`, `src/templates/contrato.html`, `src/routes/leasing.ts`, `web/src/pages/AdminAmortization.tsx`
-**Migraciones:** `20260714_leasing_schema.sql` → `20261009_leasing_maintenance_debits.sql`
+**Migraciones:** `2026071400_leasing_schema.sql` → `2026100900_leasing_maintenance_debits.sql`
 
 > Este archivo describe **reglas de negocio**. El esquema exacto vive en las migraciones; no se duplica aquí.
 
@@ -56,7 +56,7 @@ simulación → pending → active → closed (solo manual, ver §7)
    - El vehículo vuelve a `active` (disponible), sin conductor (`current_driver_id = null`, `owner_name = 'SIN CONDUCTOR ASIGNADO'`).
    - No liquida fondo de mantenimiento ni depósitos del conductor: eso sigue siendo el flujo de liquidación (`liquidations.ts`).
    - No es atómico (mismo patrón que `cancel-pending`): si falla el paso de conductor/asignación/vehículo, el contrato ya quedó `cancelled` y el error solo se registra en log.
-   - La fecha real de cancelación se guarda en `leasing_contracts.cancelled_at` (migración `20261020_leasing_cancelled_at.sql`; `updated_at` no sirve porque un trigger lo mueve en cualquier UPDATE). Los contratos cancelados antes de esa migración, y los cancelados con `cancel-pending`, tienen `cancelled_at = NULL`.
+   - La fecha real de cancelación se guarda en `leasing_contracts.cancelled_at` (migración `2026102000_leasing_cancelled_at.sql`; `updated_at` no sirve porque un trigger lo mueve en cualquier UPDATE). Los contratos cancelados antes de esa migración, y los cancelados con `cancel-pending`, tienen `cancelled_at = NULL`.
    - **Un contrato `cancelled` está archivado:** `PATCH /leasing/contracts/:id` responde 409 `CONTRACT_CANCELLED` (no se edita ni se reactiva).
    - **Cancelación simultánea / estado cambiado:** si el contrato ya no está `active`, `cancel-active` responde 409 según el estado real: `ALREADY_CANCELLED` (incluye `cancelled_at`), `NOT_ACTIVE` (ej. pasó a `closed` o `default`) o `STATE_CHANGED` (no se pudo releer). El front trata estos códigos como definitivos: muestra el aviso (con la hora, si existe), oculta "Confirmar cancelación" y refresca la lista.
 

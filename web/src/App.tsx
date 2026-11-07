@@ -74,6 +74,10 @@ export default function App() {
               <Route path="/pay" element={<Pay />} />
               <Route path="/assistance" element={<Assistance />} />
               
+              {/* Catálogo de carros listos (Alquiler & Venta) y subida */}
+              <Route path="/rent" element={<RentCatalog />} />
+              <Route path="/rent-your-car" element={<RentYourCar />} />
+
               {/* RUTA DE PRUEBAS LOCALES PARA LA LANDING */}
               <Route path="/landing-test" element={<Landing />} />
               <Route path="/bid/:id" element={<BidTrip />} />

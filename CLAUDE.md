@@ -11,6 +11,14 @@ AllAtYou Renting Hub is an internal ERP for a car-rental/leasing fleet operator 
 
 Domain: driver payments/mora tracking, expense proration across vehicles, operational advances (loans) to drivers, monthly profit/ledger accounting, leasing/rent-to-own contracts, fleet GPS telemetry ("Oráculo"), vehicle inspections, expense audits, inventory/workshop, marketplace listings, and a WhatsApp/email reminders pipeline.
 
+## Workflow & Git Flow (Obligatorio)
+
+Seguir estrictamente la política documentada en `docs/specs/flujo-git-tickets.md`:
+1. **1 Requerimiento = 1 Ticket en GitHub (#ID) = 1 Rama dedicada = 1 PR**. Nunca trabajar directamente en `main`.
+2. Crear la rama antes de tocar cualquier archivo: `git checkout -b feat/<id>-<slug>` o `fix/<id>-<slug>`.
+3. Commits con referencia al ticket: `feat(#<id>): <descripción>` o `fix(#<id>): <descripción>`.
+4. Abrir Pull Request usando la plantilla `.github/pull_request_template.md` (`Closes #<id>`) y verificar que compile backend y frontend (`npm run build` en root y `cd web && npm run build && npm run lint`).
+
 ## Commands
 
 **Backend (repo root):**
@@ -31,7 +39,7 @@ npm run preview   # preview the production build
 
 There is no automated test suite (no `test` script in either `package.json`, no test runner configured). One-off verification scripts live at the repo root as `test-*.ts` (e.g. `test-schedule.ts`, `test-driver-schema.ts`) and are run directly with `ts-node <file>.ts` — treat them as manual debugging scripts, not a suite to maintain or run in CI.
 
-Database schema changes are plain SQL files in `supabase/migrations/`, named `YYYYMMDD[_NN]_description.sql` and applied to Supabase directly (no local Supabase CLI wiring in this repo — check with the user before assuming migrations have been applied).
+Database schema changes are plain SQL files in `supabase/migrations/`, named `YYYYMMDDNN_description.sql` (10-digit unique version: date + 2-digit sequence for that day, starting at `00`). The Supabase CLI uses the digits before the first `_` as the version, so two files must never share it. `.github/workflows/migrations.yml` applies them automatically with `supabase db push` on every push to `main` that touches `supabase/migrations/` (and runs a `--dry-run` on PRs); Railway has "Wait for CI" enabled so the backend deploys only after the migration job passes. Never apply a migration by hand in the SQL Editor: it would be re-run by the pipeline. Write migrations so they are safe to run once against production (prefer `if not exists` / `create or replace`).
 
 ## Architecture
 
@@ -57,7 +65,7 @@ The frontend has a matching `web/src/lib/auth.ts`: prompts for admin credentials
 These run in-process (not separate workers) — restarting the API restarts all three. Keep this in mind when reasoning about timing/state: there's no external job queue.
 
 ### Reminders pipeline
-`routes/reminders.ts` exposes an internal endpoint invoked by `.github/workflows/reminders.yml`, a scheduled GitHub Action that curl-POSTs it three times daily (10:00/15:00/23:00 UTC) with an `X-Internal-Secret` header — this is the payment-reminder trigger, not the Oráculo daemon.
+`routes/reminders.ts` exposes an internal endpoint invoked by `.github/workflows/reminders.yml`, a scheduled GitHub Action that curl-POSTs it three times daily (10:00/15:00/23:00 UTC) with an `X-Internal-Secret` header — this is the reminder trigger (public SOAT/Tecno/Pico y Placa subscriptions plus the daily fleet expiry digest to `FLEET_REMINDER_EMAILS`), not the Oráculo daemon.
 
 ### Web structure (`web/src/`)
 - `App.tsx` — single router with a **hostname-based split**: if `hostname` is `web.allatyou.com` or `localhost`, it renders the internal ERP (all `/admin`-style routes, wrapped in `AdminLayout`); any other hostname renders the public marketing `Landing` site (`PublicLayout`). Keep this split in mind when adding a route — decide whether it belongs under the "APP INTERNA" or "LANDING" branch.
@@ -67,7 +75,7 @@ These run in-process (not separate workers) — restarting the API restarts all 
 - Note: `pages/AdminAmortization.tsx.backup` and `pages/AdminAmortization_old.tsx` are stale snapshots left in the tree, not active code — don't edit them, and don't assume they reflect current behavior.
 
 ### Database (Supabase/Postgres)
-Schema lives in `supabase/migrations/*.sql` (chronological, hand-written) plus baseline dumps in `docs/*.sql` (`Database.sql`, `Database_Updates.sql`). Key tables/domains: `payments` (driver payments incl. AI-assisted receipt classification), `expenses`/`expense_vehicles`/`expense_audit_log` (prorated multi-vehicle expenses with audit trail), `vehicle_ledger` (manual accounting adjustments feeding monthly profit), `vehicle_investments` (capital-recovery tracking), `operational_advances`/`operational_advance_schedule` (driver loans with auto-generated payment schedules), leasing/rent-to-own tables (`20260714_leasing_schema.sql` and related migrations), `oracle_nodes`/BI views (GPS telemetry), `driver_liquidations`. The service-role Supabase client in `src/lib/supabase.ts` bypasses RLS — all authorization is therefore enforced at the API layer (`basicAuth`), not in the database.
+Schema lives in `supabase/migrations/*.sql` (chronological, hand-written) plus baseline dumps in `docs/*.sql` (`Database.sql`, `Database_Updates.sql`). Key tables/domains: `payments` (driver payments incl. AI-assisted receipt classification), `expenses`/`expense_vehicles`/`expense_audit_log` (prorated multi-vehicle expenses with audit trail), `vehicle_ledger` (manual accounting adjustments feeding monthly profit), `vehicle_investments` (capital-recovery tracking), `operational_advances`/`operational_advance_schedule` (driver loans with auto-generated payment schedules), leasing/rent-to-own tables (`2026071400_leasing_schema.sql` and related migrations), `oracle_nodes`/BI views (GPS telemetry), `driver_liquidations`. The service-role Supabase client in `src/lib/supabase.ts` bypasses RLS — all authorization is therefore enforced at the API layer (`basicAuth`), not in the database.
 
 ## Business rules → `docs/specs/`
 Business rules live in `docs/specs/` (index: `docs/specs/README.md`). **Before changing code in one of these domains, read its spec**, and update the spec in the same commit when a rule changes:
@@ -75,6 +83,7 @@ Business rules live in `docs/specs/` (index: `docs/specs/README.md`). **Before c
 - Driver payments, receipts/anti-fraud, payment approval → `docs/specs/pagos.md`
 - Operational advances (driver loans) → `docs/specs/anticipos.md`
 - Expenses, maintenance fund, debit notes → `docs/specs/gastos-fondo-mantenimiento.md`
+- Reminders (public subscriptions + daily fleet SOAT/Tecno digest) → `docs/specs/recordatorios.md`
 - Profit/rentabilidad panel (`/profit`, `routes/profit.ts`, `vehicle_month_*` views) → `docs/specs/utilidades.md`
 - Flujo Git & Tickets (Issue obligatorio, ramas y commits con #ID) → `docs/specs/flujo-git-tickets.md`
 
