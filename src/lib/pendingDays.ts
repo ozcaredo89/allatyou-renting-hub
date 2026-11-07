@@ -3,7 +3,7 @@
 // - si es pagable (Pico y Placa / calendario de no pago),
 // - quién tenía el carro ese día según vehicle_assignments,
 // - si cuenta como mora. Mismo criterio que get_payable_days
-//   (supabase/migrations/20261017_mora_sin_conductor.sql): un día sin conductor asignado no es mora.
+//   (supabase/migrations/2026101701_mora_sin_conductor.sql): un día sin conductor asignado no es mora.
 import { supabase } from "./supabase";
 import { getAmortizationDates } from "./noPay";
 import { bogotaDay } from "./taller";
@@ -68,7 +68,7 @@ export async function listPendingDays(plate: string): Promise<PendingDaysResult>
   const refDate = lastPaymentDate || (vehicle?.created_at ? String(vehicle.created_at).slice(0, 10) : today);
 
   // Se paga el día D durante D+1 hasta las 4 PM: el día D es mora desde D+1 16:00 (hora Colombia).
-  // Mismo corte que mora_cutoff_date() en SQL (supabase/migrations/20261017_mora_pago_dia_vencido.sql).
+  // Mismo corte que mora_cutoff_date() en SQL (supabase/migrations/2026101700_mora_pago_dia_vencido.sql).
   const bogotaHour = Number(
     new Intl.DateTimeFormat("en-GB", { timeZone: "America/Bogota", hour: "2-digit", hour12: false }).format(new Date())
   ) % 24;

@@ -782,7 +782,7 @@ r.post("/contracts/:id/cancel-pending", async (req: Request, res: Response) => {
 // ============================================================================
 
 // Lee el contrato con lo necesario para cancelarlo. `cancelled_at` viene de la migración
-// 20261020_leasing_cancelled_at.sql; si aún no se aplicó, se lee sin esa columna.
+// 2026102000_leasing_cancelled_at.sql; si aún no se aplicó, se lee sin esa columna.
 async function readContractForCancel(contractId: number) {
   const full = await supabase
     .from("leasing_contracts")
@@ -842,7 +842,7 @@ r.post("/contracts/:id/cancel-active", async (req: Request, res: Response) => {
     .eq("status", "active")
     .select("id");
   if (upd.error && /cancelled_at/.test(upd.error.message)) {
-    // Migración 20261020_leasing_cancelled_at.sql aún sin aplicar: cancelar sin la fecha
+    // Migración 2026102000_leasing_cancelled_at.sql aún sin aplicar: cancelar sin la fecha
     upd = await supabase
       .from("leasing_contracts")
       .update({ status: "cancelled" })
