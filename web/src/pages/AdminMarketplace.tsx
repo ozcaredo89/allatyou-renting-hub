@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { CheckCircle, XCircle, Clock, MapPin, Phone } from "lucide-react";
+import { CheckCircle, XCircle, Clock, MapPin, Phone, Key, Tag } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -13,6 +13,8 @@ type Listing = {
   model: string;
   year: number;
   price_per_day: number;
+  sale_price?: number | null;
+  listing_type?: "rent" | "sale" | "both";
   photo_exterior_url: string;
   photo_interior_url?: string | null;
   status: "pending" | "approved" | "rejected";
@@ -32,7 +34,6 @@ export default function AdminMarketplace() {
     setLoading(true);
     try {
       const auth = ensureBasicAuth();
-      // Usamos el endpoint "admin/all" que creamos en el Paso 1
       const res = await fetch(`${API}/marketplace/admin/all`, { 
         headers: { Authorization: auth } 
       });
@@ -66,12 +67,11 @@ export default function AdminMarketplace() {
 
           if (!res.ok) throw new Error("Error actualizando");
           
-          // Actualizamos la lista localmente para que se sienta instantáneo
           setListings(prev => prev.map(item => 
-              item.id === id ? { ...item, status: newStatus as any } : item
+              item.id === id ? { ...item, status: newStatus as Listing["status"] } : item
           ));
 
-      } catch (error) {
+      } catch {
           alert("Error al actualizar estado");
       }
   };
@@ -90,7 +90,7 @@ export default function AdminMarketplace() {
         <div className="mb-6 flex justify-between items-end">
           <div>
             <h1 className="text-3xl font-bold text-slate-900">Moderación Marketplace</h1>
-            <p className="text-sm text-slate-500">Aprueba o rechaza los vehículos subidos por usuarios.</p>
+            <p className="text-sm text-slate-500">Aprueba o rechaza los vehículos subidos por usuarios (Alquiler y Venta).</p>
           </div>
           <button onClick={loadData} className="text-sm text-emerald-600 font-bold hover:underline">Refrescar</button>
         </div>
@@ -103,12 +103,31 @@ export default function AdminMarketplace() {
             </div>
         ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {listings.map(car => (
+                {listings.map(car => {
+                  const type = car.listing_type || "rent";
+                  return (
                     <div key={car.id} className={`bg-white rounded-xl border shadow-sm overflow-hidden flex flex-col ${car.status === 'pending' ? 'border-orange-200 ring-2 ring-orange-100' : 'border-slate-200 opacity-80'}`}>
                         
-                        {/* Header con Estado */}
+                        {/* Header con Estado y Modalidad */}
                         <div className="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                            <span className="text-xs font-mono text-slate-400">{new Date(car.created_at).toLocaleDateString()}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-mono text-slate-400">{new Date(car.created_at).toLocaleDateString()}</span>
+                              {type === "both" && (
+                                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-800 text-white">
+                                  Renta/Venta
+                                </span>
+                              )}
+                              {type === "rent" && (
+                                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-0.5">
+                                  <Key className="w-2.5 h-2.5" /> Renta
+                                </span>
+                              )}
+                              {type === "sale" && (
+                                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 flex items-center gap-0.5">
+                                  <Tag className="w-2.5 h-2.5" /> Venta
+                                </span>
+                              )}
+                            </div>
                             <StatusBadge status={car.status} />
                         </div>
 
@@ -136,9 +155,18 @@ export default function AdminMarketplace() {
                         {/* Info */}
                         <div className="p-4 flex-1">
                             <h3 className="text-lg font-bold text-slate-900 mb-1">{car.brand} {car.model}</h3>
-                            <div className="flex gap-2 text-xs text-slate-500 mb-4">
-                                <span className="bg-slate-100 px-2 py-1 rounded">{car.year}</span>
-                                <span className="bg-slate-100 px-2 py-1 rounded font-mono">${car.price_per_day.toLocaleString()} /día</span>
+                            <div className="flex flex-wrap gap-2 text-xs text-slate-600 mb-4">
+                                <span className="bg-slate-100 px-2 py-1 rounded font-medium">{car.year}</span>
+                                {(type === "rent" || type === "both") && car.price_per_day > 0 && (
+                                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-100 px-2 py-1 rounded font-mono font-bold">
+                                    ${car.price_per_day.toLocaleString()} /día
+                                  </span>
+                                )}
+                                {(type === "sale" || type === "both") && car.sale_price && car.sale_price > 0 && (
+                                  <span className="bg-indigo-50 text-indigo-800 border border-indigo-100 px-2 py-1 rounded font-mono font-bold">
+                                    Venta: ${car.sale_price.toLocaleString()}
+                                  </span>
+                                )}
                             </div>
 
                             <div className="space-y-2 mb-4 border-t border-slate-100 pt-3">
@@ -179,7 +207,8 @@ export default function AdminMarketplace() {
                             )}
                         </div>
                     </div>
-                ))}
+                  );
+                })}
             </div>
         )}
       </div>

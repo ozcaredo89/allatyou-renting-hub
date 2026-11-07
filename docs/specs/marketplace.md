@@ -15,13 +15,18 @@ El módulo Marketplace transforma la plataforma en un modelo de negocio híbrido
 ## 2. Alcance Funcional
 
 ### 2.1 Captación (Público - Oferta)
-* **Formulario de Alta:** Página pública `/rent-your-car` accesible desde la barra superior de la Landing (`PublicLayout.tsx`).
+* **Formulario de Alta:** Página pública `/rent-your-car` accesible desde la barra superior de la Landing (`PublicLayout.tsx`) y desde el catálogo.
+* **Modalidades de Publicación (`listing_type`):**
+  * `rent` (Solo Alquiler): Ingreso diario esperado (`price_per_day`). GPS satelital requerido.
+  * `sale` (Solo Venta): Precio final de venta (`sale_price`). No exige GPS.
+  * `both` (Alquiler o Venta): Permite ingresar ambos precios (`price_per_day` y `sale_price`).
 * **Catálogo Guiado de Marcas y Líneas:** Selector de marcas comerciales en Colombia (`Chevrolet`, `Kia`, `Renault`, `Mazda`, `Nissan`, `Suzuki`, `Honda`, `Toyota`, `Hyundai`, `Ford`, `Volkswagen`, `Otra`) con líneas predefinidas y opción `"Otra línea..."`.
 * **UX Móvil:** Integración de cámara nativa vía WebRTC y Action Sheet para facilitar la toma de fotos del vehículo en el momento (subidas a la carpeta `vehicles` en R2 sin activar el OCR de recibos).
-* **Datos Requeridos:** Propietario, Celular colombiano de 10 dígitos, Correo electrónico, Ciudad, Marca, Línea, Año (1990 al año siguiente), Placa colombiana (`ABC123`) y Precio Esperado.
+* **Datos Requeridos:** Propietario, Celular colombiano de 10 dígitos, Correo electrónico, Ciudad, Marca, Línea, Año (1990 al año siguiente), Placa colombiana (`ABC123`), Modalidad y Precios correspondientes.
 
 ### 2.2 Moderación (Administrativo)
 * **Panel de Control:** Ruta `/marketplace` en la app administrativa (`web.allatyou.com/marketplace`).
+* **Información Visual:** Muestra badges para `Renta`, `Venta` o `Renta/Venta`, precio diario y/o precio de venta.
 * **Flujo de Estado:**
     * `pending`: Estado inicial. Visible solo para admin.
     * `approved`: Visible en el catálogo público.
@@ -30,7 +35,11 @@ El módulo Marketplace transforma la plataforma en un modelo de negocio híbrido
 
 ### 2.3 Catálogo (Público - Demanda)
 * **Vitrina Digital:** Página `/rent`. Muestra solo vehículos con estado `approved`.
-* **Conversión:** No procesa pagos en línea (MVP). Utiliza un **CTA de WhatsApp Link** pre-llenado con el ID y modelo del carro para cerrar la venta manualmente.
+* **Filtros Dinámicos:** Selector por pestañas entre `Todos`, `En Alquiler 🔑` y `En Venta 🏷️`, más buscador en tiempo real por texto.
+* **Badges y Precios:** Muestra insignias claras de modalidad, canon diario en COP para renta y precio de venta total para compra.
+* **Conversión y Contacto Directo por WhatsApp:**
+  * Para vehículos en **Venta**: El botón *"Contactar al Vendedor por WhatsApp"* conecta directamente con el número de celular del vendedor (`owner_phone`), con un mensaje pre-llenado incluyendo el nombre del dueño, modelo, año y precio.
+  * Para vehículos en **Alquiler**: El botón *"Reservar Renta por WhatsApp"* contacta al canal de renting con los datos del vehículo y fechas para formalizar requisitos.
 
 ---
 
@@ -38,8 +47,11 @@ El módulo Marketplace transforma la plataforma en un modelo de negocio híbrido
 
 ### Tabla: `marketplace_cars`
 * `status`: Enum (`pending`, `approved`, `rejected`, `rented`).
-* `owner_info`: Datos de contacto sensibles (teléfono) no se exponen en el catálogo público, solo al admin.
-* `vehicle_info`: Marca, modelo, año, transmisión, fotos.
+* `listing_type`: Text (`rent`, `sale`, `both`).
+* `price_per_day`: Numeric (canon diario en COP).
+* `sale_price`: Numeric (precio final de venta en COP).
+* `owner_info`: El nombre (`owner_name`) y el WhatsApp (`owner_phone`) del dueño **sí se exponen** en el catálogo público (`GET /marketplace/catalog`) para el contacto directo con el vendedor (ticket #6). El dueño lo autoriza con una casilla obligatoria en el formulario `/rent-your-car` (Ley 1581 Habeas Data). El email (`owner_email`) y la placa nunca se exponen: solo los ve el admin.
+* `vehicle_info`: Marca, modelo, año, transmisión, fotos (exterior e interior).
 
 ---
 

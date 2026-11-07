@@ -11,6 +11,14 @@ AllAtYou Renting Hub is an internal ERP for a car-rental/leasing fleet operator 
 
 Domain: driver payments/mora tracking, expense proration across vehicles, operational advances (loans) to drivers, monthly profit/ledger accounting, leasing/rent-to-own contracts, fleet GPS telemetry ("Oráculo"), vehicle inspections, expense audits, inventory/workshop, marketplace listings, and a WhatsApp/email reminders pipeline.
 
+## Workflow & Git Flow (Obligatorio)
+
+Seguir estrictamente la política documentada en `docs/specs/flujo-git-tickets.md`:
+1. **1 Requerimiento = 1 Ticket en GitHub (#ID) = 1 Rama dedicada = 1 PR**. Nunca trabajar directamente en `main`.
+2. Crear la rama antes de tocar cualquier archivo: `git checkout -b feat/<id>-<slug>` o `fix/<id>-<slug>`.
+3. Commits con referencia al ticket: `feat(#<id>): <descripción>` o `fix(#<id>): <descripción>`.
+4. Abrir Pull Request usando la plantilla `.github/pull_request_template.md` (`Closes #<id>`) y verificar que compile backend y frontend (`npm run build` en root y `cd web && npm run build && npm run lint`).
+
 ## Commands
 
 **Backend (repo root):**

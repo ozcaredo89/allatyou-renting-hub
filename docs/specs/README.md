@@ -11,6 +11,7 @@ Fuente de verdad de las **reglas de negocio** de cada módulo. Las leen tanto pe
 | Pagos diarios | [pagos.md](pagos.md) | `routes/payments.ts`, aprobación en `routes/reports.ts`, `Pay.tsx`, `Reports.tsx` |
 | Anticipos operativos | [anticipos.md](anticipos.md) | `routes/advances.ts`, `operational_advance*` |
 | Gastos y fondo de mantenimiento | [gastos-fondo-mantenimiento.md](gastos-fondo-mantenimiento.md) | `routes/expenses.ts`, `Expenses.tsx`, notas débito |
+| Flota y Directorio Rápido | [flota-referencia.md](flota-referencia.md) | Mapeo rápido de placas por terminación (ej: "132" = JKR132), modalidad y estado |
 | Recordatorios (SOAT, Tecno, Pico y Placa) | [recordatorios.md](recordatorios.md) | `routes/reminders.ts`, `lib/fleetReminders.ts`, `reminders.yml` |
 | Utilidades y rentabilidad | [utilidades.md](utilidades.md) | `routes/profit.ts`, `AdminProfit.tsx`, vistas `vehicle_month_*` |
 | Conductores | [conductores.md](conductores.md) | `routes/drivers.ts`, directorio de conductores |
