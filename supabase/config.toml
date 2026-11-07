@@ -1,0 +1,3 @@
+# Config mínima para que la CLI de Supabase reconozca la carpeta.
+# Las migraciones se aplican desde .github/workflows/migrations.yml con SUPABASE_DB_URL.
+project_id = "allatyou-renting-hub"
