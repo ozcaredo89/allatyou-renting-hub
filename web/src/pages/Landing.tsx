@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Instagram, Facebook } from "lucide-react";
+import { useSearchParams, Link } from "react-router-dom";
+import { Instagram, Facebook, ArrowRight, Key, Tag, Sparkles } from "lucide-react";
 import Logo from "../components/Logo";
 import { TrustSection } from "../components/TrustSection";
 import { FaqSection } from "../components/MarketingSections";
@@ -56,11 +56,33 @@ export default function Landing() {
       {/* NAVBAR */}
       <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0b1220]/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center">
+          <div className="flex items-center gap-4">
              <Logo className="h-9 md:h-10 w-auto" />
+
+             {/* ACCESO RÁPIDO A CARROS DISPONIBLES */}
+             <Link
+               to="/rent"
+               className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20 text-xs font-bold transition-all hover:scale-105"
+             >
+               <span className="relative flex h-2 w-2">
+                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+               </span>
+               🚗 Carros Listos
+             </Link>
           </div>
 
-          <nav className="hidden md:flex gap-6 text-sm font-medium text-slate-400">
+          <nav className="hidden md:flex gap-6 text-sm font-medium text-slate-400 items-center">
+            <Link to="/rent" className="hover:text-emerald-400 transition-colors flex items-center gap-1">
+              <Key className="w-3.5 h-3.5 text-emerald-400" /> Renta
+            </Link>
+            <Link to="/rent" className="hover:text-indigo-400 transition-colors flex items-center gap-1">
+              <Tag className="w-3.5 h-3.5 text-indigo-400" /> Venta
+            </Link>
+            <Link to="/rent-your-car" className="text-slate-300 hover:text-white transition-colors">
+              Publicar Carro
+            </Link>
+
             {activeTab === 'ingresos' && (
               <>
                 <a href="#como" className="hover:text-white transition-colors">Cómo funciona</a>
@@ -72,6 +94,7 @@ export default function Landing() {
             )}
             <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
           </nav>
+
           <div className="flex items-center gap-2 md:gap-4">
             {/* Social Icons */}
             <div className="hidden sm:flex items-center gap-2 md:gap-3 pr-2 md:pr-3 border-r border-white/10">
@@ -92,6 +115,34 @@ export default function Landing() {
           </div>
         </div>
       </header>
+
+      {/* BANNER DESTACADO: CARROS LISTOS PARA ALQUILER Y VENTA */}
+      <div className="bg-gradient-to-r from-emerald-950/60 via-slate-900/80 to-indigo-950/60 border-b border-white/10 py-3.5 px-4 backdrop-blur-xs">
+        <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
+          <div className="flex items-center gap-2.5">
+            <span className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 shrink-0">
+              <Sparkles className="w-4 h-4" />
+            </span>
+            <p className="text-xs sm:text-sm text-slate-200">
+              <strong className="text-white">¿Buscas un carro listo para entrega inmediata?</strong> Flota verificada disponible para <span className="text-emerald-400 font-bold">Alquiler</span> y para <span className="text-indigo-400 font-bold">Venta</span>.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              to="/rent"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-500 text-slate-950 text-xs font-black shadow-md hover:bg-emerald-400 transition-all"
+            >
+              Ver Carros Listos <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+            <Link
+              to="/rent-your-car"
+              className="inline-flex items-center px-3 py-1.5 rounded-lg border border-white/20 hover:bg-white/10 text-white text-xs font-semibold transition-all"
+            >
+              Publicar mi carro
+            </Link>
+          </div>
+        </div>
+      </div>
 
       {/* SELECTOR DE PESTAÑAS (TABS) */}
       <div className="border-b border-white/5 bg-white/[0.01]">
@@ -158,6 +209,8 @@ export default function Landing() {
 
       <footer className="border-t border-white/10 pt-12 pb-8 text-center text-xs text-slate-500">
         <div className="flex justify-center items-center gap-6 mb-4">
+          <Link to="/rent" className="hover:text-emerald-400 transition-colors text-sm font-medium">Catálogo de Carros</Link>
+          <Link to="/rent-your-car" className="hover:text-emerald-400 transition-colors text-sm font-medium">Publicar Carro</Link>
           <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors text-sm font-medium">WhatsApp Soporte</a>
           <a href="mailto:contacto@allatyou.com" className="hover:text-emerald-400 transition-colors text-sm font-medium">Email</a>
         </div>

@@ -11,6 +11,14 @@ AllAtYou Renting Hub is an internal ERP for a car-rental/leasing fleet operator 
 
 Domain: driver payments/mora tracking, expense proration across vehicles, operational advances (loans) to drivers, monthly profit/ledger accounting, leasing/rent-to-own contracts, fleet GPS telemetry ("Oráculo"), vehicle inspections, expense audits, inventory/workshop, marketplace listings, and a WhatsApp/email reminders pipeline.
 
+## Workflow & Git Flow (Obligatorio)
+
+Seguir estrictamente la política documentada en `docs/specs/flujo-git-tickets.md`:
+1. **1 Requerimiento = 1 Ticket en GitHub (#ID) = 1 Rama dedicada = 1 PR**. Nunca trabajar directamente en `main`.
+2. Crear la rama antes de tocar cualquier archivo: `git checkout -b feat/<id>-<slug>` o `fix/<id>-<slug>`.
+3. Commits con referencia al ticket: `feat(#<id>): <descripción>` o `fix(#<id>): <descripción>`.
+4. Abrir Pull Request usando la plantilla `.github/pull_request_template.md` (`Closes #<id>`) y verificar que compile backend y frontend (`npm run build` en root y `cd web && npm run build && npm run lint`).
+
 ## Commands
 
 **Backend (repo root):**
@@ -57,7 +65,7 @@ The frontend has a matching `web/src/lib/auth.ts`: prompts for admin credentials
 These run in-process (not separate workers) — restarting the API restarts all three. Keep this in mind when reasoning about timing/state: there's no external job queue.
 
 ### Reminders pipeline
-`routes/reminders.ts` exposes an internal endpoint invoked by `.github/workflows/reminders.yml`, a scheduled GitHub Action that curl-POSTs it three times daily (10:00/15:00/23:00 UTC) with an `X-Internal-Secret` header — this is the payment-reminder trigger, not the Oráculo daemon.
+`routes/reminders.ts` exposes an internal endpoint invoked by `.github/workflows/reminders.yml`, a scheduled GitHub Action that curl-POSTs it three times daily (10:00/15:00/23:00 UTC) with an `X-Internal-Secret` header — this is the reminder trigger (public SOAT/Tecno/Pico y Placa subscriptions plus the daily fleet expiry digest to `FLEET_REMINDER_EMAILS`), not the Oráculo daemon.
 
 ### Web structure (`web/src/`)
 - `App.tsx` — single router with a **hostname-based split**: if `hostname` is `web.allatyou.com` or `localhost`, it renders the internal ERP (all `/admin`-style routes, wrapped in `AdminLayout`); any other hostname renders the public marketing `Landing` site (`PublicLayout`). Keep this split in mind when adding a route — decide whether it belongs under the "APP INTERNA" or "LANDING" branch.
@@ -75,6 +83,7 @@ Business rules live in `docs/specs/` (index: `docs/specs/README.md`). **Before c
 - Driver payments, receipts/anti-fraud, payment approval → `docs/specs/pagos.md`
 - Operational advances (driver loans) → `docs/specs/anticipos.md`
 - Expenses, maintenance fund, debit notes → `docs/specs/gastos-fondo-mantenimiento.md`
+- Reminders (public subscriptions + daily fleet SOAT/Tecno digest) → `docs/specs/recordatorios.md`
 - Profit/rentabilidad panel (`/profit`, `routes/profit.ts`, `vehicle_month_*` views) → `docs/specs/utilidades.md`
 - Flujo Git & Tickets (Issue obligatorio, ramas y commits con #ID) → `docs/specs/flujo-git-tickets.md`
 

@@ -41,19 +41,40 @@ function isGibberishText(v: unknown): boolean {
 
 /**
  * GET /marketplace/catalog
- * Público. Trae los carros DISPONIBLES para rentar.
- * Filtra por status = 'approved'.
+ * Público. Trae los carros DISPONIBLES para rentar o comprar.
+ * Filtra por status = 'approved' y opcionalmente por ?type=rent|sale.
  */
-r.get("/catalog", async (_req: Request, res: Response) => {
+r.get("/catalog", async (req: Request, res: Response) => {
   try {
-    const { data, error } = await supabase
+    const filterType = typeof req.query.type === "string" ? req.query.type.toLowerCase() : null;
+
+    let query = supabase
       .from("marketplace_cars")
-      .select("id, brand, model, year, transmission, price_per_day, photo_exterior_url, owner_city")
+      .select("id, brand, model, year, transmission, fuel_type, price_per_day, sale_price, listing_type, photo_exterior_url, photo_interior_url, owner_city, owner_name, owner_phone")
       .eq("status", "approved")
       .order("created_at", { ascending: false });
 
+    if (filterType === "rent") {
+      // Carros disponibles para renta (o ambos, o antiguos con null que eran de renta)
+      query = query.or("listing_type.eq.rent,listing_type.eq.both,listing_type.is.null");
+    } else if (filterType === "sale") {
+      // Carros disponibles para venta (o ambos)
+      query = query.or("listing_type.eq.sale,listing_type.eq.both");
+    }
+
+    const { data, error } = await query;
+
     if (error) throw new Error(error.message);
-    return res.json(data);
+
+    // Normalizar listing_type para registros históricos
+    const normalizedData = (data || []).map((car: any) => ({
+      ...car,
+      listing_type: car.listing_type || "rent",
+      price_per_day: Number(car.price_per_day) || 0,
+      sale_price: car.sale_price ? Number(car.sale_price) : null,
+    }));
+
+    return res.json(normalizedData);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -120,6 +141,25 @@ r.post("/upload", async (req: Request, res: Response) => {
     const currentYear = new Date().getFullYear();
     if (Number.isNaN(parsedYear) || parsedYear < 1990 || parsedYear > currentYear + 1) {
       return res.status(422).json({ error: `Ingresa un año válido entre 1990 y ${currentYear + 1}.` });
+    }
+
+    // 7.1 Validar modalidad (Alquiler, Venta o Ambos) y precios correspondientes
+    const validListingTypes = ["rent", "sale", "both"];
+    const listingType = validListingTypes.includes(String(body.listing_type).toLowerCase())
+      ? String(body.listing_type).toLowerCase()
+      : "rent";
+
+    const parsedPricePerDay = Number(body.price_per_day) || 0;
+    const parsedSalePrice = body.sale_price !== undefined && body.sale_price !== null && body.sale_price !== ""
+      ? Number(body.sale_price)
+      : null;
+
+    if ((listingType === "rent" || listingType === "both") && parsedPricePerDay <= 0) {
+      return res.status(422).json({ error: "Ingresa un precio por día válido para alquiler." });
+    }
+
+    if ((listingType === "sale" || listingType === "both") && (!parsedSalePrice || parsedSalePrice <= 0)) {
+      return res.status(422).json({ error: "Ingresa un precio de venta válido para el vehículo." });
     }
 
     // 8. Normalizar y validar fotos (soporta arreglo flexible photos[] o campos individuales)
@@ -201,7 +241,9 @@ r.post("/upload", async (req: Request, res: Response) => {
         transmission: body.transmission || "Automática",
         fuel_type: body.fuel_type || "Gasolina",
         plate: normalizedPlate,
-        price_per_day: Number(body.price_per_day) || 0,
+        price_per_day: listingType === "sale" ? 0 : parsedPricePerDay,
+        sale_price: listingType === "rent" ? null : parsedSalePrice,
+        listing_type: listingType,
         photo_exterior_url: initialExterior,
         photo_interior_url: initialInterior,
         status: "pending",

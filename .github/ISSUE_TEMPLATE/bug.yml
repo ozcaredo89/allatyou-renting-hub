@@ -1,0 +1,22 @@
+name: Bug
+description: Reportar un error o comportamiento inesperado
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: ¿Qué ocurrió?
+      description: Pasos para reproducir, URL, error mostrado o captura.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: ¿Qué debería haber ocurrido?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto adicional
+      description: Datos del vehículo, conductor, endpoint o logs relevantes.
