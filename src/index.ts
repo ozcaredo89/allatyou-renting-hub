@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "./validateEnv"; // Debe ir antes de los demás imports (Issue #18)
 import express, { Request, Response } from "express";
 import cors, { CorsOptionsDelegate } from "cors";
 import { basicAuth } from "./middleware/basicAuth";

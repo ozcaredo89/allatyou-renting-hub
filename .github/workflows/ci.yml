@@ -1,0 +1,32 @@
+name: CI
+
+# Issue #18: bloquea PRs que usen variables de entorno no declaradas y verifica que compile.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  env-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Variables de entorno declaradas
+        run: node scripts/check-env.js
+
+      - name: Build API
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build Web (typecheck)
+        working-directory: web
+        run: |
+          npm ci
+          npx tsc -b
