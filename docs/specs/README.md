@@ -8,7 +8,7 @@ Fuente de verdad de las **reglas de negocio** de cada módulo. Las leen tanto pe
 |---|---|---|
 | Onboarding de Vehículos | [vehiculos-onboarding.md](vehiculos-onboarding.md) | `VehicleApplicationForm.tsx`, `RentYourCar.tsx`, `VehicleModelCombobox.tsx`, `VehicleDateField.tsx`, `routes/vehicleApplications.ts`, `routes/marketplace.ts` |
 | Leasing / Rent-to-Own | [leasing.md](leasing.md) | `leasingCascade.ts`, `contractGenerator.ts`, `templates/contrato.html`, `routes/leasing.ts`, `AdminAmortization.tsx`, migraciones `*leasing*` |
-| Pagos diarios | [pagos.md](pagos.md) | `routes/payments.ts`, aprobación en `routes/reports.ts`, `Pay.tsx`, `Reports.tsx` |
+| Pagos diarios | [pagos.md](pagos.md) | `/pay` (`web/src/pages/Pay.tsx`, `src/routes/payments.ts`), `/reports` (`web/src/pages/Reports.tsx`, `PaymentApprovalModal.tsx`, `ResolveDaysModal.tsx`, `src/routes/reports.ts`) |
 | Anticipos operativos | [anticipos.md](anticipos.md) | `routes/advances.ts`, `operational_advance*` |
 | Gastos y fondo de mantenimiento | [gastos-fondo-mantenimiento.md](gastos-fondo-mantenimiento.md) | `routes/expenses.ts`, `Expenses.tsx`, notas débito |
 | Flota y Directorio Rápido | [flota-referencia.md](flota-referencia.md) | Mapeo rápido de placas por terminación (ej: "132" = JKR132), modalidad y estado |

@@ -17,7 +17,8 @@ Seguir estrictamente la política documentada en `docs/specs/flujo-git-tickets.m
 1. **1 Requerimiento = 1 Ticket en GitHub (#ID) = 1 Rama dedicada = 1 PR**. Nunca trabajar directamente en `main`.
 2. Crear la rama antes de tocar cualquier archivo: `git checkout -b feat/<id>-<slug>` o `fix/<id>-<slug>`.
 3. Commits con referencia al ticket: `feat(#<id>): <descripción>` o `fix(#<id>): <descripción>`.
-4. Abrir Pull Request usando la plantilla `.github/pull_request_template.md` (`Closes #<id>`) y verificar que compile backend y frontend (`npm run build` en root y `cd web && npm run build && npm run lint`).
+4. Abrir Pull Request usando la plantilla `.github/pull_request_template.md` (`Closes #<id>`) y verificar que compile backend y frontend (`npm.cmd run build` en root y `cd web && npm.cmd run build`).
+5. Hacer merge del Pull Request a `main` (`gh pr merge --merge --delete-branch`) y volver a `main` actualizado (`git checkout main && git pull`) para que el cambio se despliegue y el ticket quede cerrado automáticamente. No dejar PRs abiertos salvo que el usuario lo pida explícitamente.
 
 ## Commands
 
@@ -73,6 +74,37 @@ These run in-process (not separate workers) — restarting the API restarts all 
 - `components/` — shared UI (layouts, modals, forms) reused across admin pages.
 - `lib/auth.ts` — Basic Auth helper described above.
 - Note: `pages/AdminAmortization.tsx.backup` and `pages/AdminAmortization_old.tsx` are stale snapshots left in the tree, not active code — don't edit them, and don't assume they reflect current behavior.
+
+### Mapa rápido URL → Archivos (Frontend + Backend)
+
+Cuando el usuario mencione una URL o pantalla, **ir directamente al archivo listado** sin hacer barridos de directorios (`Get-ChildItem`) ni leer archivos enteros:
+
+| Ruta URL (`web` / `www`) | Página Frontend (`web/src/pages/`) | Componentes Clave (`web/src/components/`) | Ruta Backend (`src/routes/`) | Spec (`docs/specs/`) |
+|---|---|---|---|---|
+| `/pay` | `Pay.tsx` | — | `payments.ts`, `uploads.ts`, `noPay.ts` | `pagos.md` |
+| `/reports` | `Reports.tsx` | `PaymentApprovalModal.tsx`, `ResolveDaysModal.tsx`, `BankReconciliationModal.tsx` | `reports.ts`, `payments.ts` | `pagos.md` |
+| `/expenses` | `Expenses.tsx` | `ExpenseRenewalModal.tsx`, `ExpenseHeatmap.tsx` | `expenses.ts` | `gastos-fondo-mantenimiento.md` |
+| `/advances` | `AdminAdvances.tsx` | `AdvancePaymentModal.tsx` | `advances.ts` | `anticipos.md` |
+| `/profit` | `AdminProfit.tsx` | — | `profit.ts`, `ledger.ts`, `investments.ts` | `utilidades.md` |
+| `/amortization` | `AdminAmortization.tsx` | — | `leasing.ts` | `leasing.md` |
+| `/deposits` | `AdminDeposits.tsx` | `LiquidationModal.tsx`, `LiquidationDocModal.tsx` | `deposits.ts`, `liquidations.ts` | — |
+| `/collections` | `AdminCollections.tsx` | `CompanyLock.tsx`, `BillGeneratorModal.tsx` | `collections.ts`, `companies.ts` | `cobranza-collections.md` |
+| `/vehicles` | `AdminVehicles.tsx` | `VehicleDateField.tsx`, `GlobalMileageReport.tsx`, `GlobalOilReport.tsx` | `vehicles.ts` | `flota-referencia.md` |
+| `/drivers` | `AdminDrivers.tsx` | `DriverModal.tsx` | `drivers.ts` | `conductores.md` |
+| `/recruitment` | `AdminRecruitment.tsx` | `DriverApplicationForm.tsx` | `driverApplications.ts` | — |
+| `/inspections`, `/inspections/new` | `AdminInspections.tsx`, `NewInspection.tsx`, `PublicInspectionView.tsx` | — | `inspections.ts` | `inspecciones.md`, `inspecciones-dashboard.md` |
+| `/inventory` | `AdminInventory.tsx` | — | `inventory.ts` | — |
+| `/marketplace`, `/rent`, `/rent-your-car` | `AdminMarketplace.tsx`, `RentCatalog.tsx`, `RentYourCar.tsx` | `VehicleApplicationForm.tsx`, `VehicleModelCombobox.tsx` | `marketplace.ts`, `vehicleApplications.ts` | `marketplace.md`, `vehiculos-onboarding.md` |
+| `/reminders-log` | `RemindersLog.tsx` | `ReminderSubscriptionCard.tsx` | `reminders.ts` | `recordatorios.md` |
+| `/oracle` | `AdminOracle.tsx` | `FleetMap.tsx`, `TopDwellLocations.tsx` | `oracle.ts`, `fleetMap.ts` (`src/oraculo/*`) | — |
+| `/trips`, `/bid/:id` | `AdminTrips.tsx`, `BidTrip.tsx` | `TripBookingForm.tsx` | `trips.ts` | — |
+| `/audits` | `AdminAudits.tsx` | — | `audits.ts` | — |
+| `/` (Landing pública) | `Landing.tsx` (`landing_views/*`) | `IncomeSimulator.tsx`, `InvestmentVaki.tsx`, `MarketingSections.tsx` | `marketing.ts`, `pledges.ts` | `landing.md` |
+
+### Reglas de velocidad y precisión para Agentes IA
+1. **Cero exploración innecesaria**: Si el usuario da la ruta (ej. `/pay`) o el nombre del módulo, usa la tabla de arriba para ir directo al archivo y al spec correspondiente. No listes `src/` ni `web/src/`.
+2. **Búsqueda quirúrgica en archivos grandes**: Archivos como `Pay.tsx` (~2.000 líneas), `payments.ts` (~2.500 líneas) o `reports.ts` (~1.900 líneas) NO deben leerse de principio a fin en bloques de 800 líneas. Usa `Select-String -Path <archivo> -Pattern "<campo/endpoint>"` para obtener el número de línea exacto y luego `read_file` solo en el rango de ±40 líneas alrededor del objetivo.
+3. **Windows / PowerShell**: Ejecutar siempre `npm.cmd` (ej. `npm.cmd run build`) en lugar de `npm` para evitar bloqueos de `ExecutionPolicy` sobre `npm.ps1`.
 
 ### Database (Supabase/Postgres)
 Schema lives in `supabase/migrations/*.sql` (chronological, hand-written) plus baseline dumps in `docs/*.sql` (`Database.sql`, `Database_Updates.sql`). Key tables/domains: `payments` (driver payments incl. AI-assisted receipt classification), `expenses`/`expense_vehicles`/`expense_audit_log` (prorated multi-vehicle expenses with audit trail), `vehicle_ledger` (manual accounting adjustments feeding monthly profit), `vehicle_investments` (capital-recovery tracking), `operational_advances`/`operational_advance_schedule` (driver loans with auto-generated payment schedules), leasing/rent-to-own tables (`2026071400_leasing_schema.sql` and related migrations), `oracle_nodes`/BI views (GPS telemetry), `driver_liquidations`. The service-role Supabase client in `src/lib/supabase.ts` bypasses RLS — all authorization is therefore enforced at the API layer (`basicAuth`), not in the database.

@@ -1,7 +1,12 @@
 # Spec — Pagos diarios de conductores
 
 **Estado:** Vigente · **Última revisión:** 2026-10-17
-**Código principal:** `src/routes/payments.ts`, `src/routes/reports.ts` (aprobación), `src/lib/receiptClassification.ts`, `web/src/pages/Pay.tsx`, `web/src/pages/Reports.tsx`, `web/src/components/PaymentApprovalModal.tsx`, `src/lib/pendingDays.ts` + `web/src/components/ResolveDaysModal.tsx` (resolver días)
+**Código principal (mapa directo por flujo):**
+- **Formulario público (`/pay`)**: `web/src/pages/Pay.tsx` (estado del formulario y `onSubmit` alrededor de L870–L1380).
+- **Creación de pagos (`POST /payments`)**: `src/routes/payments.ts` (`handleBatchPayment` para lote multi-día, `r.post("/")` para pago individual; `GET /payments/batch-preview`, `POST /payments/pay-with-advance`).
+- **Aprobación y ajuste administrativo (`/reports`)**: `web/src/pages/Reports.tsx`, `web/src/components/PaymentApprovalModal.tsx`, `src/routes/reports.ts` (`/reports/payments/:id/approval-preview`, `approve`, `adjust-info`, `adjust`, `cross-expense`, `maintenance-check`, `mark-maintenance`).
+- **Resolver días en mora (`/reports`)**: `web/src/components/ResolveDaysModal.tsx`, `src/lib/pendingDays.ts`, `src/routes/reports.ts` (`/reports/plates/:plate/pending-days`, `resolve-days`).
+- **Antifraude / OCR y recargos**: `src/lib/receiptClassification.ts`, `src/lib/ocr.ts`, `src/lib/lateFee.ts`.
 **Relacionado:** `leasing.md` (cascada), `anticipos.md`
 
 ---
@@ -20,7 +25,7 @@ Cada día pagable el conductor paga una tarifa diaria por el vehículo. El pago 
 
 | Estado | Significado |
 |---|---|
-| `pending` | Registrado, pendiente de aprobación por un admin. Es el valor por defecto del formulario. |
+| `pending` | Registrado, pendiente de aprobación por un admin. En el formulario público (`/pay`) no se expone selector de estado y `POST /payments` siempre registra como `pending`. |
 | `confirmed` | Aprobado. Solo los confirmados se aplican al cronograma de leasing. |
 | `rejected` | Rechazado. No toca cronogramas. |
 
