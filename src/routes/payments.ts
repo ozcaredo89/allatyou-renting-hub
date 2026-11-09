@@ -975,8 +975,8 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
   }
 
   const upperPlate = plate.toUpperCase();
-  const allowedStatus = new Set(["pending", "confirmed", "rejected"]);
-  const safeStatus = allowedStatus.has(status) ? status : "pending";
+  // En el registro público (/pay) los pagos siempre entran como "pending" para pasar por la pantalla de confirmación.
+  const safeStatus = "pending" as "pending" | "confirmed" | "rejected";
   const instNo: number | null =
     installment_number == null || installment_number === "" ? null : Number(installment_number);
 
@@ -1454,8 +1454,8 @@ r.post("/", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "proof_url required (upload image first)" });
   }
 
-  const allowedStatus = new Set(["pending", "confirmed", "rejected"]);
-  const safeStatus = allowedStatus.has(status) ? status : "pending";
+  // En el registro público (/pay) los pagos siempre entran como "pending" para pasar por la pantalla de confirmación.
+  const safeStatus = "pending" as "pending" | "confirmed" | "rejected";
 
   const upperPlate = plate.toUpperCase();
 

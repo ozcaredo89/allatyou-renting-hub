@@ -20,7 +20,7 @@ Cada día pagable el conductor paga una tarifa diaria por el vehículo. El pago 
 
 | Estado | Significado |
 |---|---|
-| `pending` | Registrado, pendiente de aprobación por un admin. Es el valor por defecto del formulario. |
+| `pending` | Registrado, pendiente de aprobación por un admin. En el formulario público (`/pay`) no se expone selector de estado y `POST /payments` siempre registra como `pending`. |
 | `confirmed` | Aprobado. Solo los confirmados se aplican al cronograma de leasing. |
 | `rejected` | Rechazado. No toca cronogramas. |
 
