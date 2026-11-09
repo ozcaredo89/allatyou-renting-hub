@@ -66,3 +66,4 @@ Todos los mensajes de commit deben referenciar el ID del ticket para que GitHub 
 Al finalizar el desarrollo y verificar los criterios de aceptación:
 1. El Pull Request o commit de merge debe incluir `Closes #<id>` o `Resolves #<id>`.
 2. El issue en GitHub quedará automáticamente cerrado con su hilo histórico de commits y ramas vinculadas.
+3. **Merge inmediato a `main`:** Una vez verificado que compila sin errores, hacer merge del PR (`gh pr merge --merge --delete-branch`) y actualizar la copia local (`git checkout main && git pull`). No dejar el PR abierto salvo indicación expresa del usuario.

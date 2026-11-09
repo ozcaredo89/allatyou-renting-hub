@@ -17,7 +17,8 @@ Seguir estrictamente la política documentada en `docs/specs/flujo-git-tickets.m
 1. **1 Requerimiento = 1 Ticket en GitHub (#ID) = 1 Rama dedicada = 1 PR**. Nunca trabajar directamente en `main`.
 2. Crear la rama antes de tocar cualquier archivo: `git checkout -b feat/<id>-<slug>` o `fix/<id>-<slug>`.
 3. Commits con referencia al ticket: `feat(#<id>): <descripción>` o `fix(#<id>): <descripción>`.
-4. Abrir Pull Request usando la plantilla `.github/pull_request_template.md` (`Closes #<id>`) y verificar que compile backend y frontend (`npm run build` en root y `cd web && npm run build && npm run lint`).
+4. Abrir Pull Request usando la plantilla `.github/pull_request_template.md` (`Closes #<id>`) y verificar que compile backend y frontend (`npm.cmd run build` en root y `cd web && npm.cmd run build`).
+5. Hacer merge del Pull Request a `main` (`gh pr merge --merge --delete-branch`) y volver a `main` actualizado (`git checkout main && git pull`) para que el cambio se despliegue y el ticket quede cerrado automáticamente. No dejar PRs abiertos salvo que el usuario lo pida explícitamente.
 
 ## Commands
 
