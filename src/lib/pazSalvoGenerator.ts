@@ -53,6 +53,15 @@ function formatFormalDate(dateStr?: string): string {
   return `${String(d.getDate()).padStart(2, "0")} de ${meses[d.getMonth()]} del ${d.getFullYear()}`;
 }
 
+/** Suma N días calendario a una fecha ISO/YYYY-MM-DD y retorna YYYY-MM-DD */
+function addCalendarDaysYmd(dateStr: string, days: number): string {
+  const baseYmd = dateStr.slice(0, 10);
+  const d = new Date(`${baseYmd}T12:00:00Z`);
+  if (isNaN(d.getTime())) return baseYmd;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 export async function generatePazSalvo(params: PazSalvoParams): Promise<PazSalvoResult> {
   const { liquidationId } = params;
 
@@ -116,10 +125,14 @@ export async function generatePazSalvo(params: PazSalvoParams): Promise<PazSalvo
         .join("\n")
     : '<div class="descuento-item"><span>Sin descuentos aplicados</span><span>$0</span></div>';
 
-  // 6. Preparar fechas
+  // 6. Preparar fechas (la fecha de devolución por defecto es +20 días calendario para validación SIMIT)
   const todayStr = new Date().toISOString().slice(0, 10);
+  const baseRetiroYmd = String(liq.liquidation_date || liq.created_at || todayStr).slice(0, 10);
+  const defaultDueYmd = liq.payment_due_date
+    ? String(liq.payment_due_date).slice(0, 10)
+    : addCalendarDaysYmd(baseRetiroYmd, 20);
   const fechaDoc = params.fecha_documento || formatFormalDate(liq.liquidation_date || todayStr);
-  const fechaDevolucion = params.fecha_devolucion || formatFormalDate(liq.liquidation_date || todayStr);
+  const fechaDevolucion = params.fecha_devolucion || formatFormalDate(defaultDueYmd);
   const fechaInicioAhorro = params.fecha_inicio_ahorro || "la fecha de inicio de contrato";
   const fechaFinAhorro = params.fecha_fin_ahorro || formatFormalDate(liq.liquidation_date || todayStr);
 
