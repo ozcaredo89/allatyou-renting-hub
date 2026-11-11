@@ -2,14 +2,21 @@ import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { generatePazSalvo } from "../lib/pazSalvoGenerator";
 import { getSignedDocUrl } from "../lib/documentRenderer";
-import { addCalendarDays, LIQUIDATION_SIMIT_DAYS } from "../lib/fleetReminders";
+import { addCalendarDays, bogotaYmd, LIQUIDATION_SIMIT_DAYS } from "../lib/fleetReminders";
 
 const r = Router();
 
+/** Fecha YYYY-MM-DD en hora Colombia; hoy (Colombia) si el valor no es una fecha válida */
 function toYmd(value: unknown): string {
-  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(value || ""));
-  if (m && m[1]) return m[1];
-  return new Date().toISOString().slice(0, 10);
+  return bogotaYmd(value) || bogotaYmd(new Date().toISOString())!;
+}
+
+/**
+ * Fecha recibida del frontend → timestamp ISO. Un YYYY-MM-DD se guarda al mediodía de Colombia
+ * para que nunca cambie de día al convertir de zona horaria.
+ */
+function toNoonBogotaIso(value: unknown): string {
+  return new Date(`${toYmd(value)}T12:00:00-05:00`).toISOString();
 }
 
 function enrichLiquidationRecord(liq: any) {
@@ -19,24 +26,15 @@ function enrichLiquidationRecord(liq: any) {
   const hasPazSalvoAudit = auditLog.some((a: any) => a?.action === "GENERATE_PAZ_SALVO");
 
   const retireYmd = toYmd(liq.liquidation_date || liq.created_at);
-  const paymentDueDate =
-    (liq.payment_due_date ? toYmd(liq.payment_due_date) : null) ||
-    (meta.payment_due_date ? toYmd(meta.payment_due_date) : null) ||
-    addCalendarDays(retireYmd, LIQUIDATION_SIMIT_DAYS);
-
-  const paymentProofUrl = liq.payment_proof_url || meta.payment_proof_url || null;
-  const paidAt = liq.paid_at || meta.paid_at || null;
-  const paymentNotes = liq.payment_notes ?? meta.payment_notes ?? null;
-  const hasPazSalvo = Boolean(liq.pdf_s3_key || meta.pdf_s3_key || hasPazSalvoAudit);
 
   return {
     ...liq,
     retire_date: retireYmd,
-    payment_due_date: paymentDueDate,
-    payment_proof_url: paymentProofUrl,
-    paid_at: paidAt,
-    payment_notes: paymentNotes,
-    has_paz_salvo: hasPazSalvo,
+    payment_due_date: liq.payment_due_date
+      ? toYmd(liq.payment_due_date)
+      : addCalendarDays(retireYmd, LIQUIDATION_SIMIT_DAYS),
+    is_paid: Boolean(liq.paid_at || liq.payment_proof_url),
+    has_paz_salvo: Boolean(liq.pdf_s3_key || meta.pdf_s3_key || hasPazSalvoAudit),
   };
 }
 
@@ -323,13 +321,12 @@ r.post("/", async (req: Request, res: Response) => {
   } = req.body;
 
   try {
-    const liqDateIso = liquidation_date ? new Date(liquidation_date).toISOString() : new Date().toISOString();
+    const liqDateIso = toNoonBogotaIso(liquidation_date || new Date().toISOString());
     const retireYmd = toYmd(liqDateIso);
     const dueYmd = payment_due_date ? toYmd(payment_due_date) : addCalendarDays(retireYmd, LIQUIDATION_SIMIT_DAYS);
 
-    // 1. Insert Liquidation (con respaldo en document_metadata por si la migración aún no corre)
-    let liquidation: any = null;
-    const { data: liqWithCols, error: liqErr } = await supabase
+    // 1. Insert Liquidation
+    const { data: liquidation, error: liqErr } = await supabase
       .from("liquidations")
       .insert({
         driver_id,
@@ -341,35 +338,12 @@ r.post("/", async (req: Request, res: Response) => {
         final_balance,
         items_detail,
         created_by,
-        document_metadata: { payment_due_date: dueYmd },
         audit_log: []
       })
       .select()
       .single();
 
-    if (liqErr) {
-      // Fallback si la columna payment_due_date aún no existe en remoto
-      const { data: liqFallback, error: fallbackErr } = await supabase
-        .from("liquidations")
-        .insert({
-          driver_id,
-          plate,
-          liquidation_date: liqDateIso,
-          total_incomes,
-          total_deductions,
-          final_balance,
-          items_detail,
-          created_by,
-          document_metadata: { payment_due_date: dueYmd },
-          audit_log: []
-        })
-        .select()
-        .single();
-      if (fallbackErr) throw fallbackErr;
-      liquidation = liqFallback;
-    } else {
-      liquidation = liqWithCols;
-    }
+    if (liqErr) throw liqErr;
 
     // 2. Adjust Deposits (Negative balance to leave overall at $0)
     if (Number(total_incomes) > 0) {
@@ -472,18 +446,12 @@ r.put("/:id", async (req: Request, res: Response) => {
     };
 
     const newAuditLog = [...(oldLiq.audit_log || []), auditEntry];
-    const nextMeta = {
-      ...(oldLiq.document_metadata || {}),
-      ...(payment_due_date ? { payment_due_date: toYmd(payment_due_date) } : {}),
-    };
-
     const updatePayload: any = {
       total_incomes,
       total_deductions,
       final_balance,
       items_detail,
       edited_by,
-      document_metadata: nextMeta,
       audit_log: newAuditLog,
       updated_at: new Date().toISOString()
     };
@@ -491,27 +459,14 @@ r.put("/:id", async (req: Request, res: Response) => {
       updatePayload.payment_due_date = toYmd(payment_due_date);
     }
 
-    let newLiq: any = null;
-    const { data: updatedWithCols, error } = await supabase
+    const { data: newLiq, error } = await supabase
       .from("liquidations")
       .update(updatePayload)
       .eq("id", id)
       .select()
       .single();
 
-    if (error) {
-      delete updatePayload.payment_due_date;
-      const { data: updatedFallback, error: fallbackErr } = await supabase
-        .from("liquidations")
-        .update(updatePayload)
-        .eq("id", id)
-        .select()
-        .single();
-      if (fallbackErr) throw fallbackErr;
-      newLiq = updatedFallback;
-    } else {
-      newLiq = updatedWithCols;
-    }
+    if (error) throw error;
 
     // Adjust deposits difference
     const incomeDiff = Number(oldLiq.total_incomes) - Number(total_incomes);
@@ -585,14 +540,12 @@ r.get("/:id/document-urls", async (req: Request, res: Response) => {
   }
 });
 
-// 6. POST register/update Comprobante de Pago of liquidation
+// 6. POST registrar pago de la liquidación (comprobante) o marcarla como saldada.
+//    El comprobante es obligatorio si hay saldo a devolver (final_balance > 0); con saldo ≤ 0 se puede
+//    marcar como pagada/saldada sin comprobante (no hay transferencia). Al quedar paid_at, deja de alertar.
 r.post("/:id/payment-proof", async (req: Request, res: Response) => {
   const { id } = req.params;
   const { payment_proof_url, paid_at, payment_notes, recorded_by } = req.body || {};
-
-  if (!payment_proof_url) {
-    return res.status(400).json({ error: "Se requiere la URL del comprobante de pago (payment_proof_url)" });
-  }
 
   try {
     const { data: oldLiq, error: findErr } = await supabase
@@ -605,56 +558,37 @@ r.post("/:id/payment-proof", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Liquidación no encontrada" });
     }
 
-    const paidAtIso = paid_at ? new Date(paid_at).toISOString() : new Date().toISOString();
+    const proofUrl = payment_proof_url || oldLiq.payment_proof_url || null;
+    if (!proofUrl && Number(oldLiq.final_balance || 0) > 0) {
+      return res.status(400).json({
+        error: "Hay saldo a devolver: se requiere el comprobante de pago (payment_proof_url)",
+      });
+    }
+
+    const paidAtIso = toNoonBogotaIso(paid_at || new Date().toISOString());
     const auditEntry = {
-      action: "REGISTER_PAYMENT_PROOF",
+      action: proofUrl ? "REGISTER_PAYMENT_PROOF" : "MARK_SETTLED",
       timestamp: new Date().toISOString(),
       recorded_by: recorded_by || "Admin",
-      payment_proof_url,
+      payment_proof_url: proofUrl,
       paid_at: paidAtIso,
       payment_notes: payment_notes || null,
     };
 
-    const newAuditLog = [...(oldLiq.audit_log || []), auditEntry];
-    const nextMeta = {
-      ...(oldLiq.document_metadata || {}),
-      payment_proof_url,
-      paid_at: paidAtIso,
-      payment_notes: payment_notes || null,
-    };
-
-    let updated: any = null;
-    const { data: upCols, error: upErr } = await supabase
+    const { data: updated, error: upErr } = await supabase
       .from("liquidations")
       .update({
-        payment_proof_url,
+        payment_proof_url: proofUrl,
         paid_at: paidAtIso,
         payment_notes: payment_notes || null,
-        document_metadata: nextMeta,
-        audit_log: newAuditLog,
+        audit_log: [...(oldLiq.audit_log || []), auditEntry],
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
       .select()
       .single();
 
-    if (upErr) {
-      // Fallback en caso de que las columnas dedicadas aún no estén aplicadas en DB
-      const { data: upFallback, error: fbErr } = await supabase
-        .from("liquidations")
-        .update({
-          document_metadata: nextMeta,
-          audit_log: newAuditLog,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", id)
-        .select()
-        .single();
-      if (fbErr) throw fbErr;
-      updated = upFallback;
-    } else {
-      updated = upCols;
-    }
+    if (upErr) throw upErr;
 
     return res.json(enrichLiquidationRecord(updated));
   } catch (err: any) {

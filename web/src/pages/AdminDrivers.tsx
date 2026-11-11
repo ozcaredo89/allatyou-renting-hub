@@ -217,7 +217,7 @@ export default function AdminDrivers() {
   };
 
   // ── Cálculos del Calendario ──────────────────────────────────────
-  const todayYmd = new Date().toISOString().slice(0, 10);
+  const todayYmd = new Date().toLocaleDateString("en-CA");
 
   const urgentUnpaidCount = useMemo(() => {
     return calendarItems.filter((it) => {
@@ -843,7 +843,7 @@ export default function AdminDrivers() {
                               {it.is_paid ? (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700">
                                   <CheckCircle2 className="w-3 h-3" /> Pagado{" "}
-                                  {it.paid_at ? `(${String(it.paid_at).slice(0, 10)})` : ""}
+                                  {it.paid_at ? `(${new Date(it.paid_at).toLocaleDateString("en-CA")})` : ""}
                                 </span>
                               ) : daysLeft < 0 ? (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-600">

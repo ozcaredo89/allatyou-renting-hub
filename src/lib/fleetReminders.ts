@@ -51,10 +51,24 @@ function getRecipients(): string[] {
     .filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
 }
 
-function ymd(value: unknown): string | null {
-  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(value || ""));
-  return m ? m[1]! : null;
+/**
+ * Fecha YYYY-MM-DD en hora Colombia (America/Bogota, UTC-5 sin horario de verano).
+ * Las columnas `date` (YYYY-MM-DD puro) se devuelven tal cual; los timestamps se convierten
+ * a la fecha local, para no correr un día los registros hechos después de las 7 pm.
+ */
+export function bogotaYmd(value: unknown): string | null {
+  const s = String(value || "").trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) {
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+    return m ? m[1]! : null;
+  }
+  return new Date(d.getTime() - 5 * 3600000).toISOString().slice(0, 10);
 }
+
+const ymd = bogotaYmd;
 
 /** Suma N días calendario a una fecha YYYY-MM-DD */
 export function addCalendarDays(baseYmd: string, days: number): string {
@@ -86,22 +100,16 @@ function describeLiquidation(it: LiquidationReminderItem): string {
  * Obtiene las liquidaciones pendientes de pago que están dentro de la ventana de recordatorio (<= 3 días para cumplir 20 días SIMIT).
  */
 export async function getPendingLiquidationReminders(todayStr: string): Promise<LiquidationReminderItem[]> {
-  const { data: liqs, error: liqErr } = await supabase
+  // Solo las que aún NO están marcadas como pagadas/saldadas (paid_at) ni tienen comprobante
+  const { data: unpaid, error: liqErr } = await supabase
     .from("liquidations")
-    .select("*")
+    .select("id, driver_id, plate, liquidation_date, created_at, payment_due_date, final_balance")
+    .is("paid_at", null)
+    .is("payment_proof_url", null)
     .order("liquidation_date", { ascending: true });
 
-  if (liqErr || !liqs || liqs.length === 0) return [];
-
-  // Filtrar las que aún NO tienen comprobante de pago ni fecha de pago registrada
-  const unpaid = liqs.filter((l: any) => {
-    const meta = l.document_metadata || {};
-    const proofUrl = l.payment_proof_url || meta.payment_proof_url || null;
-    const paidAt = l.paid_at || meta.paid_at || null;
-    return !proofUrl && !paidAt;
-  });
-
-  if (unpaid.length === 0) return [];
+  if (liqErr) throw liqErr;
+  if (!unpaid || unpaid.length === 0) return [];
 
   const driverIds = Array.from(new Set(unpaid.map((l: any) => Number(l.driver_id)).filter(Boolean)));
   const driverMap = new Map<number, string>();
@@ -119,11 +127,7 @@ export async function getPendingLiquidationReminders(todayStr: string): Promise<
   for (const l of unpaid) {
     const retireDate = ymd(l.liquidation_date || l.created_at);
     if (!retireDate) continue;
-    const meta = l.document_metadata || {};
-    const dueDate =
-      ymd(l.payment_due_date) ||
-      ymd(meta.payment_due_date) ||
-      addCalendarDays(retireDate, LIQUIDATION_SIMIT_DAYS);
+    const dueDate = ymd(l.payment_due_date) || addCalendarDays(retireDate, LIQUIDATION_SIMIT_DAYS);
 
     const daysLeft = diffDays(todayStr, dueDate);
     if (daysLeft <= LIQUIDATION_DAYS_BEFORE_DUE) {
@@ -199,7 +203,11 @@ export async function runFleetReminders(
 
   const line = (i: FleetItem) => `• ${i.plate} — ${i.kind}: ${describe(i)}`;
   const liqLine = (l: LiquidationReminderItem) =>
-    `• ${l.driverName} (${l.plate}) — Retiro: ${l.retireDate} | Pago liquidación (20 días SIMIT): ${describeLiquidation(l)} | Saldo: $${l.finalBalance.toLocaleString("es-CO")}`;
+    `• ${l.driverName} (${l.plate}) — Retiro: ${l.retireDate} | Pago liquidación (20 días SIMIT): ${describeLiquidation(l)} | ${
+      l.finalBalance > 0
+        ? `Saldo a devolver: $${l.finalBalance.toLocaleString("es-CO")}`
+        : `Sin saldo a devolver ($${l.finalBalance.toLocaleString("es-CO")}): marcar como saldada`
+    }`;
 
   const sections: string[] = [`Resumen diario de alertas operativas AllAtYou (${todayStr}):\n`];
 

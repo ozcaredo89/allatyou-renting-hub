@@ -56,7 +56,8 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
   const [deductions, setDeductions] = useState<Item[]>([]);
   const [markInstallmentsPaid, setMarkInstallmentsPaid] = useState(false);
 
-  const todayYmd = new Date().toISOString().slice(0, 10);
+  // Fecha local del navegador (Colombia); toISOString daría el día siguiente después de las 7 pm
+  const todayYmd = new Date().toLocaleDateString("en-CA");
   const [retireDate, setRetireDate] = useState<string>(todayYmd);
   const [paymentDueDate, setPaymentDueDate] = useState<string>(addDaysYmd(todayYmd, 20));
 
@@ -66,6 +67,7 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
   const [loadingDocs, setLoadingDocs] = useState(false);
 
   const [paymentProofUrl, setPaymentProofUrl] = useState<string | null>(null);
+  const [isPaid, setIsPaid] = useState(false);
   const [paidAt, setPaidAt] = useState<string>(todayYmd);
   const [paymentNotes, setPaymentNotes] = useState<string>("");
   const [uploadingProof, setUploadingProof] = useState(false);
@@ -124,7 +126,8 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
 
         setHasPazSalvo(Boolean(liq.has_paz_salvo));
         setPaymentProofUrl(liq.payment_proof_url || null);
-        setPaidAt(liq.paid_at ? String(liq.paid_at).slice(0, 10) : todayYmd);
+        setIsPaid(Boolean(liq.is_paid));
+        setPaidAt(liq.paid_at ? new Date(liq.paid_at).toLocaleDateString("en-CA") : todayYmd);
         setPaymentNotes(liq.payment_notes || "");
 
         if (liq.has_paz_salvo) {
@@ -138,11 +141,12 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
         setHasPazSalvo(false);
         setDocUrls(null);
         setPaymentProofUrl(null);
+        setIsPaid(false);
         setPaidAt(todayYmd);
         setPaymentNotes("");
 
         const rDate = json.driver?.terminated_at
-          ? String(json.driver.terminated_at).slice(0, 10)
+          ? new Date(json.driver.terminated_at).toLocaleDateString("en-CA")
           : todayYmd;
         setRetireDate(rDate);
         setPaymentDueDate(addDaysYmd(rDate, 20));
@@ -306,6 +310,7 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
       const uploadData = await uploadRes.json();
       const uploadedUrl = uploadData.url;
       setPaymentProofUrl(uploadedUrl);
+      setIsPaid(true);
 
       // Guardar inmediatamente en la liquidación
       setSavingProof(true);
@@ -317,7 +322,7 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
         },
         body: JSON.stringify({
           payment_proof_url: uploadedUrl,
-          paid_at: `${paidAt}T12:00:00.000Z`,
+          paid_at: paidAt,
           payment_notes: paymentNotes,
           recorded_by: "Admin",
         }),
@@ -338,8 +343,37 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
     }
   };
 
+  // Con saldo ≤ 0 no hay transferencia: se marca como pagada/saldada sin comprobante y deja de alertar
+  const handleMarkSettled = async () => {
+    if (!liquidationId) return;
+    if (!confirm("¿Marcar esta liquidación como pagada/saldada sin comprobante? Dejará de generar alertas.")) return;
+    setSavingProof(true);
+    try {
+      const auth = ensureBasicAuth();
+      const res = await fetch(`${API}/liquidations/${liquidationId}/payment-proof`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: auth },
+        body: JSON.stringify({
+          paid_at: paidAt,
+          payment_notes: paymentNotes || "Saldada sin devolución (saldo ≤ 0)",
+          recorded_by: "Admin",
+        }),
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "No se pudo marcar como saldada");
+      }
+      setIsPaid(true);
+      onSuccess();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSavingProof(false);
+    }
+  };
+
   const handleSaveProofMetadata = async () => {
-    if (!liquidationId || !paymentProofUrl) return;
+    if (!liquidationId || !isPaid) return;
     setSavingProof(true);
     try {
       const auth = ensureBasicAuth();
@@ -351,7 +385,7 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
         },
         body: JSON.stringify({
           payment_proof_url: paymentProofUrl,
-          paid_at: `${paidAt}T12:00:00.000Z`,
+          paid_at: paidAt,
           payment_notes: paymentNotes,
           recorded_by: "Admin",
         }),
@@ -369,7 +403,6 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
   if (!isOpen) return null;
 
   const daysUntilPayment = diffDaysYmd(todayYmd, paymentDueDate);
-  const isPaid = Boolean(paymentProofUrl);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
@@ -544,9 +577,9 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
                           <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                           2. Comprobante de Pago
                         </span>
-                        {paymentProofUrl ? (
+                        {isPaid ? (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">
-                            Pagado ({paidAt})
+                            {paymentProofUrl ? "Pagado" : "Saldada"} ({paidAt})
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">
@@ -614,7 +647,18 @@ export function LiquidationModal({ isOpen, onClose, driverId, onSuccess }: Props
                           />
                         </label>
 
-                        {paymentProofUrl && (
+                        {!isPaid && finalBalance <= 0 && (
+                          <button
+                            type="button"
+                            onClick={handleMarkSettled}
+                            disabled={savingProof}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Marcar como saldada
+                          </button>
+                        )}
+
+                        {isPaid && (
                           <button
                             type="button"
                             onClick={handleSaveProofMetadata}
