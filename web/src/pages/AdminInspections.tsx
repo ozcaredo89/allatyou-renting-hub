@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Eye, X, User, FileText, Truck, Edit, Save, History, Trash2, Gauge, Fuel, Share2, Timer, Car, AlertTriangle, PlayCircle } from "lucide-react";
+import { Eye, X, User, FileText, Truck, Edit, Save, History, Trash2, Gauge, Fuel, Share2, Timer, Car, AlertTriangle, PlayCircle, Rotate3d } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
+import VehicleDamage3DMapper, { type VehicleDamagePoint } from "../components/VehicleDamage3DMapper";
 import { formatDuration } from "../utils/formatDuration";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
@@ -46,6 +47,7 @@ type Inspection = {
     mileage?: number | null;
     fuel_level?: string | null;
     photos: Record<string, string>;
+    damages?: VehicleDamagePoint[];
     comments: string;
     inspector_name: string;
     status?: "draft" | "completed";
@@ -126,7 +128,7 @@ export default function AdminInspections() {
     // --- HANDLERS DE EDICIÓN ---
 
     const handleEditClick = () => {
-        setEditForm({ ...selected }); // Copiar datos al form temporal
+        setEditForm({ ...selected, damages: [...(selected?.damages || [])] }); // Copiar datos al form temporal
         setIsEditing(true);
     };
 
@@ -182,7 +184,8 @@ export default function AdminInspections() {
     const handleShareContinue = (insp: Inspection) => {
         const url = continueUrlOf(insp);
         if (!url) return;
-        const text = `🛠️ *INSPECCIÓN EN PROGRESO — CONTINÚALA*\n🚗 *Vehículo:* ${insp.vehicle_plate}\n👤 *Último avance:* ${insp.inspector_name || "N/A"}\n⏱️ *Abierta hace:* ${formatDuration(openSecs(insp))}\n📸 *Fotos tomadas:* ${Object.keys(insp.photos || {}).length}\n\n👉 *Continúa y finaliza aquí:* ${url}`;
+        const dmgCount = insp.damages?.length || 0;
+        const text = `🛠️ *INSPECCIÓN EN PROGRESO — CONTINÚALA*\n🚗 *Vehículo:* ${insp.vehicle_plate}\n👤 *Último avance:* ${insp.inspector_name || "N/A"}\n⏱️ *Abierta hace:* ${formatDuration(openSecs(insp))}\n📸 *Fotos tomadas:* ${Object.keys(insp.photos || {}).length}\n${dmgCount > 0 ? `⚠️ *Daños marcados en 3D:* ${dmgCount}\n` : ""}\n👉 *Continúa y finaliza aquí:* ${url}`;
         window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
     };
 
@@ -192,8 +195,9 @@ export default function AdminInspections() {
         const kmText = insp.mileage ? `${Number(insp.mileage).toLocaleString("es-CO")} km` : "No registrado";
         const fuelText = insp.fuel_level ? insp.fuel_level : "No registrado";
         const typeLabel = insp.type === "entrega" ? "Entrega" : insp.type === "recepcion" ? "Recepción" : "Control General";
+        const dmgCount = insp.damages?.length || 0;
 
-        const text = `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n🚗 *Vehículo:* ${insp.vehicle_plate}\n📅 *Fecha:* ${formatDate(insp.created_at)}\n🔍 *Tipo:* ${typeLabel}\n👤 *Inspector:* ${insp.inspector_name || "N/A"}\n🛣️ *Kilometraje:* ${kmText}\n⛽ *Combustible:* ${fuelText}\n🚦 *Prueba de ruta:* ${insp.road_test ? "Sí" : insp.road_test === false ? "No" : "No registrado"}\n${insp.duration_seconds ? `⏱️ *Duración de la revisión:* ${formatDuration(insp.duration_seconds)}\n` : ""}\n📸 *Ver reporte y fotos:* ${viewUrl}`;
+        const text = `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n🚗 *Vehículo:* ${insp.vehicle_plate}\n📅 *Fecha:* ${formatDate(insp.created_at)}\n🔍 *Tipo:* ${typeLabel}\n👤 *Inspector:* ${insp.inspector_name || "N/A"}\n🛣️ *Kilometraje:* ${kmText}\n⛽ *Combustible:* ${fuelText}\n🚦 *Prueba de ruta:* ${insp.road_test ? "Sí" : insp.road_test === false ? "No" : "No registrado"}\n${dmgCount > 0 ? `⚠️ *Daños marcados en 3D:* ${dmgCount}\n` : ""}${insp.duration_seconds ? `⏱️ *Duración de la revisión:* ${formatDuration(insp.duration_seconds)}\n` : ""}\n📸 *Ver reporte y fotos:* ${viewUrl}`;
 
         const cleanPhone = (insp.driver?.phone || "").replace(/\D/g, "");
         const waUrl = cleanPhone
@@ -231,7 +235,7 @@ export default function AdminInspections() {
                 <div className="flex justify-between items-center">
                     <div>
                         <h1 className="text-2xl font-bold text-slate-900">Auditoría de Inspecciones</h1>
-                        <p className="text-slate-500 text-sm">Registro histórico de revisiones de flota, odómetro y estado de combustible</p>
+                        <p className="text-slate-500 text-sm">Registro histórico de revisiones de flota, croquis 3D de daños, odómetro y estado de combustible</p>
                     </div>
                     <div className="flex items-center gap-4">
                         <label className="flex items-center gap-1.5 text-sm text-slate-600 font-semibold cursor-pointer">
@@ -286,6 +290,7 @@ export default function AdminInspections() {
                                     <th className="px-6 py-4">Tipo</th>
                                     <th className="px-6 py-4">Kilometraje</th>
                                     <th className="px-6 py-4">Combustible</th>
+                                    <th className="px-6 py-4">Daños 3D</th>
                                     <th className="px-6 py-4">Prueba ruta</th>
                                     <th className="px-6 py-4">Duración</th>
                                     <th className="px-6 py-4">Inspector</th>
@@ -294,67 +299,79 @@ export default function AdminInspections() {
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {loading ? (
-                                    <tr><td colSpan={11} className="p-8 text-center text-slate-400">Cargando...</td></tr>
+                                    <tr><td colSpan={12} className="p-8 text-center text-slate-400">Cargando...</td></tr>
                                 ) : visibleInspections.length === 0 ? (
-                                    <tr><td colSpan={11} className="p-8 text-center text-slate-400">No hay registros aún.</td></tr>
+                                    <tr><td colSpan={12} className="p-8 text-center text-slate-400">No hay registros aún.</td></tr>
                                 ) : (
-                                    visibleInspections.map(i => (
-                                        <tr key={i.id} className={`transition-colors ${i.status === "draft" ? "bg-amber-50/60 hover:bg-amber-50" : "hover:bg-slate-50"}`}>
-                                            <td className="px-6 py-4 font-mono text-slate-600 whitespace-nowrap">{formatDate(i.created_at)}</td>
-                                            <td className="px-6 py-4">
-                                                {i.status === "draft" ? (
-                                                    <span className="px-2 py-1 rounded-full text-[10px] uppercase font-black bg-amber-100 text-amber-800 border border-amber-300 whitespace-nowrap">Abierta</span>
-                                                ) : (
-                                                    <span className="px-2 py-1 rounded-full text-[10px] uppercase font-bold bg-emerald-50 text-emerald-700 whitespace-nowrap">Cerrada</span>
-                                                )}
-                                            </td>
-                                            <td className="px-6 py-4 font-black">{i.vehicle_plate}</td>
-                                            <td className="px-6 py-4 text-slate-600">{i.driver?.full_name || "N/A"}</td>
-                                            <td className="px-6 py-4"><TypeBadge type={i.type} /></td>
-                                            <td className="px-6 py-4 font-mono font-bold text-slate-700">
-                                                {i.mileage ? `${Number(i.mileage).toLocaleString("es-CO")} km` : "-"}
-                                            </td>
-                                            <td className="px-6 py-4"><FuelBadge level={i.fuel_level} /></td>
-                                            <td className="px-6 py-4 text-xs font-bold text-slate-600">
-                                                {i.road_test === true ? "Sí" : i.road_test === false ? "No" : "-"}
-                                            </td>
-                                            <td className="px-6 py-4 font-mono text-xs text-slate-600 whitespace-nowrap">
-                                                {i.status === "draft"
-                                                    ? <span className="text-amber-700">{formatDuration(openSecs(i))} (abierta)</span>
-                                                    : i.duration_seconds != null ? formatDuration(i.duration_seconds) : "-"}
-                                            </td>
-                                            <td className="px-6 py-4 text-slate-500 text-xs uppercase">{i.inspector_name || "-"}</td>
-                                            <td className="px-6 py-4 text-right">
-                                                <div className="flex items-center justify-end gap-1">
-                                                    {i.status === "draft" && (
-                                                        <a
-                                                            href={continueUrlOf(i)}
-                                                            target="_blank"
-                                                            rel="noreferrer"
-                                                            className="text-amber-700 hover:bg-amber-100 p-2 rounded-full transition-colors"
-                                                            title="Continuar inspección"
-                                                        >
-                                                            <PlayCircle className="w-4 h-4" />
-                                                        </a>
+                                    visibleInspections.map(i => {
+                                        const dmgCount = i.damages?.length || 0;
+                                        return (
+                                            <tr key={i.id} className={`transition-colors ${i.status === "draft" ? "bg-amber-50/60 hover:bg-amber-50" : "hover:bg-slate-50"}`}>
+                                                <td className="px-6 py-4 font-mono text-slate-600 whitespace-nowrap">{formatDate(i.created_at)}</td>
+                                                <td className="px-6 py-4">
+                                                    {i.status === "draft" ? (
+                                                        <span className="px-2 py-1 rounded-full text-[10px] uppercase font-black bg-amber-100 text-amber-800 border border-amber-300 whitespace-nowrap">Abierta</span>
+                                                    ) : (
+                                                        <span className="px-2 py-1 rounded-full text-[10px] uppercase font-bold bg-emerald-50 text-emerald-700 whitespace-nowrap">Cerrada</span>
                                                     )}
-                                                    <button
-                                                        onClick={() => handleShareWhatsApp(i)}
-                                                        className="text-emerald-600 hover:bg-emerald-50 p-2 rounded-full transition-colors"
-                                                        title="Compartir por WhatsApp"
-                                                    >
-                                                        <Share2 className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => { setSelected(i); setIsEditing(false); setShowLogs(false); }}
-                                                        className="text-slate-600 hover:bg-slate-100 p-2 rounded-full transition-colors"
-                                                        title="Ver Detalle"
-                                                    >
-                                                        <Eye className="w-4 h-4" />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))
+                                                </td>
+                                                <td className="px-6 py-4 font-black">{i.vehicle_plate}</td>
+                                                <td className="px-6 py-4 text-slate-600">{i.driver?.full_name || "N/A"}</td>
+                                                <td className="px-6 py-4"><TypeBadge type={i.type} /></td>
+                                                <td className="px-6 py-4 font-mono font-bold text-slate-700">
+                                                    {i.mileage ? `${Number(i.mileage).toLocaleString("es-CO")} km` : "-"}
+                                                </td>
+                                                <td className="px-6 py-4"><FuelBadge level={i.fuel_level} /></td>
+                                                <td className="px-6 py-4">
+                                                    {dmgCount > 0 ? (
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200 whitespace-nowrap">
+                                                            <Rotate3d className="w-3 h-3" /> {dmgCount}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-slate-400 text-xs">0</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-6 py-4 text-xs font-bold text-slate-600">
+                                                    {i.road_test === true ? "Sí" : i.road_test === false ? "No" : "-"}
+                                                </td>
+                                                <td className="px-6 py-4 font-mono text-xs text-slate-600 whitespace-nowrap">
+                                                    {i.status === "draft"
+                                                        ? <span className="text-amber-700">{formatDuration(openSecs(i))} (abierta)</span>
+                                                        : i.duration_seconds != null ? formatDuration(i.duration_seconds) : "-"}
+                                                </td>
+                                                <td className="px-6 py-4 text-slate-500 text-xs uppercase">{i.inspector_name || "-"}</td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <div className="flex items-center justify-end gap-1">
+                                                        {i.status === "draft" && (
+                                                            <a
+                                                                href={continueUrlOf(i)}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="text-amber-700 hover:bg-amber-100 p-2 rounded-full transition-colors"
+                                                                title="Continuar inspección"
+                                                            >
+                                                                <PlayCircle className="w-4 h-4" />
+                                                            </a>
+                                                        )}
+                                                        <button
+                                                            onClick={() => handleShareWhatsApp(i)}
+                                                            className="text-emerald-600 hover:bg-emerald-50 p-2 rounded-full transition-colors"
+                                                            title="Compartir por WhatsApp"
+                                                        >
+                                                            <Share2 className="w-4 h-4" />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => { setSelected(i); setIsEditing(false); setShowLogs(false); }}
+                                                            className="text-slate-600 hover:bg-slate-100 p-2 rounded-full transition-colors"
+                                                            title="Ver Detalle"
+                                                        >
+                                                            <Eye className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
                                 )}
                             </tbody>
                         </table>
@@ -577,6 +594,18 @@ export default function AdminInspections() {
                                 </div>
                             </div>
 
+                            {/* CROQUIS 3D 360° DE DAÑOS */}
+                            <VehicleDamage3DMapper
+                                value={isEditing ? (editForm.damages || []) : (selected.damages || [])}
+                                onChange={isEditing ? (next) => setEditForm({ ...editForm, damages: next }) : undefined}
+                                readOnly={!isEditing}
+                                vehiclePlate={selected.vehicle_plate}
+                                inspectorName="Admin"
+                                onViewPhoto={(url, title) =>
+                                    setViewingImages({ urls: [{ url, title }], startingIndex: 0 })
+                                }
+                            />
+
                             {/* REPORTE ESCRITO */}
                             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                                 <div className="flex items-center gap-2 mb-3 text-emerald-700">
@@ -602,42 +631,44 @@ export default function AdminInspections() {
                                     <h3 className="font-bold text-slate-700 uppercase text-xs tracking-wider">Evidencia Fotográfica</h3>
                                     {isEditing && (
                                         <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded border border-orange-200">
-                                            ⚠️ Nota: Para agregar fotos nuevas, usa la App móvil. Aquí solo puedes eliminar erróneas.
+                                            ⚠️ Nota: Para agregar fotos nuevas de las 12 vistas, usa la App móvil. Aquí puedes eliminar erróneas o editar el croquis 3D.
                                         </span>
                                     )}
                                 </div>
 
                                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                                    {Object.entries(isEditing ? (editForm.photos || {}) : selected.photos).map(([key, url], idx, arr) => {
-                                        const allPhotos = arr.map(([k, u]) => ({ url: u as string, title: PHOTO_LABELS[k] || k }));
-                                        return (
-                                            <div key={key} className="group relative bg-white p-2 rounded-xl shadow-sm border border-slate-200 break-inside-avoid">
-                                                <div className="mb-2 px-1 flex justify-between items-center">
-                                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate max-w-[80%]">
-                                                        {PHOTO_LABELS[key] || key}
-                                                    </span>
-                                                    {isEditing && (
-                                                        <button onClick={() => removePhoto(key)} className="text-red-400 hover:text-red-600" title="Eliminar Foto">
-                                                            <Trash2 className="w-3 h-3" />
-                                                        </button>
-                                                    )}
-                                                </div>
+                                    {Object.entries(isEditing ? (editForm.photos || {}) : selected.photos)
+                                        .filter(([key, url]) => key !== "_damages" && typeof url === "string")
+                                        .map(([key, url], idx, arr) => {
+                                            const allPhotos = arr.map(([k, u]) => ({ url: u as string, title: PHOTO_LABELS[k] || k }));
+                                            return (
+                                                <div key={key} className="group relative bg-white p-2 rounded-xl shadow-sm border border-slate-200 break-inside-avoid">
+                                                    <div className="mb-2 px-1 flex justify-between items-center">
+                                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate max-w-[80%]">
+                                                            {PHOTO_LABELS[key] || key}
+                                                        </span>
+                                                        {isEditing && (
+                                                            <button onClick={() => removePhoto(key)} className="text-red-400 hover:text-red-600" title="Eliminar Foto">
+                                                                <Trash2 className="w-3 h-3" />
+                                                            </button>
+                                                        )}
+                                                    </div>
 
-                                                <div className="aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-100 cursor-zoom-in relative">
-                                                    <img
-                                                        src={url as string}
-                                                        alt={key}
-                                                        className={`h-full w-full object-cover ${!isEditing && 'transition-transform duration-500 group-hover:scale-110'}`}
-                                                        onClick={() => !isEditing && setViewingImages({ urls: allPhotos, startingIndex: idx })}
-                                                    />
-                                                    {!isEditing && <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" onClick={() => !isEditing && setViewingImages({ urls: allPhotos, startingIndex: idx })} />}
+                                                    <div className="aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-100 cursor-zoom-in relative">
+                                                        <img
+                                                            src={url as string}
+                                                            alt={key}
+                                                            className={`h-full w-full object-cover ${!isEditing && 'transition-transform duration-500 group-hover:scale-110'}`}
+                                                            onClick={() => !isEditing && setViewingImages({ urls: allPhotos, startingIndex: idx })}
+                                                        />
+                                                        {!isEditing && <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" onClick={() => !isEditing && setViewingImages({ urls: allPhotos, startingIndex: idx })} />}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        );
-                                    })}
+                                            );
+                                        })}
                                 </div>
 
-                                {Object.keys(selected.photos).length === 0 && (
+                                {Object.keys(selected.photos).filter(k => k !== "_damages").length === 0 && (
                                     <div className="text-center py-10 text-slate-400">
                                         <Truck className="w-12 h-12 mx-auto mb-2 opacity-20" />
                                         <p>No se adjuntaron fotografías en esta inspección.</p>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Gauge, Fuel, Calendar, User, FileText, CheckCircle, Share2, ShieldCheck, Car, Timer, AlertTriangle, Users } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
+import VehicleDamage3DMapper, { type VehicleDamagePoint } from "../components/VehicleDamage3DMapper";
 import { formatDuration } from "../utils/formatDuration";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
@@ -40,6 +41,7 @@ interface PublicInspectionData {
   comments?: string | null;
   inspector_name?: string | null;
   photos?: Record<string, string>;
+  damages?: VehicleDamagePoint[];
   status?: "draft" | "completed";
   duration_seconds?: number | null;
   road_test?: boolean | null;
@@ -86,8 +88,19 @@ export default function PublicInspectionView() {
     const kmText = inspection.mileage ? `${Number(inspection.mileage).toLocaleString("es-CO")} km` : "No registrado";
     const fuelText = inspection.fuel_level ? (FUEL_LABELS[inspection.fuel_level]?.label || inspection.fuel_level) : "No registrado";
     const typeLabel = inspection.type === "entrega" ? "Entrega" : inspection.type === "recepcion" ? "Recepción" : "Control General";
+    const dmgCount = inspection.damages?.length || 0;
 
-    const text = `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n🚗 *Vehículo:* ${inspection.vehicle_plate}\n📅 *Fecha:* ${formatDate(inspection.created_at)}\n🔍 *Tipo:* ${typeLabel}\n👤 *Inspector:* ${inspection.inspector_name || "N/A"}\n🛣️ *Kilometraje:* ${kmText}\n⛽ *Combustible:* ${fuelText}\n🚦 *Prueba de ruta:* ${inspection.road_test ? "Sí" : inspection.road_test === false ? "No" : "No registrado"}\n\n📸 *Ver reporte y fotos:* ${currentUrl}`;
+    const text =
+      `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n` +
+      `🚗 *Vehículo:* ${inspection.vehicle_plate}\n` +
+      `📅 *Fecha:* ${formatDate(inspection.created_at)}\n` +
+      `🔍 *Tipo:* ${typeLabel}\n` +
+      `👤 *Inspector:* ${inspection.inspector_name || "N/A"}\n` +
+      `🛣️ *Kilometraje:* ${kmText}\n` +
+      `⛽ *Combustible:* ${fuelText}\n` +
+      `🚦 *Prueba de ruta:* ${inspection.road_test ? "Sí" : inspection.road_test === false ? "No" : "No registrado"}\n` +
+      (dmgCount > 0 ? `⚠️ *Daños marcados en 3D:* ${dmgCount}\n` : "") +
+      `\n📸 *Ver reporte y fotos:* ${currentUrl}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   };
 
@@ -115,11 +128,13 @@ export default function PublicInspectionView() {
     );
   }
 
-  const photosList = Object.entries(inspection.photos || {}).map(([k, u]) => ({
-    key: k,
-    url: u as string,
-    title: PHOTO_LABELS[k] || k,
-  }));
+  const photosList = Object.entries(inspection.photos || {})
+    .filter(([k, u]) => k !== "_damages" && typeof u === "string")
+    .map(([k, u]) => ({
+      key: k,
+      url: u as string,
+      title: PHOTO_LABELS[k] || k,
+    }));
 
   const fuelInfo = inspection.fuel_level ? FUEL_LABELS[inspection.fuel_level] : null;
 
@@ -293,6 +308,16 @@ export default function PublicInspectionView() {
             )}
           </div>
         </div>
+
+        {/* CROQUIS 3D 360° DE DAÑOS */}
+        <VehicleDamage3DMapper
+          value={inspection.damages || []}
+          readOnly={true}
+          vehiclePlate={inspection.vehicle_plate}
+          onViewPhoto={(url, title) =>
+            setViewingImages({ urls: [{ url, title }], startingIndex: 0 })
+          }
+        />
 
         {/* OBSERVACIONES */}
         {inspection.comments && (

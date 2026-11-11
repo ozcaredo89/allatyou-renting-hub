@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { ensureBasicAuth } from "../lib/auth";
 import { compressImage } from "../utils/compressImage";
 import { formatDuration } from "../utils/formatDuration";
+import VehicleDamage3DMapper, { type VehicleDamagePoint } from "../components/VehicleDamage3DMapper";
 import { Camera, X, Check, Plus, Image as ImageIcon, Gauge, Fuel, Share2, CheckCircle2, RotateCcw, ArrowRight, Timer, Car, Save, Users, Play, Pause, AlertCircle } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
@@ -47,6 +48,7 @@ interface CreatedInspectionResult {
   comments?: string | null;
   inspector_name?: string | null;
   photos?: Record<string, string>;
+  damages?: VehicleDamagePoint[];
   road_test?: boolean | null;
   duration_seconds?: number | null;
   started_at?: string | null;
@@ -54,6 +56,8 @@ interface CreatedInspectionResult {
   status?: string;
   participants?: string[];
   last_known_mileage?: number | null;
+  previous_damages?: VehicleDamagePoint[];
+  previous_inspection_date?: string | null;
 }
 
 const lastInspectorName = () => {
@@ -73,6 +77,7 @@ const emptyForm = () => ({
   comments: "",
   inspector_name: lastInspectorName(),
   photos: {} as Record<string, string>,
+  damages: [] as VehicleDamagePoint[],
   road_test: null as boolean | null,
 });
 
@@ -98,6 +103,8 @@ export default function NewInspection() {
   const [segmentStart, setSegmentStart] = useState<number | null>(null);
   const [participants, setParticipants] = useState<string[]>([]);
   const [lastKnownMileage, setLastKnownMileage] = useState<number | null>(null);
+  const [previousDamages, setPreviousDamages] = useState<VehicleDamagePoint[]>([]);
+  const [previousInspectionDate, setPreviousInspectionDate] = useState<string | null>(null);
   const [draftLoadState, setDraftLoadState] = useState<"idle" | "loading" | "ready" | "completed" | "error">(
     isContinueMode ? "loading" : "idle"
   );
@@ -152,6 +159,7 @@ export default function NewInspection() {
           comments: d.comments || "",
           inspector_name: lastInspectorName(),
           photos: d.photos || {},
+          damages: Array.isArray(d.damages) ? d.damages : [],
           road_test: d.road_test ?? null,
         });
         if (d.started_at) setStartedAt(new Date(d.started_at));
@@ -168,6 +176,8 @@ export default function NewInspection() {
         setHasStarted(true);
         setParticipants(d.participants || []);
         setLastKnownMileage(d.last_known_mileage ?? null);
+        setPreviousDamages(Array.isArray(d.previous_damages) ? d.previous_damages : []);
+        setPreviousInspectionDate(d.previous_inspection_date ?? null);
         setDraftLoadState("ready");
       })
       .catch(() => setDraftLoadState("error"));
@@ -214,7 +224,7 @@ export default function NewInspection() {
 
   const selectedVehicle = vehicles.find((v) => v.plate === form.vehicle_plate);
 
-  // Auto-asignar conductor cuando cambia el vehículo
+  // Auto-asignar conductor y buscar daños preexistentes cuando cambia el vehículo
   const handleVehicleChange = (plate: string) => {
     const v = vehicles.find((item) => item.plate === plate);
     setForm((prev) => ({
@@ -222,6 +232,29 @@ export default function NewInspection() {
       vehicle_plate: plate,
       driver_id: v?.driver?.id ? String(v.driver.id) : "",
     }));
+    setPreviousDamages([]);
+    setPreviousInspectionDate(null);
+
+    if (plate && !isContinueMode) {
+      const auth = ensureBasicAuth();
+      fetch(`${API}/inspections/${encodeURIComponent(plate)}`, {
+        headers: { Authorization: auth },
+      })
+        .then((res) => (res.ok ? res.json() : []))
+        .then((rows: CreatedInspectionResult[]) => {
+          if (!Array.isArray(rows)) return;
+          const lastCompleted = rows.find(
+            (r) => r.status !== "draft" && Array.isArray(r.damages) && r.damages.length > 0
+          );
+          if (lastCompleted && lastCompleted.damages) {
+            setPreviousDamages(lastCompleted.damages);
+            setPreviousInspectionDate(lastCompleted.started_at || null);
+          }
+        })
+        .catch(() => {
+          /* opcional */
+        });
+    }
   };
 
   // --- ACCIONES DEL MENÚ ---
@@ -367,6 +400,7 @@ export default function NewInspection() {
       comments: form.comments,
       inspector_name: name,
       photos: form.photos,
+      damages: form.damages,
       road_test: form.road_test,
       started_at: startedAt.toISOString(),
       elapsed_seconds: currentElapsed,
@@ -405,7 +439,9 @@ export default function NewInspection() {
     e.preventDefault();
     const err = validateBase();
     if (err) return alert(err);
-    if (Object.keys(form.photos).length === 0) {
+    const hasAnyEvidencePhoto =
+      Object.keys(form.photos).length > 0 || form.damages.some((d) => !!d.photoUrl);
+    if (!hasAnyEvidencePhoto) {
       return alert("Por favor toma al menos una foto de evidencia");
     }
     if (form.road_test === null) {
@@ -454,12 +490,14 @@ export default function NewInspection() {
   const handleShareContinue = () => {
     if (!continueUrl) return;
     const photos = Object.keys(form.photos).length;
+    const dmgCount = form.damages.length;
     const text =
       `🛠️ *INSPECCIÓN EN PROGRESO — CONTINÚALA*\n` +
       `🚗 *Vehículo:* ${form.vehicle_plate}\n` +
       `👤 *Avance guardado por:* ${form.inspector_name.trim() || "N/A"}\n` +
       `⏱️ *Tiempo en revisión:* ${formatDuration(elapsedSecs)}\n` +
       `📸 *Fotos tomadas:* ${photos} / ${PHOTO_FIELDS.length}\n` +
+      (dmgCount > 0 ? `⚠️ *Daños marcados en 3D:* ${dmgCount}\n` : "") +
       `\n👉 *Continúa y finaliza aquí:* ${continueUrl}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   };
@@ -480,6 +518,7 @@ export default function NewInspection() {
         : createdInspection.type === "recepcion"
         ? "Recepción"
         : "Control General";
+    const dmgCount = createdInspection.damages?.length || 0;
 
     const text =
       `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n` +
@@ -490,6 +529,7 @@ export default function NewInspection() {
       `🛣️ *Kilometraje:* ${kmText}\n` +
       `⛽ *Combustible:* ${fuelText}\n` +
       `🚦 *Prueba de ruta:* ${createdInspection.road_test ? "Sí" : "No"}\n` +
+      (dmgCount > 0 ? `⚠️ *Daños / Detalles marcados en 3D:* ${dmgCount}\n` : "") +
       (createdInspection.duration_seconds
         ? `⏱️ *Duración de la revisión:* ${formatDuration(createdInspection.duration_seconds)}\n`
         : "") +
@@ -514,6 +554,8 @@ export default function NewInspection() {
     setSavedDraft(null);
     setDraftToken(null);
     setParticipants([]);
+    setPreviousDamages([]);
+    setPreviousInspectionDate(null);
     setStartedAt(new Date());
     setHasStarted(false);
     setIsPaused(false);
@@ -600,7 +642,7 @@ export default function NewInspection() {
           <p className="text-slate-400 text-xs">
             {draftToken
               ? "Continúa donde quedó la revisión y finalízala"
-              : "Registro ágil del vehículo con fotos comprimidas para campo"}
+              : "Registro ágil del vehículo con croquis 3D 360° y fotos comprimidas"}
           </p>
           {participants.length > 0 && (
             <p className="mt-2 text-[11px] text-slate-300 flex items-center gap-1.5">
@@ -781,7 +823,7 @@ export default function NewInspection() {
                     </label>
                     <div className="w-full p-3 rounded-xl border border-slate-300 font-black text-slate-800 uppercase bg-white flex items-center justify-between">
                       <span>{form.vehicle_plate}</span>
-                      {!draftToken && photosCount === 0 && (
+                      {!draftToken && photosCount === 0 && form.damages.length === 0 && (
                         <button
                           type="button"
                           onClick={() => {
@@ -825,279 +867,289 @@ export default function NewInspection() {
                 )}
               </div>
 
-          {/* 2. TIPO DE INSPECCIÓN Y DATOS DEL INSPECTOR */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Tipo de Evento</label>
-              <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl">
-                {[
-                  { id: "general", label: "Control" },
-                  { id: "entrega", label: "Entrega" },
-                  { id: "recepcion", label: "Recepción" },
-                ].map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setForm({ ...form, type: t.id })}
-                    className={`py-2 rounded-lg text-xs font-extrabold transition-all ${
-                      form.type === t.id
-                        ? "bg-slate-900 text-white shadow-sm"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+              {/* 2. TIPO DE INSPECCIÓN Y DATOS DEL INSPECTOR */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Tipo de Evento</label>
+                  <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl">
+                    {[
+                      { id: "general", label: "Control" },
+                      { id: "entrega", label: "Entrega" },
+                      { id: "recepcion", label: "Recepción" },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setForm({ ...form, type: t.id })}
+                        className={`py-2 rounded-lg text-xs font-extrabold transition-all ${
+                          form.type === t.id
+                            ? "bg-slate-900 text-white shadow-sm"
+                            : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Inspector Responsable</label>
-              <input
-                className="w-full p-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                placeholder="Tu nombre o cargo"
-                value={form.inspector_name}
-                onChange={(e) => setForm({ ...form, inspector_name: e.target.value })}
-                required
-              />
-            </div>
-          </div>
-
-          {/* 3. ODÓMETRO / KILOMETRAJE ACTUAL */}
-          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <Gauge className="w-4 h-4 text-emerald-600" />
-                Kilometraje Actual (Odómetro)
-              </label>
-              {form.mileage && (
-                <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
-                  {Number(form.mileage).toLocaleString("es-CO")} KM
-                </span>
-              )}
-            </div>
-            <div className="relative">
-              <input
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                placeholder="Ej. 84500"
-                value={form.mileage}
-                onChange={(e) => {
-                  const clean = e.target.value.replace(/\D/g, "");
-                  setForm({ ...form, mileage: clean });
-                }}
-                className="w-full text-lg font-black tracking-wider p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
-              />
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                KM
-              </span>
-            </div>
-          </div>
-
-          {/* 4. NIVEL DE GASOLINA / COMBUSTIBLE (VISUAL) */}
-          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <Fuel className="w-4 h-4 text-amber-600" />
-                Tanque de Gasolina
-              </label>
-              <span className="text-xs font-black text-slate-700">
-                Nivel:{" "}
-                <span className="text-emerald-600 uppercase">
-                  {FUEL_OPTIONS.find((f) => f.value === form.fuel_level)?.label || form.fuel_level}
-                </span>
-              </span>
-            </div>
-
-            {/* BARRA SEGMENTADA INTERACTIVA */}
-            <div className="h-4 w-full bg-slate-200 rounded-full overflow-hidden p-0.5 flex gap-1 shadow-inner">
-              {FUEL_OPTIONS.map((opt, idx) => {
-                const activeIdx = FUEL_OPTIONS.findIndex((f) => f.value === form.fuel_level);
-                const isFilled = idx <= activeIdx;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setForm({ ...form, fuel_level: opt.value })}
-                    className={`h-full flex-1 rounded-sm transition-all ${
-                      isFilled
-                        ? activeIdx === 0
-                          ? "bg-rose-500"
-                          : activeIdx === 1
-                          ? "bg-amber-500"
-                          : activeIdx === 2
-                          ? "bg-yellow-500"
-                          : "bg-emerald-500"
-                        : "bg-slate-300 hover:bg-slate-400"
-                    }`}
-                    title={`Marcar ${opt.label}`}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Inspector Responsable</label>
+                  <input
+                    className="w-full p-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                    placeholder="Tu nombre o cargo"
+                    value={form.inspector_name}
+                    onChange={(e) => setForm({ ...form, inspector_name: e.target.value })}
+                    required
                   />
-                );
-              })}
-            </div>
-
-            {/* BOTONES TÁCTILES GRANDES (PENSADOS PARA MÓVIL) */}
-            <div className="grid grid-cols-5 gap-1.5">
-              {FUEL_OPTIONS.map((opt) => {
-                const isSelected = form.fuel_level === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setForm({ ...form, fuel_level: opt.value })}
-                    className={`py-2.5 px-1 rounded-xl border text-center transition-all flex flex-col items-center justify-center ${
-                      isSelected
-                        ? `${opt.color} ring-2 ring-emerald-500 font-black shadow-sm scale-102`
-                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold"
-                    }`}
-                  >
-                    <span className="text-sm">{opt.short}</span>
-                    <span className="text-[10px] text-slate-400 font-normal">{opt.pct}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 4.1 PRUEBA DE RUTA */}
-          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-              <Car className="w-4 h-4 text-blue-600" />
-              ¿Incluye prueba de ruta?
-            </label>
-            <p className="text-[11px] text-slate-500">
-              Se subieron al carro y lo anduvieron para probarlo y escucharlo.
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { v: true, label: "Sí, se probó andando" },
-                { v: false, label: "No" },
-              ].map((opt) => (
-                <button
-                  key={String(opt.v)}
-                  type="button"
-                  onClick={() => setForm({ ...form, road_test: opt.v })}
-                  className={`py-3 rounded-xl border text-sm font-extrabold transition-all ${
-                    form.road_test === opt.v
-                      ? opt.v
-                        ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
-                        : "bg-slate-800 text-white border-slate-800 shadow-sm"
-                      : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 5. FOTOS DE EVIDENCIA (GRID MÓVIL) */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <div>
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                  Fotos de Evidencia
-                </h3>
-                <p className="text-[11px] text-slate-400">
-                  Compresión automática activa para no saturar memoria
-                </p>
+                </div>
               </div>
-              <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
-                {photosCount} / {PHOTO_FIELDS.length} listas
-              </span>
-            </div>
 
-            {Object.entries(groupedFields).map(([section, fields]) => (
-              <div key={section} className="pt-2">
-                <h4 className="text-emerald-700 font-extrabold uppercase text-[11px] mb-3 tracking-wider">
-                  {section}
-                </h4>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {fields.map((field) => (
-                    <div key={field.key} className="relative">
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1 truncate">
-                        {field.label}
-                      </label>
+              {/* 3. ODÓMETRO / KILOMETRAJE ACTUAL */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <Gauge className="w-4 h-4 text-emerald-600" />
+                    Kilometraje Actual (Odómetro)
+                  </label>
+                  {form.mileage && (
+                    <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                      {Number(form.mileage).toLocaleString("es-CO")} KM
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="Ej. 84500"
+                    value={form.mileage}
+                    onChange={(e) => {
+                      const clean = e.target.value.replace(/\D/g, "");
+                      setForm({ ...form, mileage: clean });
+                    }}
+                    className="w-full text-lg font-black tracking-wider p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                    KM
+                  </span>
+                </div>
+              </div>
 
-                      {form.photos[field.key] ? (
-                        // FOTO CARGADA
-                        <div className="relative h-28 w-full rounded-2xl overflow-hidden border border-emerald-200 bg-emerald-50 shadow-sm group">
-                          <img
-                            src={form.photos[field.key]}
-                            alt={field.label}
-                            className="h-full w-full object-cover"
-                          />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const newPhotos = { ...form.photos };
-                                delete newPhotos[field.key];
-                                setForm({ ...form, photos: newPhotos });
-                              }}
-                              className="bg-red-500 text-white rounded-full p-2 shadow-lg hover:bg-red-600 active:scale-95"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                          <div className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-white text-[10px] font-bold text-center py-0.5 flex items-center justify-center gap-1">
-                            <Check className="w-3 h-3" /> LISTO
-                          </div>
-                        </div>
-                      ) : (
-                        // BOTÓN DE CARGA
-                        <button
-                          type="button"
-                          onClick={() => openActionSheet(field.key, field.label)}
-                          className="w-full h-28 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-white hover:border-emerald-500 hover:text-emerald-600 text-slate-400 flex flex-col items-center justify-center gap-1.5 transition-all active:scale-95"
-                        >
-                          <div className="p-2.5 bg-white rounded-full shadow-sm text-slate-500">
-                            <Plus className="w-5 h-5" />
-                          </div>
-                          <span className="text-[10px] font-bold">Tomar Foto</span>
-                        </button>
-                      )}
-                    </div>
+              {/* 4. NIVEL DE GASOLINA / COMBUSTIBLE (VISUAL) */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <Fuel className="w-4 h-4 text-amber-600" />
+                    Tanque de Gasolina
+                  </label>
+                  <span className="text-xs font-black text-slate-700">
+                    Nivel:{" "}
+                    <span className="text-emerald-600 uppercase">
+                      {FUEL_OPTIONS.find((f) => f.value === form.fuel_level)?.label || form.fuel_level}
+                    </span>
+                  </span>
+                </div>
+
+                {/* BARRA SEGMENTADA INTERACTIVA */}
+                <div className="h-4 w-full bg-slate-200 rounded-full overflow-hidden p-0.5 flex gap-1 shadow-inner">
+                  {FUEL_OPTIONS.map((opt, idx) => {
+                    const activeIdx = FUEL_OPTIONS.findIndex((f) => f.value === form.fuel_level);
+                    const isFilled = idx <= activeIdx;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setForm({ ...form, fuel_level: opt.value })}
+                        className={`h-full flex-1 rounded-sm transition-all ${
+                          isFilled
+                            ? activeIdx === 0
+                              ? "bg-rose-500"
+                              : activeIdx === 1
+                              ? "bg-amber-500"
+                              : activeIdx === 2
+                              ? "bg-yellow-500"
+                              : "bg-emerald-500"
+                            : "bg-slate-300 hover:bg-slate-400"
+                        }`}
+                        title={`Marcar ${opt.label}`}
+                      />
+                    );
+                  })}
+                </div>
+
+                {/* BOTONES TÁCTILES GRANDES (PENSADOS PARA MÓVIL) */}
+                <div className="grid grid-cols-5 gap-1.5">
+                  {FUEL_OPTIONS.map((opt) => {
+                    const isSelected = form.fuel_level === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setForm({ ...form, fuel_level: opt.value })}
+                        className={`py-2.5 px-1 rounded-xl border text-center transition-all flex flex-col items-center justify-center ${
+                          isSelected
+                            ? `${opt.color} ring-2 ring-emerald-500 font-black shadow-sm scale-102`
+                            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold"
+                        }`}
+                      >
+                        <span className="text-sm">{opt.short}</span>
+                        <span className="text-[10px] text-slate-400 font-normal">{opt.pct}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 4.1 PRUEBA DE RUTA */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <Car className="w-4 h-4 text-blue-600" />
+                  ¿Incluye prueba de ruta?
+                </label>
+                <p className="text-[11px] text-slate-500">
+                  Se subieron al carro y lo anduvieron para probarlo y escucharlo.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { v: true, label: "Sí, se probó andando" },
+                    { v: false, label: "No" },
+                  ].map((opt) => (
+                    <button
+                      key={String(opt.v)}
+                      type="button"
+                      onClick={() => setForm({ ...form, road_test: opt.v })}
+                      className={`py-3 rounded-xl border text-sm font-extrabold transition-all ${
+                        form.road_test === opt.v
+                          ? opt.v
+                            ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                            : "bg-slate-800 text-white border-slate-800 shadow-sm"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
                   ))}
                 </div>
               </div>
-            ))}
-          </div>
 
-          {/* 6. OBSERVACIONES */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Observaciones / Novedades / Rayones
-            </label>
-            <textarea
-              className="w-full p-3 rounded-xl border border-slate-300 h-28 resize-none focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
-              placeholder="Detalles sobre rayones, kit de carretera, llanta de repuesto, documentos..."
-              value={form.comments}
-              onChange={(e) => setForm({ ...form, comments: e.target.value })}
-            />
-          </div>
+              {/* 4.2 SILUETA 3D 360° INTERACTIVA DE DAÑOS */}
+              <VehicleDamage3DMapper
+                value={form.damages}
+                onChange={(nextDamages) => setForm((prev) => ({ ...prev, damages: nextDamages }))}
+                vehiclePlate={form.vehicle_plate}
+                inspectorName={form.inspector_name}
+                previousDamages={previousDamages}
+                previousInspectionDate={previousInspectionDate}
+              />
 
-          {/* BOTONES: GUARDAR AVANCE / FINALIZAR */}
-          <div className="space-y-2">
-            <button
-              type="button"
-              onClick={handleSaveDraft}
-              disabled={loading || uploading}
-              className="w-full py-3.5 rounded-2xl border-2 border-slate-900 bg-white hover:bg-slate-50 text-slate-900 font-black text-base disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-            >
-              <Save className="w-4 h-4" />
-              {loading ? "Guardando..." : "Guardar avance y pasar a otra persona"}
-            </button>
-            <button
-              type="submit"
-              disabled={loading || uploading}
-              className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-lg shadow-xl disabled:opacity-50 transition-all active:scale-98"
-            >
-              {loading ? "Guardando Inspección..." : "Guardar y Finalizar Revisión"}
-            </button>
-          </div>
-        </form>
+              {/* 5. FOTOS DE EVIDENCIA (GRID MÓVIL) */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                      Fotos de Evidencia General
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Compresión automática activa para no saturar memoria
+                    </p>
+                  </div>
+                  <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                    {photosCount} / {PHOTO_FIELDS.length} listas
+                  </span>
+                </div>
+
+                {Object.entries(groupedFields).map(([section, fields]) => (
+                  <div key={section} className="pt-2">
+                    <h4 className="text-emerald-700 font-extrabold uppercase text-[11px] mb-3 tracking-wider">
+                      {section}
+                    </h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {fields.map((field) => (
+                        <div key={field.key} className="relative">
+                          <label className="block text-[11px] font-bold text-slate-600 mb-1 truncate">
+                            {field.label}
+                          </label>
+
+                          {form.photos[field.key] ? (
+                            // FOTO CARGADA
+                            <div className="relative h-28 w-full rounded-2xl overflow-hidden border border-emerald-200 bg-emerald-50 shadow-sm group">
+                              <img
+                                src={form.photos[field.key]}
+                                alt={field.label}
+                                className="h-full w-full object-cover"
+                              />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const newPhotos = { ...form.photos };
+                                    delete newPhotos[field.key];
+                                    setForm({ ...form, photos: newPhotos });
+                                  }}
+                                  className="bg-red-500 text-white rounded-full p-2 shadow-lg hover:bg-red-600 active:scale-95"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                              <div className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-white text-[10px] font-bold text-center py-0.5 flex items-center justify-center gap-1">
+                                <Check className="w-3 h-3" /> LISTO
+                              </div>
+                            </div>
+                          ) : (
+                            // BOTÓN DE CARGA
+                            <button
+                              type="button"
+                              onClick={() => openActionSheet(field.key, field.label)}
+                              className="w-full h-28 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-white hover:border-emerald-500 hover:text-emerald-600 text-slate-400 flex flex-col items-center justify-center gap-1.5 transition-all active:scale-95"
+                            >
+                              <div className="p-2.5 bg-white rounded-full shadow-sm text-slate-500">
+                                <Plus className="w-5 h-5" />
+                              </div>
+                              <span className="text-[10px] font-bold">Tomar Foto</span>
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 6. OBSERVACIONES */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Observaciones Generales / Kit de Carretera / Documentos
+                </label>
+                <textarea
+                  className="w-full p-3 rounded-xl border border-slate-300 h-28 resize-none focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
+                  placeholder="Detalles adicionales sobre kit de carretera, llanta de repuesto, documentos, ruidos mecánicos..."
+                  value={form.comments}
+                  onChange={(e) => setForm({ ...form, comments: e.target.value })}
+                />
+              </div>
+
+              {/* BOTONES: GUARDAR AVANCE / FINALIZAR */}
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handleSaveDraft}
+                  disabled={loading || uploading}
+                  className="w-full py-3.5 rounded-2xl border-2 border-slate-900 bg-white hover:bg-slate-50 text-slate-900 font-black text-base disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                >
+                  <Save className="w-4 h-4" />
+                  {loading ? "Guardando..." : "Guardar avance y pasar a otra persona"}
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading || uploading}
+                  className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-lg shadow-xl disabled:opacity-50 transition-all active:scale-98"
+                >
+                  {loading ? "Guardando Inspección..." : "Guardar y Finalizar Revisión"}
+                </button>
+              </div>
+            </form>
           </>
         )}
       </div>
@@ -1214,6 +1266,10 @@ export default function NewInspection() {
                 <span className="text-slate-400 font-bold">Fotos:</span>
                 <span className="font-bold text-slate-800">{photosCount} / {PHOTO_FIELDS.length}</span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold">Daños marcados en 3D:</span>
+                <span className="font-bold text-amber-700">{form.damages.length}</span>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -1306,6 +1362,12 @@ export default function NewInspection() {
                   </span>
                 </div>
               )}
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold">Daños marcados en 3D:</span>
+                <span className="font-bold text-amber-700">
+                  {createdInspection.damages?.length || 0} puntos
+                </span>
+              </div>
               <div className="flex justify-between">
                 <span className="text-slate-400 font-bold">Evidencias:</span>
                 <span className="font-bold text-emerald-600">
