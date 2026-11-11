@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { ensureBasicAuth } from "../lib/auth";
 import { compressImage } from "../utils/compressImage";
 import { formatDuration } from "../utils/formatDuration";
-import { Camera, X, Check, Plus, Image as ImageIcon, Gauge, Fuel, Share2, CheckCircle2, RotateCcw, ArrowRight, Timer, Car, Save, Users } from "lucide-react";
+import { Camera, X, Check, Plus, Image as ImageIcon, Gauge, Fuel, Share2, CheckCircle2, RotateCcw, ArrowRight, Timer, Car, Save, Users, Play, Pause, AlertCircle } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -92,6 +92,10 @@ export default function NewInspection() {
   // Borrador: token de continuación, inicio de la revisión y participantes
   const [draftToken, setDraftToken] = useState<string | null>(routeToken || null);
   const [startedAt, setStartedAt] = useState<Date>(() => new Date());
+  const [hasStarted, setHasStarted] = useState<boolean>(isContinueMode);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
+  const [accumulatedSecs, setAccumulatedSecs] = useState<number>(0);
+  const [segmentStart, setSegmentStart] = useState<number | null>(null);
   const [participants, setParticipants] = useState<string[]>([]);
   const [lastKnownMileage, setLastKnownMileage] = useState<number | null>(null);
   const [draftLoadState, setDraftLoadState] = useState<"idle" | "loading" | "ready" | "completed" | "error">(
@@ -151,6 +155,17 @@ export default function NewInspection() {
           road_test: d.road_test ?? null,
         });
         if (d.started_at) setStartedAt(new Date(d.started_at));
+        const initialAccum =
+          d.duration_seconds != null && d.duration_seconds >= 0
+            ? d.duration_seconds
+            : d.started_at
+            ? Math.max(0, (Date.now() - new Date(d.started_at).getTime()) / 1000)
+            : 0;
+        setAccumulatedSecs(initialAccum);
+        setSegmentStart(Date.now());
+        setNowTick(Date.now());
+        setIsPaused(false);
+        setHasStarted(true);
         setParticipants(d.participants || []);
         setLastKnownMileage(d.last_known_mileage ?? null);
         setDraftLoadState("ready");
@@ -158,12 +173,44 @@ export default function NewInspection() {
       .catch(() => setDraftLoadState("error"));
   }, [routeToken]);
 
-  // Cronómetro visible de la revisión
+  // Cronómetro visible de la revisión (solo corre cuando se ha iniciado y no está en pausa)
   useEffect(() => {
+    if (!hasStarted || isPaused) return;
     const t = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(t);
-  }, []);
-  const elapsedSecs = (nowTick - startedAt.getTime()) / 1000;
+  }, [hasStarted, isPaused]);
+
+  const elapsedSecs = !hasStarted
+    ? 0
+    : accumulatedSecs + (!isPaused && segmentStart ? Math.max(0, (nowTick - segmentStart) / 1000) : 0);
+
+  const handleStartInspection = () => {
+    if (!form.vehicle_plate) {
+      return alert("Primero selecciona la placa del vehículo a revisar");
+    }
+    const now = new Date();
+    setStartedAt(now);
+    setAccumulatedSecs(0);
+    setSegmentStart(now.getTime());
+    setNowTick(now.getTime());
+    setIsPaused(false);
+    setHasStarted(true);
+  };
+
+  const handleTogglePause = () => {
+    if (!hasStarted) return;
+    const now = Date.now();
+    if (isPaused) {
+      setSegmentStart(now);
+      setNowTick(now);
+      setIsPaused(false);
+    } else {
+      const add = segmentStart ? Math.max(0, (now - segmentStart) / 1000) : 0;
+      setAccumulatedSecs((prev) => prev + add);
+      setSegmentStart(null);
+      setIsPaused(true);
+    }
+  };
 
   const selectedVehicle = vehicles.find((v) => v.plate === form.vehicle_plate);
 
@@ -307,6 +354,10 @@ export default function NewInspection() {
       /* almacenamiento no disponible: no crítico */
     }
 
+    const currentElapsed = Math.round(
+      accumulatedSecs + (!isPaused && segmentStart ? Math.max(0, (Date.now() - segmentStart) / 1000) : 0)
+    );
+
     const payload = {
       vehicle_plate: form.vehicle_plate,
       driver_id: form.driver_id || null,
@@ -318,6 +369,7 @@ export default function NewInspection() {
       photos: form.photos,
       road_test: form.road_test,
       started_at: startedAt.toISOString(),
+      elapsed_seconds: currentElapsed,
     };
 
     let res: Response;
@@ -379,6 +431,13 @@ export default function NewInspection() {
     setLoading(true);
     try {
       const saved = await persist(false);
+      // Congelar cronómetro mientras se pasa a otra persona
+      if (!isPaused && segmentStart) {
+        const add = Math.max(0, (Date.now() - segmentStart) / 1000);
+        setAccumulatedSecs((prev) => prev + add);
+        setSegmentStart(null);
+        setIsPaused(true);
+      }
       if (saved.continue_token) setDraftToken(saved.continue_token);
       if (saved.participants) setParticipants(saved.participants);
       setSavedDraft(saved);
@@ -456,6 +515,10 @@ export default function NewInspection() {
     setDraftToken(null);
     setParticipants([]);
     setStartedAt(new Date());
+    setHasStarted(false);
+    setIsPaused(false);
+    setAccumulatedSecs(0);
+    setSegmentStart(null);
     setForm(emptyForm());
   };
 
@@ -547,34 +610,18 @@ export default function NewInspection() {
           )}
         </div>
 
-        {/* CRONÓMETRO DE LA REVISIÓN */}
-        <div className="sticky top-0 z-30 bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
-            <Timer className="w-4 h-4" /> Tiempo en revisión
-          </span>
-          <span className="font-mono font-black text-amber-900 text-base tabular-nums">
-            {formatDuration(elapsedSecs)}
-          </span>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-6">
-          {/* 1. SELECCIÓN DE VEHÍCULO */}
-          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                Vehículo a Inspeccionar
-              </label>
-              {draftToken ? (
-                // En un borrador la placa queda fija
-                <div className="w-full p-3 rounded-xl border border-slate-300 font-black text-slate-800 uppercase bg-white">
-                  {form.vehicle_plate}
-                </div>
-              ) : (
+        {!hasStarted ? (
+          /* --- PASO PREVIO: SELECCIONAR PLACA Y EMPEZAR REVISIÓN --- */
+          <div className="p-5 sm:p-6 space-y-5">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  1. Selecciona la Placa del Vehículo a Revisar
+                </label>
                 <select
-                  className="w-full p-3 rounded-xl border border-slate-300 font-black text-slate-800 uppercase bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                  className="w-full p-3.5 rounded-xl border border-slate-300 font-black text-slate-800 uppercase bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-base"
                   value={form.vehicle_plate}
                   onChange={(e) => handleVehicleChange(e.target.value)}
-                  required
                 >
                   <option value="">-- SELECCIONAR PLACA --</option>
                   {vehicles.map((v) => (
@@ -583,34 +630,200 @@ export default function NewInspection() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {selectedVehicle && (
+                <div className="text-xs bg-white p-3 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-slate-400">Conductor: </span>
+                    <span className="font-bold text-slate-800">
+                      {selectedVehicle.driver?.full_name || "Sin conductor asignado"}
+                    </span>
+                    {selectedVehicle.driver?.phone && (
+                      <span className="text-slate-500 ml-1">({selectedVehicle.driver.phone})</span>
+                    )}
+                  </div>
+                  {selectedVehicle.current_mileage && (
+                    <div className="text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                      Último Km: {Number(selectedVehicle.current_mileage).toLocaleString("es-CO")} km
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
-            {!selectedVehicle && referenceMileage && (
-              <div className="text-xs text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100 inline-block">
-                Último Km: {Number(referenceMileage).toLocaleString("es-CO")} km
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Tipo de Evento</label>
+                <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl">
+                  {[
+                    { id: "general", label: "Control" },
+                    { id: "entrega", label: "Entrega" },
+                    { id: "recepcion", label: "Recepción" },
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setForm({ ...form, type: t.id })}
+                      className={`py-2 rounded-lg text-xs font-extrabold transition-all ${
+                        form.type === t.id
+                          ? "bg-slate-900 text-white shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Inspector Responsable</label>
+                <input
+                  className="w-full p-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                  placeholder="Tu nombre o cargo"
+                  value={form.inspector_name}
+                  onChange={(e) => setForm({ ...form, inspector_name: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* ADVERTENCIA DEL CRONÓMETRO */}
+            <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="text-xs text-amber-900 space-y-1 leading-relaxed">
+                <p className="font-black uppercase tracking-wider text-amber-800">
+                  ⏱️ Control de Tiempo y Estadísticas
+                </p>
+                <p>
+                  Una vez presiones <strong>Empezar Revisión</strong>, el cronómetro comenzará a correr y se guardarán estadísticas de cuánto tiempo toma realizar esta revisión. El tiempo continuará registrándose hasta que la finalices (podrás pausarlo si necesitas interrumpirla).
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleStartInspection}
+              disabled={!form.vehicle_plate}
+              className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-lg shadow-xl disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-98 flex items-center justify-center gap-2.5"
+            >
+              <Play className="w-5 h-5 fill-current" />
+              Empezar Revisión
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* CRONÓMETRO DE LA REVISIÓN CON PAUSA */}
+            <div
+              className={`sticky top-0 z-30 border-b px-4 py-2.5 flex items-center justify-between transition-colors ${
+                isPaused
+                  ? "bg-slate-800 border-slate-700 text-white"
+                  : "bg-amber-50 border-amber-200 text-amber-900"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Timer className={`w-4 h-4 ${isPaused ? "text-amber-400" : "text-amber-700 animate-pulse"}`} />
+                <span className="text-[11px] font-bold uppercase tracking-wider">
+                  {isPaused ? "Revisión en pausa" : "Tiempo en revisión"}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="font-mono font-black text-base tabular-nums">
+                  {formatDuration(elapsedSecs)}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleTogglePause}
+                  className={`px-3 py-1 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition active:scale-95 ${
+                    isPaused
+                      ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-sm"
+                      : "bg-amber-200/80 hover:bg-amber-300 text-amber-950"
+                  }`}
+                >
+                  {isPaused ? (
+                    <>
+                      <Play className="w-3.5 h-3.5 fill-current" /> Reanudar
+                    </>
+                  ) : (
+                    <>
+                      <Pause className="w-3.5 h-3.5 fill-current" /> Pausar
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {isPaused && (
+              <div className="bg-slate-900/95 text-white px-4 py-3 flex items-center justify-between gap-3 border-b border-slate-700">
+                <p className="text-xs text-slate-300">
+                  ⏸️ El cronómetro está pausado. Reanúdalo para continuar diligenciando la revisión.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleTogglePause}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs whitespace-nowrap"
+                >
+                  Reanudar ahora
+                </button>
               </div>
             )}
 
-            {selectedVehicle && (
-              <div className="text-xs bg-white p-3 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <span className="text-slate-400">Conductor: </span>
-                  <span className="font-bold text-slate-800">
-                    {selectedVehicle.driver?.full_name || "Sin conductor asignado"}
-                  </span>
-                  {selectedVehicle.driver?.phone && (
-                    <span className="text-slate-500 ml-1">({selectedVehicle.driver.phone})</span>
-                  )}
+            <form onSubmit={handleSubmit} className={`p-4 sm:p-6 space-y-6 transition-opacity ${isPaused ? "opacity-50 pointer-events-none select-none" : ""}`}>
+              {/* 1. SELECCIÓN DE VEHÍCULO */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex-1">
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Vehículo en Revisión
+                    </label>
+                    <div className="w-full p-3 rounded-xl border border-slate-300 font-black text-slate-800 uppercase bg-white flex items-center justify-between">
+                      <span>{form.vehicle_plate}</span>
+                      {!draftToken && photosCount === 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHasStarted(false);
+                            setIsPaused(false);
+                            setAccumulatedSecs(0);
+                            setSegmentStart(null);
+                          }}
+                          className="text-[11px] font-bold text-slate-500 hover:text-slate-800 underline normal-case"
+                        >
+                          Cambiar placa
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                {selectedVehicle.current_mileage && (
-                  <div className="text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
-                    Último Km: {Number(selectedVehicle.current_mileage).toLocaleString("es-CO")} km
+
+                {!selectedVehicle && referenceMileage && (
+                  <div className="text-xs text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100 inline-block">
+                    Último Km: {Number(referenceMileage).toLocaleString("es-CO")} km
+                  </div>
+                )}
+
+                {selectedVehicle && (
+                  <div className="text-xs bg-white p-3 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-slate-400">Conductor: </span>
+                      <span className="font-bold text-slate-800">
+                        {selectedVehicle.driver?.full_name || "Sin conductor asignado"}
+                      </span>
+                      {selectedVehicle.driver?.phone && (
+                        <span className="text-slate-500 ml-1">({selectedVehicle.driver.phone})</span>
+                      )}
+                    </div>
+                    {selectedVehicle.current_mileage && (
+                      <div className="text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                        Último Km: {Number(selectedVehicle.current_mileage).toLocaleString("es-CO")} km
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-          </div>
 
           {/* 2. TIPO DE INSPECCIÓN Y DATOS DEL INSPECTOR */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -885,6 +1098,8 @@ export default function NewInspection() {
             </button>
           </div>
         </form>
+          </>
+        )}
       </div>
 
       {/* --- ACTION SHEET INFERIOR (CÁMARA O ARCHIVO) --- */}
@@ -1022,7 +1237,15 @@ export default function NewInspection() {
             </div>
 
             <button
-              onClick={() => setSavedDraft(null)}
+              onClick={() => {
+                setSavedDraft(null);
+                if (isPaused) {
+                  const now = Date.now();
+                  setSegmentStart(now);
+                  setNowTick(now);
+                  setIsPaused(false);
+                }
+              }}
               className="text-xs text-slate-500 hover:text-slate-800 font-bold flex items-center justify-center gap-1 mx-auto pt-1"
             >
               Seguir yo con la revisión
