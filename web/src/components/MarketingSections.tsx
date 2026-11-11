@@ -29,7 +29,7 @@ export function MoneyFlow() {
       <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4">
         <strong className="text-sm text-white">Ingreso Bruto</strong>
         <div className="h-3 flex-1 min-w-[150px] overflow-hidden rounded-full bg-white/5 border border-white/10">
-          <div className="h-full w-full bg-gradient-to-r from-emerald-600 to-emerald-400 opacity-90" />
+          <div className="h-full w-full bg-gradient-to-r from-emerald-500 to-teal-300 opacity-90" />
         </div>
         <span className="text-xs text-slate-400">100%</span>
       </div>

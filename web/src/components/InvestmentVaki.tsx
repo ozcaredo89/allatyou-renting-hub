@@ -90,7 +90,7 @@ export function InvestmentVaki() {
   }
 
   return (
-    <section id="vaki" className="rounded-3xl border border-white/10 bg-[#0d1b2a] p-8 md:p-10 shadow-2xl backdrop-blur-sm">
+    <section id="vaki" className="rounded-3xl border border-white/[0.08] bg-[#0c1426] p-8 md:p-10 shadow-2xl backdrop-blur-sm">
 
       {/* ── Header ── */}
       <div className="mb-8">
@@ -124,7 +124,7 @@ export function InvestmentVaki() {
         </div>
 
         {/* Barra con carro */}
-        <div className="relative h-5 rounded-full bg-white/5 border border-white/10 overflow-visible mb-6">
+        <div className="relative h-5 rounded-full bg-white/5 border border-white/[0.08] overflow-visible mb-6">
           {/* Fill */}
           <div
             className={`h-full rounded-full transition-all duration-700 ${goalReached ? "bg-emerald-500" : "bg-amber-500"}`}
@@ -185,7 +185,7 @@ export function InvestmentVaki() {
             <input
               name="name" type="text" required value={form.name} onChange={handleChange}
               placeholder="Ej. Carlos Andrés Gómez"
-              className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
+              className="w-full rounded-xl bg-white/5 border border-white/[0.08] px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
             />
           </div>
 
@@ -194,7 +194,7 @@ export function InvestmentVaki() {
             <input
               name="document_id" type="text" required value={form.document_id} onChange={handleChange}
               placeholder="Ej. 1005234567"
-              className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
+              className="w-full rounded-xl bg-white/5 border border-white/[0.08] px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
             />
           </div>
 
@@ -203,7 +203,7 @@ export function InvestmentVaki() {
             <input
               name="phone" type="tel" required value={form.phone} onChange={handleChange}
               placeholder="Ej. 3001234567"
-              className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
+              className="w-full rounded-xl bg-white/5 border border-white/[0.08] px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
             />
           </div>
 
@@ -212,7 +212,7 @@ export function InvestmentVaki() {
             <input
               name="email" type="email" required value={form.email} onChange={handleChange}
               placeholder="Ej. carlos@email.com"
-              className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
+              className="w-full rounded-xl bg-white/5 border border-white/[0.08] px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
             />
           </div>
 
@@ -221,7 +221,7 @@ export function InvestmentVaki() {
             <input
               name="nequi_account" type="text" required value={form.nequi_account} onChange={handleChange}
               placeholder="Ej. 3001234567"
-              className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
+              className="w-full rounded-xl bg-white/5 border border-white/[0.08] px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
             />
           </div>
 
@@ -233,7 +233,7 @@ export function InvestmentVaki() {
               name="amount" type="number" required min="100000" step="50000"
               value={form.amount} onChange={handleChange}
               placeholder="Ej. 500000"
-              className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
+              className="w-full rounded-xl bg-white/5 border border-white/[0.08] px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:bg-white/[0.07] transition-colors"
             />
             <p className="text-[10px] text-slate-500 mt-1">Mínimo $100.000 COP</p>
           </div>

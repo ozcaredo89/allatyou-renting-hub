@@ -18,7 +18,7 @@ export function IncomeSimulator({ onAction }: { onAction: () => void }) {
   }
 
   return (
-    <div className="rounded-3xl border border-white/10 bg-[#0e1730] p-6 shadow-2xl shadow-emerald-500/10">
+    <div className="rounded-3xl border border-white/[0.08] bg-[#0c1426] p-6 shadow-2xl shadow-emerald-500/10">
       <div className="mb-4 flex items-center justify-between border-b border-white/5 pb-4">
         <div>
           <h2 className="text-lg font-bold text-white">Simulador de Rentabilidad</h2>
@@ -36,7 +36,7 @@ export function IncomeSimulator({ onAction }: { onAction: () => void }) {
             <select
               value={vehicles}
               onChange={(e) => setVehicles(Number(e.target.value))}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+              className="w-full rounded-xl border border-white/[0.08] bg-white/5 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
             >
               {[1, 2, 3, 5, 10].map((n) => (
                 // CORRECCIÓN: Agregado 'text-slate-900' para que sea legible en el dropdown blanco
@@ -51,7 +51,7 @@ export function IncomeSimulator({ onAction }: { onAction: () => void }) {
             <select
               value={daysPerWeek}
               onChange={(e) => setDaysPerWeek(Number(e.target.value))}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+              className="w-full rounded-xl border border-white/[0.08] bg-white/5 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
             >
               {/* CORRECCIÓN: Agregado 'text-slate-900' a las opciones */}
               <option value="6" className="text-slate-900">6 Días (Lunes-Sábado)</option>
@@ -72,7 +72,7 @@ export function IncomeSimulator({ onAction }: { onAction: () => void }) {
                 value={dailyRent}
                 onChange={(e) => setDailyRent(Number(e.target.value))}
                 step={1000}
-                className="w-full rounded-xl border border-white/10 bg-white/5 pl-6 pr-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none font-mono"
+                className="w-full rounded-xl border border-white/[0.08] bg-white/5 pl-6 pr-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none font-mono"
               />
           </div>
           <p className="mt-1 text-[10px] text-slate-500">
@@ -80,9 +80,9 @@ export function IncomeSimulator({ onAction }: { onAction: () => void }) {
           </p>
         </div>
 
-        <div className="mt-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
+        <div className="mt-6 rounded-2xl border border-emerald-400/25 bg-gradient-to-br from-emerald-500/15 to-teal-500/5 p-4 text-center">
           <p className="mb-1 text-xs text-emerald-200">Ingreso Mensual Bruto Estimado</p>
-          <p className="text-2xl font-bold text-white tracking-tight">
+          <p className="text-3xl font-bold text-white tracking-tight">
             {formatMoney(monthlyIncome)}
           </p>
           <p className="mt-2 text-[10px] text-emerald-200/60 leading-tight">
@@ -90,7 +90,7 @@ export function IncomeSimulator({ onAction }: { onAction: () => void }) {
           </p>
         </div>
         <button onClick={onAction}
-          className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-900/20 hover:bg-emerald-500 transition-all hover:-translate-y-0.5 mt-4"
+          className="w-full rounded-xl bg-gradient-to-r from-emerald-400 to-teal-400 text-slate-950 hover:brightness-110 py-3 text-sm font-bold shadow-lg shadow-emerald-500/20 transition-all hover:-translate-y-0.5 mt-4"
         >
           Quiero esta rentabilidad
         </button>

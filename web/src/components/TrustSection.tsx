@@ -3,7 +3,7 @@ import { Check } from "lucide-react";
 export function TrustSection() {
   return (
     <section className="mb-20">
-      <div className="rounded-3xl border border-white/10 bg-[#0f172a]/50 p-8 md:p-12">
+      <div className="rounded-3xl border border-white/[0.08] bg-[#0c1426]/70 p-8 md:p-12">
         <div className="max-w-3xl mb-10">
           <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">
             Por qué esto no es un salto al vacío
@@ -35,7 +35,7 @@ export function TrustSection() {
 
 function TrustCard({ title, desc }: { title: string, desc: string }) {
   return (
-    <div className="rounded-2xl border border-white/5 bg-[#1e293b]/50 p-6 hover:bg-[#1e293b] transition-colors group">
+    <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-6 hover:bg-[#111c33] transition-colors group">
       <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white transition-colors">
         <Check className="w-6 h-6" />
       </div>
