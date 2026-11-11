@@ -17,7 +17,7 @@ Fuente de verdad de las **reglas de negocio** de cada módulo. Las leen tanto pe
 | Conductores | [conductores.md](conductores.md) | `routes/drivers.ts`, directorio de conductores |
 | Cobranza (CRM) | [cobranza-collections.md](cobranza-collections.md) | módulo de cobranza |
 | Inspecciones | [inspecciones.md](inspecciones.md), [inspecciones-dashboard.md](inspecciones-dashboard.md) | `routes/inspections.ts` |
-| Marketplace | [marketplace.md](marketplace.md) | `routes/marketplace.ts`, `RentYourCar.tsx`, `AdminMarketplace.tsx` |
+| Marketplace / captación única de vehículos | [marketplace.md](marketplace.md) | `routes/marketplace.ts`, `routes/vehicleApplications.ts`, `RentCatalog.tsx`, `AdminRecruitment.tsx` |
 | Landing | [landing.md](landing.md) | sitio público, `Landing.tsx`, `VehicleApplicationForm.tsx` |
 | Arquitectura | [arquitectura.md](arquitectura.md) | visión general de repos y tecnologías |
 | Variables de entorno | [variables-entorno.md](variables-entorno.md) | `lib/env.ts`, `web/src/vite-env-required.ts`, cualquier `process.env` / `import.meta.env` nuevo |

@@ -155,7 +155,7 @@ export default function AdminLayout() {
             <NavItem to="/recruitment" icon="👥" label="Reclutamiento" />
             <NavItem to="/advances" icon="💸" label="Anticipos" />
             <NavItem to="/collections" icon="📲" label="Gestión Cobros" />
-            <NavItem to="/marketplace" icon="🏪" label="Marketplace" />
+            <NavItem to="/recruitment?tab=vehicles" icon="🏪" label="Vehículos postulados" />
             <NavItem to="/trips" icon="🚕" label="Rutas" />
 
             {/* AUDITORÍA */}

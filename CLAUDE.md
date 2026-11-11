@@ -94,7 +94,7 @@ Cuando el usuario mencione una URL o pantalla, **ir directamente al archivo list
 | `/recruitment` | `AdminRecruitment.tsx` | `DriverApplicationForm.tsx` | `driverApplications.ts` | — |
 | `/inspections`, `/inspections/new` | `AdminInspections.tsx`, `NewInspection.tsx`, `PublicInspectionView.tsx` | — | `inspections.ts` | `inspecciones.md`, `inspecciones-dashboard.md` |
 | `/inventory` | `AdminInventory.tsx` | — | `inventory.ts` | — |
-| `/marketplace`, `/rent`, `/rent-your-car` | `AdminMarketplace.tsx`, `RentCatalog.tsx`, `RentYourCar.tsx` | `VehicleApplicationForm.tsx`, `VehicleModelCombobox.tsx` | `marketplace.ts`, `vehicleApplications.ts` | `marketplace.md`, `vehiculos-onboarding.md` |
+| `/marketplace` (→ `/recruitment?tab=vehicles`), `/rent`, `/rent-your-car` | `AdminRecruitment.tsx`, `RentCatalog.tsx`, `RentYourCar.tsx` | `VehicleApplicationForm.tsx`, `VehicleModelCombobox.tsx` | `marketplace.ts`, `vehicleApplications.ts` | `marketplace.md`, `vehiculos-onboarding.md` |
 | `/reminders-log` | `RemindersLog.tsx` | `ReminderSubscriptionCard.tsx` | `reminders.ts` | `recordatorios.md` |
 | `/oracle` | `AdminOracle.tsx` | `FleetMap.tsx`, `TopDwellLocations.tsx` | `oracle.ts`, `fleetMap.ts` (`src/oraculo/*`) | — |
 | `/trips`, `/bid/:id` | `AdminTrips.tsx`, `BidTrip.tsx` | `TripBookingForm.tsx` | `trips.ts` | — |

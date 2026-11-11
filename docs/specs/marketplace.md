@@ -1,6 +1,6 @@
 # Especificación Técnica: Marketplace P2P (Modelo Turo)
 
-**Fecha:** 26-Oct-2026
+**Fecha:** 26-Oct-2026 · **Última revisión:** 10-Nov-2026 (ticket #38, captación única)
 **Autor:** AllAtYou Renting Hub
 **Módulo:** Captación y Renta Comercial
 **Estado:** Implementado ✅
@@ -8,50 +8,59 @@
 ---
 
 ## 1. Resumen Ejecutivo
-El módulo Marketplace transforma la plataforma en un modelo de negocio híbrido, permitiendo a terceros ("Hosts") listar sus vehículos para ser rentados por clientes finales. El sistema gestiona el ciclo de vida completo: **Captación (Lead)** -> **Moderación (Admin)** -> **Publicación (Catálogo)** -> **Conversión (WhatsApp)**.
+Desde el **ticket #38 (10-Nov-2026)** la captación de vehículos de terceros es **única**: un solo formulario, una sola tabla (`vehicle_applications`) y una sola bandeja admin. El catálogo público `/rent` se alimenta de esa misma tabla.
+
+Reglas de negocio definidas por el dueño del producto (10-Nov-2026):
+1. **Alquilar = administración AllAtYou.** No existe alquiler P2P tipo Turo: si el dueño quiere alquilar, AllAtYou administra el carro y lo renta a conductores. En el catálogo, la renta siempre se contacta por el WhatsApp de AllAtYou.
+2. **Se mantiene la venta.** El dueño puede publicar su carro para venta; el comprador contacta directamente al dueño.
+3. **Modalidades (`listing_type`):** `rent` (administración), `sale` (venta), `both` (administración mientras aparece comprador).
+4. **Una sola bandeja admin:** `/recruitment?tab=vehicles` (menú "Vehículos postulados"). `/marketplace` redirige allí.
+
+Ciclo: **Captación** -> **Revisión (Admin aprueba/rechaza)** -> **Publicación opcional en catálogo** -> **Contacto por WhatsApp**.
 
 ---
 
 ## 2. Alcance Funcional
 
-### 2.1 Captación (Público - Oferta)
-* **Formulario de Alta:** Página pública `/rent-your-car` accesible desde la barra superior de la Landing (`PublicLayout.tsx`) y desde el catálogo.
-* **Modalidades de Publicación (`listing_type`):**
-  * `rent` (Solo Alquiler): Ingreso diario esperado (`price_per_day`). GPS satelital requerido.
-  * `sale` (Solo Venta): Precio final de venta (`sale_price`). No exige GPS.
-  * `both` (Alquiler o Venta): Permite ingresar ambos precios (`price_per_day` y `sale_price`).
-* **Catálogo Guiado de Marcas y Líneas:** Selector de marcas comerciales en Colombia (`Chevrolet`, `Kia`, `Renault`, `Mazda`, `Nissan`, `Suzuki`, `Honda`, `Toyota`, `Hyundai`, `Ford`, `Volkswagen`, `Otra`) con líneas predefinidas y opción `"Otra línea..."`.
-* **UX Móvil:** Integración de cámara nativa vía WebRTC y Action Sheet para facilitar la toma de fotos del vehículo en el momento (subidas a la carpeta `vehicles` en R2 sin activar el OCR de recibos).
-* **Datos Requeridos:** Propietario, Celular colombiano de 10 dígitos, Correo electrónico, Ciudad, Marca, Línea, Año (1990 al año siguiente), Placa colombiana (`ABC123`), Modalidad y Precios correspondientes.
+### 2.1 Captación (Público)
+* **Formulario único:** `VehicleApplicationForm.tsx`, montado en la Landing (`/#propietarios`, `landing_views/TabIncome.tsx`) y en `/rent-your-car` (`RentYourCar.tsx`, solo envoltorio). Envía a `POST /vehicle-applications`.
+* **Pasos:** 1. Propietario · 2. Vehículo (placa, marca, línea, año, color, combustible, transmisión) · 3. Negocio · 4. Fotos y estado (SOAT, tecno, kilometraje, todo riesgo).
+* **Paso 3 — ¿Qué quieres hacer con tu carro?:**
+  * `rent` / `both`: precio diario esperado (mín. $20.000) y disponibilidad.
+  * `sale` / `both`: precio de venta (mín. $1.000.000) y **casilla obligatoria** autorizando mostrar nombre y WhatsApp en el catálogo (Ley 1581 Habeas Data, `accepts_public_contact`).
+  * Siempre: cuándo podemos ver el vehículo (`appointment_date`).
+* **Catálogo Guiado de Marcas y Líneas:** `constants/vehicleCatalog.ts` + `VehicleModelCombobox.tsx`.
 
-### 2.2 Moderación (Administrativo)
-* **Panel de Control:** Ruta `/marketplace` en la app administrativa (`web.allatyou.com/marketplace`).
-* **Información Visual:** Muestra badges para `Renta`, `Venta` o `Renta/Venta`, precio diario y/o precio de venta.
-* **Flujo de Estado:**
-    * `pending`: Estado inicial. Visible solo para admin.
-    * `approved`: Visible en el catálogo público.
-    * `rejected`: Oculto y archivado.
-* **Acciones:** Botones de aprobación/rechazo rápido.
+### 2.2 Revisión y publicación (Administrativo)
+* **Bandeja única:** `/recruitment?tab=vehicles` (`AdminRecruitment.tsx`). Muestra badge de modalidad (Administración / Venta / Admin + Venta) y badge "En catálogo".
+* **Estados (`status`):** `pending` (inicial) · `approved` · `rejected` (motivo obligatorio).
+* **Publicación (`published_in_catalog`):** solo un vehículo `approved` puede publicarse (botón "Publicar en catálogo" / "Retirar del catálogo"). Si pasa a `rejected` o `pending`, se despublica automáticamente. Una venta (`sale`/`both`) sin `accepts_public_contact` no se puede publicar (`422`).
 
 ### 2.3 Catálogo (Público - Demanda)
-* **Vitrina Digital:** Página `/rent`. Muestra solo vehículos con estado `approved`.
-* **Filtros Dinámicos:** Selector por pestañas entre `Todos`, `En Alquiler 🔑` y `En Venta 🏷️`, más buscador en tiempo real por texto.
-* **Badges y Precios:** Muestra insignias claras de modalidad, canon diario en COP para renta y precio de venta total para compra.
-* **Conversión y Contacto Directo por WhatsApp:**
-  * Para vehículos en **Venta**: El botón *"Contactar al Vendedor por WhatsApp"* conecta directamente con el número de celular del vendedor (`owner_phone`), con un mensaje pre-llenado incluyendo el nombre del dueño, modelo, año y precio.
-  * Para vehículos en **Alquiler**: El botón *"Reservar Renta por WhatsApp"* contacta al canal de renting con los datos del vehículo y fechas para formalizar requisitos.
+* **Vitrina Digital:** Página `/rent`. Muestra vehículos `approved` **y** `published_in_catalog = true`.
+* **Filtros:** `Todos`, `En Alquiler 🔑` (`rent`/`both`) y `En Venta 🏷️` (`sale`/`both`), más buscador.
+* **Fotos:** portada = foto marcada `is_cover_worthy` por la IA, o la primera `exterior`, o la primera disponible; interior = primera `interior` distinta de la portada.
+* **Contacto por WhatsApp:**
+  * **Venta:** "Contactar al Vendedor" va al `owner_phone` del dueño (solo se expone si `accepts_public_contact`).
+  * **Alquiler:** "Reservar Renta" va siempre al WhatsApp de AllAtYou. El contacto del dueño **no** se expone en alquileres.
 
 ---
 
 ## 3. Arquitectura de Datos
 
-### Tabla: `marketplace_cars`
-* `status`: Enum (`pending`, `approved`, `rejected`, `rented`).
-* `listing_type`: Text (`rent`, `sale`, `both`).
-* `price_per_day`: Numeric (canon diario en COP).
-* `sale_price`: Numeric (precio final de venta en COP).
-* `owner_info`: El nombre (`owner_name`) y el WhatsApp (`owner_phone`) del dueño **sí se exponen** en el catálogo público (`GET /marketplace/catalog`) para el contacto directo con el vendedor (ticket #6). El dueño lo autoriza con una casilla obligatoria en el formulario `/rent-your-car` (Ley 1581 Habeas Data). El email (`owner_email`) y la placa nunca se exponen: solo los ve el admin.
-* `vehicle_info`: Marca, modelo, año, transmisión, fotos (exterior e interior).
+### Tabla: `vehicle_applications` (fuente única)
+Columnas añadidas en `2026111004_unify_vehicle_intake.sql`:
+* `listing_type`: `rent` | `sale` | `both` (default `rent`, con check).
+* `sale_price`: Numeric (COP), solo `sale`/`both`.
+* `transmission`: `Mecánica` | `Automática`.
+* `accepts_public_contact`: Boolean (autorización Habeas Data para venta).
+* `published_in_catalog`: Boolean (default `false`).
+* `legacy_marketplace_car_id`: id de origen de los carros migrados.
+* `expected_daily_rent`, `availability_type`, `appointment_date`, `color` pasan a ser opcionales (no aplican a venta o a registros migrados).
+* El email (`owner_email`) y la placa (`plate`) **nunca** se exponen en el catálogo.
+
+### Tabla: `marketplace_cars` (retirada)
+Se conserva solo como histórico. La migración copió sus registros a `vehicle_applications` (por placa, idempotente): `approved`/`rented` → `approved` y publicado si estaba `approved`; `accepts_public_contact = true` porque el formulario antiguo exigía esa autorización (ticket #6).
 
 ---
 
@@ -59,22 +68,23 @@ El módulo Marketplace transforma la plataforma en un modelo de negocio híbrido
 
 | Método | Ruta | Acceso | Descripción |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/marketplace/upload` | Público | Recepción de nuevos vehículos (Leads) con validaciones anti-spam. |
-| `GET` | `/marketplace/catalog` | Público | Lista vehículos `approved` (Vitrina). |
-| `GET` | `/marketplace/admin/all` | Privado (`basicAuth`) | Lista todo para moderación (montado en `src/index.ts` bajo `/marketplace/admin`). |
-| `PUT` | `/marketplace/admin/:id/status` | Privado (`basicAuth`) | Cambia estado (Aprobar/Rechazar). |
+| `POST` | `/vehicle-applications` | Público | Captación única (anti-spam, validaciones por modalidad). |
+| `GET` | `/vehicle-applications` | Privado (`basicAuth`) | Bandeja admin. |
+| `PATCH` | `/vehicle-applications/:id` | Privado (`basicAuth`) | Cambia `status` (+ `status_reason`) y/o `published_in_catalog`. |
+| `GET` | `/marketplace/catalog` | Público | Vitrina: `approved` + publicados, desde `vehicle_applications`. Mantiene el contrato histórico (`model`, `year`, `price_per_day`, `photo_exterior_url`...). |
+| `POST` | `/marketplace/upload` | — | **Retirado** (`410 Gone`). |
 
 ---
 
 ## 5. Seguridad y Reglas de Negocio
 1. **Validación de Leads:** El sistema no publica automáticamente. Requiere intervención humana (Admin) para filtrar fraudes o vehículos en mal estado.
-2. **Protección Anti-Spam y Validaciones de Entrada (`POST /marketplace/upload` y `POST /vehicle-applications`):**
+2. **Protección Anti-Spam y Validaciones de Entrada (`POST /vehicle-applications`):**
     * **Honeypot (`website`):** Campo oculto en el formulario; si recibe contenido, el backend rechaza la solicitud con `400`.
     * **Detector Anti-Basura (`isGibberishText`):** Rechaza palabras de más de 25 caracteres, secuencias de 6 o más consonantes seguidas, o alternancia caótica de mayúsculas/minúsculas en palabras de 10 o más letras.
     * **Placa Colombiana:** Formato estricto `^[A-Z]{3}\d{3}$` (3 letras y 3 números) y verificación anti-duplicados (`409 Conflict` con CTA a WhatsApp de soporte).
     * **Celular Colombiano:** Normalización automática del prefijo `+57` cuando supera los 10 dígitos y validación de formato `^3\d{9}$`.
     * **Año del Vehículo:** Rango permitido desde `1990` hasta `año actual + 1`.
-3. **Autenticación Administrativa (`basicAuth`):** Las rutas `/marketplace/admin/*` están protegidas en `src/index.ts` mediante el middleware `basicAuth`.
+3. **Autenticación Administrativa (`basicAuth`):** `GET` y `PATCH /vehicle-applications` usan `basicAuth` dentro del router.
 4. **Protección de Datos:** La placa (`plate`) se captura para antecedentes pero **nunca** se muestra en el catálogo público por seguridad.
 5. **Integridad:** Las fotos se almacenan en R2 bajo la carpeta `vehicles` y se referencian en la tabla correspondiente.
 
@@ -82,7 +92,8 @@ El módulo Marketplace transforma la plataforma en un modelo de negocio híbrido
 
 ## 6. Lecciones Aprendidas y Casos Borde Reales (Oct-2026)
 
-### 6.1 El dilema de los dos flujos de vehículos (Landing vs Marketplace)
+### 6.1 El dilema de los dos flujos de vehículos (Landing vs Marketplace) — resuelto en #38
+* **Estado actual:** unificados (ver §1). Lo siguiente se conserva como contexto histórico.
 * **Confusión recurrente:** Existen dos flujos distintos para registrar vehículos:
     1. **Landing Page (`#propietarios`):** Usa `VehicleApplicationForm.tsx` → `POST /vehicle-applications` → tabla `vehicle_applications` → Administración en `/recruitment` (pestaña "Vehículos"). Modelo: el propietario cede la administración de su carro a la flota.
     2. **Marketplace (`/rent-your-car`):** Usa `RentYourCar.tsx` → `POST /marketplace/upload` → tabla `marketplace_cars` → Moderación en `/marketplace`. Modelo: el propietario alquila directamente estilo Turo.

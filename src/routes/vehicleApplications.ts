@@ -94,6 +94,8 @@ const FIELD_LABELS: Record<string, string> = {
   "business.appointmentDate": "Disponibilidad para ver el vehículo (Paso 3)",
   "business.availability": "Modalidad de disponibilidad",
   "business.expectedPrice": "Precio diario esperado",
+  "business.salePrice": "Precio de venta",
+  "business.acceptsPublicContact": "Autorización para mostrar tu contacto a compradores",
   "status.mileage": "Kilometraje válido",
   "status.soatDate": "Fecha de vencimiento del SOAT",
   "status.technoDate": "Fecha de vencimiento de Tecnomecánica",
@@ -234,6 +236,16 @@ r.post("/", async (req: Request, res: Response) => {
     // -----------------------------
     // Validate: Business (Negocio)
     // -----------------------------
+    // Modalidad (ticket #38): rent = administración AllAtYou, sale = venta en catálogo, both = ambas
+    const listingType: "rent" | "sale" | "both" = ["rent", "sale", "both"].includes(String(business.listingType))
+      ? business.listingType
+      : "rent";
+    const wantsRent = listingType === "rent" || listingType === "both";
+    const wantsSale = listingType === "sale" || listingType === "both";
+
+    const transmissionRaw = vehicle.transmission;
+    const transmission = ["Mecánica", "Automática"].includes(String(transmissionRaw)) ? String(transmissionRaw) : null;
+
     const appointmentDate = business.appointmentDate;
     if (!isNonEmptyString(appointmentDate)) {
       fields.push({ path: "business.appointmentDate", issue: "required" });
@@ -242,13 +254,24 @@ r.post("/", async (req: Request, res: Response) => {
     }
 
     const availability = business.availability;
-    if (!isNonEmptyString(availability)) {
+    if (wantsRent && !isNonEmptyString(availability)) {
       fields.push({ path: "business.availability", issue: "required" });
     }
 
     const expectedPrice = Number(business.expectedPrice);
-    if (Number.isNaN(expectedPrice) || expectedPrice <= 0) {
+    if (wantsRent && (Number.isNaN(expectedPrice) || expectedPrice <= 0)) {
       fields.push({ path: "business.expectedPrice", issue: "required_positive_number" });
+    }
+
+    const salePrice = Number(business.salePrice);
+    if (wantsSale && (Number.isNaN(salePrice) || salePrice <= 0)) {
+      fields.push({ path: "business.salePrice", issue: "required_positive_number" });
+    }
+
+    // Habeas Data: la venta expone nombre y WhatsApp del dueño en el catálogo público
+    const acceptsPublicContact = business.acceptsPublicContact === true;
+    if (wantsSale && !acceptsPublicContact) {
+      fields.push({ path: "business.acceptsPublicContact", issue: "required_consent" });
     }
 
     // -----------------------------
@@ -344,13 +367,19 @@ r.post("/", async (req: Request, res: Response) => {
       model_year: year,
       color: String(color).trim(),
       fuel_type: String(fuel).trim(),
+      transmission,
 
       is_brand_suggestion: !!vehicle.isBrandNewSuggestion,
       is_line_suggestion: !!vehicle.isLineNewSuggestion,
 
       appointment_date: String(appointmentDate).trim(),
-      availability_type: String(availability).trim(),
-      expected_daily_rent: expectedPrice,
+      availability_type: wantsRent ? String(availability).trim() : null,
+      expected_daily_rent: wantsRent ? expectedPrice : null,
+
+      listing_type: listingType,
+      sale_price: wantsSale ? salePrice : null,
+      accepts_public_contact: acceptsPublicContact,
+      published_in_catalog: false,
 
       mileage: mileage ? Number(mileage) : null,
       soat_expires_at: soatDate || null,
@@ -432,22 +461,49 @@ r.get("/", basicAuth, async (req: Request, res: Response) => {
 // PATCH /vehicle-applications/:id (Admin Update Status)
 r.patch("/:id", basicAuth, async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { status, status_reason } = req.body;
+  const { status, status_reason, published_in_catalog } = req.body ?? {};
+  const hasPublishFlag = typeof published_in_catalog === "boolean";
 
-  if (!status) {
-    return res.status(400).json({ error: "status is required" });
+  if (!status && !hasPublishFlag) {
+    return res.status(400).json({ error: "status o published_in_catalog es requerido" });
   }
 
   if (status === "rejected" && (!status_reason || !String(status_reason).trim())) {
     return res.status(400).json({ error: "El motivo del rechazo (status_reason) es obligatorio." });
   }
 
+  const updates: Record<string, unknown> = {};
+  if (status) {
+    updates.status = status;
+    updates.status_reason = status_reason ?? null;
+    // Un vehículo rechazado o devuelto a pendiente nunca queda visible en el catálogo
+    if (status !== "approved") updates.published_in_catalog = false;
+  }
+
+  if (hasPublishFlag) {
+    if (published_in_catalog) {
+      // Regla #38: solo se publica lo aprobado; la venta exige el consentimiento de contacto público
+      const current = await supabase
+        .from("vehicle_applications")
+        .select("status, listing_type, accepts_public_contact")
+        .eq("id", id)
+        .single();
+      if (current.error) return res.status(500).json({ error: current.error.message });
+      const effectiveStatus = status || current.data.status;
+      if (effectiveStatus !== "approved") {
+        return res.status(422).json({ error: "Solo se pueden publicar vehículos aprobados." });
+      }
+      const lt = current.data.listing_type || "rent";
+      if ((lt === "sale" || lt === "both") && !current.data.accepts_public_contact) {
+        return res.status(422).json({ error: "El propietario no autorizó mostrar su contacto: no se puede publicar la venta." });
+      }
+    }
+    updates.published_in_catalog = published_in_catalog;
+  }
+
   const { error } = await supabase
     .from("vehicle_applications")
-    .update({
-      status,
-      status_reason,
-    })
+    .update(updates)
     .eq("id", id);
 
   if (error) {

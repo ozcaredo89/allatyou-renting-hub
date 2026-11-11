@@ -63,10 +63,10 @@ export default function RentCatalog() {
   };
 
   /**
-   * Enlace de WhatsApp para RENTA (dirigido al contacto del vehículo o soporte AllAtYou)
+   * Enlace de WhatsApp para RENTA: siempre al canal de AllAtYou (el alquiler es administrado, ticket #38)
    */
   const getWhatsappRentLink = (car: Car) => {
-    const contactPhone = normalizeWhatsAppPhone(car.owner_phone || ALLATYOU_WHATSAPP);
+    const contactPhone = normalizeWhatsAppPhone(ALLATYOU_WHATSAPP);
     const priceText = car.price_per_day ? ` ($${car.price_per_day.toLocaleString()}/día)` : "";
     const msg = `Hola, me interesa rentar el ${car.brand} ${car.model} (${car.year})${priceText} que vi en el catálogo de AllAtYou. ¿Cuáles son los requisitos y fechas disponibles?`;
     return `https://wa.me/${contactPhone}?text=${encodeURIComponent(msg)}`;

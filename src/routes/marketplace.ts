@@ -1,339 +1,90 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
-import { classifyVehiclePhotos } from "../lib/vehicleImageClassifier";
 
 const r = Router();
 
-/**
- * Detecta cadenas aleatorias generadas por bots (ej: "ywHraBYLhrnSzmhmzFb GyEGEuhoXgywAorfx")
- * sin bloquear apellidos o nombres reales con mayúsculas internas (ej: McDonald, DiCaprio).
- */
-function isGibberishText(v: unknown): boolean {
-  if (typeof v !== "string") return false;
-  const clean = v.trim();
-  if (!clean) return false;
+type AppPhoto = { url: string; kind?: string; is_cover_worthy?: boolean };
 
-  const words = clean.split(/\s+/);
-  for (const word of words) {
-    if (word.length > 25) return true;
-    if (/[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]{6,}/.test(word)) {
-      return true;
-    }
-    // Solo evaluar alternancia caótica en palabras largas (>= 10 letras)
-    if (word.length >= 10 && word !== word.toUpperCase()) {
-      let caseTransitions = 0;
-      for (let i = 1; i < word.length; i++) {
-        const prevChar = word.charAt(i - 1);
-        const currChar = word.charAt(i);
-        const prevIsUpper = /[A-ZÁÉÍÓÚÑ]/.test(prevChar);
-        const currIsUpper = /[A-ZÁÉÍÓÚÑ]/.test(currChar);
-        const prevIsLetter = /[a-zA-ZáéíóúñÁÉÍÓÚÑ]/.test(prevChar);
-        const currIsLetter = /[a-zA-ZáéíóúñÁÉÍÓÚÑ]/.test(currChar);
-        if (prevIsLetter && currIsLetter && prevIsUpper !== currIsUpper) {
-          caseTransitions++;
-        }
-      }
-      if (caseTransitions >= 3) return true;
-    }
-  }
-  return false;
+/**
+ * Elige portada e interior a partir de las fotos etiquetadas por IA (vehicleImageClassifier).
+ * Invariante: la foto interior nunca es la misma que la portada.
+ */
+function pickCatalogPhotos(photos: unknown): { exterior: string | null; interior: string | null } {
+  const list: AppPhoto[] = Array.isArray(photos) ? photos.filter((p: any) => p && typeof p.url === "string") : [];
+  const cover =
+    list.find(p => p.is_cover_worthy) ||
+    list.find(p => p.kind === "exterior") ||
+    list.find(p => p.kind !== "interior") ||
+    list[0];
+  const interior = list.find(p => p.kind === "interior" && p.url !== cover?.url);
+  return { exterior: cover?.url ?? null, interior: interior?.url ?? null };
 }
 
 /**
  * GET /marketplace/catalog
- * Público. Trae los carros DISPONIBLES para rentar o comprar.
- * Filtra por status = 'approved' y opcionalmente por ?type=rent|sale.
+ * Público. Vitrina de vehículos aprobados y publicados por el admin.
+ * Desde el ticket #38 la fuente es `vehicle_applications` (captación única);
+ * `marketplace_cars` quedó retirada. Filtro opcional ?type=rent|sale.
  */
 r.get("/catalog", async (req: Request, res: Response) => {
   try {
     const filterType = typeof req.query.type === "string" ? req.query.type.toLowerCase() : null;
 
     let query = supabase
-      .from("marketplace_cars")
-      .select("id, brand, model, year, transmission, fuel_type, price_per_day, sale_price, listing_type, photo_exterior_url, photo_interior_url, owner_city, owner_name, owner_phone")
+      .from("vehicle_applications")
+      .select("id, brand, line, model_year, transmission, fuel_type, expected_daily_rent, sale_price, listing_type, accepts_public_contact, photos, owner_city, owner_name, owner_phone")
       .eq("status", "approved")
+      .eq("published_in_catalog", true)
       .order("created_at", { ascending: false });
 
     if (filterType === "rent") {
-      // Carros disponibles para renta (o ambos, o antiguos con null que eran de renta)
-      query = query.or("listing_type.eq.rent,listing_type.eq.both,listing_type.is.null");
+      query = query.in("listing_type", ["rent", "both"]);
     } else if (filterType === "sale") {
-      // Carros disponibles para venta (o ambos)
-      query = query.or("listing_type.eq.sale,listing_type.eq.both");
+      query = query.in("listing_type", ["sale", "both"]);
     }
 
     const { data, error } = await query;
-
     if (error) throw new Error(error.message);
 
-    // Normalizar listing_type para registros históricos
-    const normalizedData = (data || []).map((car: any) => ({
-      ...car,
-      listing_type: car.listing_type || "rent",
-      price_per_day: Number(car.price_per_day) || 0,
-      sale_price: car.sale_price ? Number(car.sale_price) : null,
-    }));
+    // Mantiene el contrato histórico del catálogo (RentCatalog.tsx)
+    const cars = (data || []).map((app: any) => {
+      const listingType = app.listing_type || "rent";
+      const { exterior, interior } = pickCatalogPhotos(app.photos);
+      // El contacto del dueño solo se expone en ventas autorizadas (Ley 1581); la renta va por AllAtYou
+      const exposeOwner = listingType !== "rent" && app.accepts_public_contact === true;
+      return {
+        id: app.id,
+        brand: app.brand,
+        model: app.line,
+        year: app.model_year,
+        transmission: app.transmission || "—",
+        fuel_type: app.fuel_type,
+        price_per_day: listingType === "sale" ? 0 : Number(app.expected_daily_rent) || 0,
+        sale_price: listingType === "rent" ? null : app.sale_price ? Number(app.sale_price) : null,
+        listing_type: listingType,
+        photo_exterior_url: exterior,
+        photo_interior_url: interior,
+        owner_city: app.owner_city,
+        owner_name: exposeOwner ? app.owner_name : undefined,
+        owner_phone: exposeOwner ? app.owner_phone : undefined,
+      };
+    });
 
-    return res.json(normalizedData);
+    return res.json(cars);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
 });
 
 /**
- * POST /marketplace/upload
- * Público. Permite a un dueño subir su vehículo para revisión.
+ * POST /marketplace/upload — retirado en el ticket #38.
+ * La captación de vehículos es única: POST /vehicle-applications (formulario de /#propietarios y /rent-your-car).
  */
-r.post("/upload", async (req: Request, res: Response) => {
-  const body = req.body ?? {};
-
-  try {
-    // 1. Honeypot anti-bots
-    if (typeof body.website === "string" && body.website.trim().length > 0) {
-      return res.status(400).json({ error: "Solicitud bloqueada por filtro anti-spam." });
-    }
-
-    // 2. Validaciones básicas de presencia
-    if (!body.owner_name || !body.owner_phone || !body.brand || !body.model || !body.plate) {
-      return res.status(400).json({
-        error: "Por favor completa todos los datos obligatorios (Nombre, Celular, Marca, Línea y Placa).",
-      });
-    }
-
-    // 3. Anti-basura (bots que envían "ywHraBYLhrnSzmhmzFb GyEGEuhoXgywAorfx")
-    if (isGibberishText(body.owner_name)) {
-      return res.status(422).json({
-        error: "Revisa el nombre, parece tener un error de escritura.",
-      });
-    }
-    if (isGibberishText(body.brand) || isGibberishText(body.model)) {
-      return res.status(422).json({
-        error: "Revisa la marca o línea del vehículo, parece tener un error de escritura.",
-      });
-    }
-
-    // 4. Validar placa colombiana (3 letras + 3 números, ej: ABC123)
-    const normalizedPlate = String(body.plate).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (!/^[A-Z]{3}\d{3}$/.test(normalizedPlate)) {
-      return res.status(422).json({
-        error: "Ingresa una placa válida de 6 caracteres (3 letras y 3 números, ej: ABC123).",
-      });
-    }
-
-    // 5. Validar teléfono celular (quitar prefijo 57 solo si tiene más de 10 dígitos)
-    let cleanPhone = String(body.owner_phone).replace(/\D/g, "");
-    if (cleanPhone.length > 10 && cleanPhone.startsWith("57")) {
-      cleanPhone = cleanPhone.slice(2);
-    }
-    if (!/^3\d{9}$/.test(cleanPhone)) {
-      return res.status(422).json({
-        error: "Ingresa un número de celular colombiano válido de 10 dígitos (ej: 3001234567).",
-      });
-    }
-
-    // 6. Validar correo electrónico
-    if (!body.owner_email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(body.owner_email).trim())) {
-      return res.status(400).json({ error: "Ingresa un correo electrónico válido para notificaciones." });
-    }
-
-    // 7. Validar año (1990 al año siguiente)
-    const parsedYear = parseInt(String(body.year), 10);
-    const currentYear = new Date().getFullYear();
-    if (Number.isNaN(parsedYear) || parsedYear < 1990 || parsedYear > currentYear + 1) {
-      return res.status(422).json({ error: `Ingresa un año válido entre 1990 y ${currentYear + 1}.` });
-    }
-
-    // 7.1 Validar modalidad (Alquiler, Venta o Ambos) y precios correspondientes
-    const validListingTypes = ["rent", "sale", "both"];
-    const listingType = validListingTypes.includes(String(body.listing_type).toLowerCase())
-      ? String(body.listing_type).toLowerCase()
-      : "rent";
-
-    const parsedPricePerDay = Number(body.price_per_day) || 0;
-    const parsedSalePrice = body.sale_price !== undefined && body.sale_price !== null && body.sale_price !== ""
-      ? Number(body.sale_price)
-      : null;
-
-    if ((listingType === "rent" || listingType === "both") && parsedPricePerDay <= 0) {
-      return res.status(422).json({ error: "Ingresa un precio por día válido para alquiler." });
-    }
-
-    if ((listingType === "sale" || listingType === "both") && (!parsedSalePrice || parsedSalePrice <= 0)) {
-      return res.status(422).json({ error: "Ingresa un precio de venta válido para el vehículo." });
-    }
-
-    // 8. Normalizar y validar fotos (soporta arreglo flexible photos[] o campos individuales)
-    const allowedBucketPrefix = (process.env.R2_PUBLIC_URL || "").replace(/\/+$/, "");
-    const rawPhotosList = Array.isArray(body.photos) ? body.photos : [];
-    const validPhotoUrls: string[] = [];
-
-    // Validar fotos del arreglo photos[]
-    for (const p of rawPhotosList) {
-      const urlStr = typeof p === "string" ? p.trim() : (p && typeof p.url === "string") ? p.url.trim() : "";
-      if (urlStr) {
-        const isAllowedOrigin = allowedBucketPrefix
-          ? urlStr.startsWith(`${allowedBucketPrefix}/`)
-          : urlStr.startsWith("https://");
-        if (!isAllowedOrigin) {
-          return res.status(422).json({ error: "URL de fotografía no permitida o inválida." });
-        }
-        validPhotoUrls.push(urlStr);
-      }
-    }
-
-    // Compatibilidad hacia atrás con campos directos photo_exterior_url / photo_interior_url
-    for (const photoField of ["photo_exterior_url", "photo_interior_url"] as const) {
-      const rawUrl = body[photoField];
-      if (rawUrl && typeof rawUrl === "string") {
-        const urlStr = rawUrl.trim();
-        const isAllowedOrigin = allowedBucketPrefix
-          ? urlStr.startsWith(`${allowedBucketPrefix}/`)
-          : urlStr.startsWith("https://");
-        if (!isAllowedOrigin) {
-          return res.status(422).json({ error: "URL de fotografía inválida." });
-        }
-        if (!validPhotoUrls.includes(urlStr)) {
-          validPhotoUrls.push(urlStr);
-        }
-      }
-    }
-
-    // Tope de seguridad: Máximo 2 fotos en Marketplace
-    if (validPhotoUrls.length > 2) {
-      return res.status(422).json({ error: "En el Marketplace se permite un máximo de 2 fotografías (exterior e interior)." });
-    }
-
-    const initialExterior = validPhotoUrls[0] || (typeof body.photo_exterior_url === "string" ? body.photo_exterior_url.trim() : null) || null;
-    let initialInterior = validPhotoUrls[1] || (typeof body.photo_interior_url === "string" ? body.photo_interior_url.trim() : null) || null;
-    // Si la foto interior es idéntica a la exterior, dejarla en null para no duplicar
-    if (initialInterior === initialExterior) {
-      initialInterior = null;
-    }
-
-    // 9. Anti-duplicados por placa
-    const existing = await supabase
-      .from("marketplace_cars")
-      .select("id")
-      .eq("plate", normalizedPlate)
-      .limit(1);
-
-    if (existing.error) {
-      return res.status(500).json({ error: existing.error.message });
-    }
-
-    if (existing.data && existing.data.length > 0) {
-      return res.status(409).json({
-        error: `El vehículo con placa ${normalizedPlate} ya se encuentra registrado en nuestro sistema.`,
-        code: "vehicle_already_exists",
-      });
-    }
-
-    const { data, error } = await supabase
-      .from("marketplace_cars")
-      .insert({
-        owner_name: String(body.owner_name).trim(),
-        owner_phone: cleanPhone,
-        owner_email: String(body.owner_email).trim().toLowerCase(),
-        owner_city: body.owner_city || "Cali",
-        brand: String(body.brand).trim(),
-        model: String(body.model).trim(),
-        year: parsedYear,
-        transmission: body.transmission || "Automática",
-        fuel_type: body.fuel_type || "Gasolina",
-        plate: normalizedPlate,
-        price_per_day: listingType === "sale" ? 0 : parsedPricePerDay,
-        sale_price: listingType === "rent" ? null : parsedSalePrice,
-        listing_type: listingType,
-        photo_exterior_url: initialExterior,
-        photo_interior_url: initialInterior,
-        status: "pending",
-      })
-      .select()
-      .single();
-
-    if (error) throw new Error(error.message);
-
-    // Auto-clasificación con IA en segundo plano para seleccionar la mejor portada
-    if (validPhotoUrls.length > 0) {
-      setImmediate(async () => {
-        try {
-          const classified = await classifyVehiclePhotos(validPhotoUrls.map(url => ({ url })));
-          const bestExterior = classified.find(p => p.is_cover_worthy) || classified.find(p => p.kind === "exterior");
-          const bestInterior = classified.find(p => p.kind === "interior");
-
-          let finalExterior = initialExterior;
-          let finalInterior = initialInterior;
-
-          if (validPhotoUrls.length === 2) {
-            const [photoA, photoB] = validPhotoUrls;
-            // Si la IA eligió photoB como la mejor portada, intercambiarlas para no duplicar
-            if (bestExterior && bestExterior.url === photoB) {
-              finalExterior = photoB;
-              finalInterior = photoA;
-            } else if (bestInterior && bestInterior.url === photoA && (!bestExterior || bestExterior.url === photoB)) {
-              finalExterior = photoB;
-              finalInterior = photoA;
-            }
-          } else if (validPhotoUrls.length === 1) {
-            finalExterior = validPhotoUrls[0] || null;
-            finalInterior = null;
-          }
-
-          // Invariante de negocio: la foto interior NUNCA puede ser idéntica a la exterior
-          if (finalInterior === finalExterior) {
-            finalInterior = null;
-          }
-
-          const updates: Record<string, string | null> = {};
-          if (finalExterior !== initialExterior) {
-            updates.photo_exterior_url = finalExterior;
-          }
-          if (finalInterior !== initialInterior) {
-            updates.photo_interior_url = finalInterior;
-          }
-
-          if (Object.keys(updates).length > 0) {
-            await supabase.from("marketplace_cars").update(updates).eq("id", data.id);
-            console.log(`[AI] Portada y fotos optimizadas para Marketplace car #${data.id}:`, updates);
-          }
-        } catch (aiErr) {
-          console.warn("⚠️ Error en auto-etiquetado IA marketplace:", aiErr);
-        }
-      });
-    }
-
-    return res.status(201).json({ success: true, car: data });
-  } catch (err: any) {
-    console.error("Error uploading car:", err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// --- ADMIN ENDPOINTS (Protegidos con basicAuth desde src/index.ts en /marketplace/admin) ---
-
-r.get("/admin/all", async (_req: Request, res: Response) => {
-  const { data, error } = await supabase
-    .from("marketplace_cars")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json(data);
-});
-
-r.put("/admin/:id/status", async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { status } = req.body; // 'approved' | 'rejected' | 'pending'
-
-  const { data, error } = await supabase
-    .from("marketplace_cars")
-    .update({ status })
-    .eq("id", id)
-    .select()
-    .single();
-
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json(data);
+r.post("/upload", (_req: Request, res: Response) => {
+  return res.status(410).json({
+    error: "endpoint_retired",
+    message: "Este formulario ya no está disponible. Registra tu vehículo en https://www.allatyou.com/rent-your-car",
+  });
 });
 
 export default r;
