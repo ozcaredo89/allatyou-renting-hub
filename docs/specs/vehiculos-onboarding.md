@@ -25,6 +25,32 @@
 | **Endpoint Backend** | `POST /vehicle-applications` | `POST /marketplace/upload` |
 | **Tabla Supabase** | `vehicle_applications` | `marketplace_cars` |
 | **Destino Admin** | `web.allatyou.com/recruitment` -> Pestaña **"Vehículos"** (`AdminRecruitment.tsx`). | `web.allatyou.com/marketplace` (`AdminMarketplace.tsx`). |
+| **Estado inicial** | `pending` | `pending` |
+| **Visibilidad en catálogo** | No aplica directamente (entra a flota tras peritaje y contrato). | Requiere aprobación admin (`status = 'approved'`). |
+
+---
+
+### 1.1 Guía Rápida de Aprobación y Moderación Administrativa (Cheat Sheet)
+
+Para localizar y moderar rápidamente cualquier vehículo registrado por un usuario:
+
+#### Caso A: Vehículo registrado desde la Landing Page (`allatyou.com`)
+1. **URL de Administración:** `https://web.allatyou.com/recruitment`
+2. **Navegación:** Menú lateral **Operación → 👥 Reclutamiento** → Pestaña **Vehículos**.
+3. **Identificación:** Se lista por fecha, nombre del propietario, placa (ej. `HBU166`), marca, línea y estado actual (`pending`, `approved`, `rejected`).
+4. **Acción:**
+   - Clic en **"Ver Detalle →"**.
+   - Se abre el modal con fotos, SOAT, tecnomecánica, disponibilidad para peritaje y contacto de WhatsApp/Email.
+   - Botón **"Aprobar / Contactado"** para avanzar la postulación o **"Rechazar"** (requiere motivo).
+
+#### Caso B: Vehículo publicado para Marketplace P2P (`/rent-your-car`)
+1. **URL de Administración:** `https://web.allatyou.com/marketplace`
+2. **Navegación:** Menú lateral **Operación → 🏪 Marketplace**.
+3. **Identificación:** Se lista con foto exterior, precio por día/venta, placa y datos de contacto.
+4. **Moderación:** Botón verde de check para aprobar (`approved`) o cruz para rechazar (`rejected`).
+5. **Aparición en catálogo público:**
+   - **Regla estricta de seguridad:** `GET /marketplace/catalog` filtra exclusivamente `.eq("status", "approved")`.
+   - **Ningún vehículo aparece en `/rent` o `/marketplace` sin aprobación previa del administrador**, garantizando que no se publiquen fotos inapropiadas o precios erróneos.
 
 ---
 
