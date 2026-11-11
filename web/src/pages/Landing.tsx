@@ -45,16 +45,16 @@ export default function Landing() {
   return (
     <div className="min-h-screen font-sans text-[#eaf0ff] selection:bg-emerald-500/30 selection:text-emerald-200"
          style={{
-           backgroundColor: "#0b1220",
+           backgroundColor: "#070c17",
            backgroundImage: `
-             radial-gradient(900px 500px at 20% 10%, rgba(16, 185, 129, 0.15), transparent 65%),
-             radial-gradient(700px 450px at 85% 35%, rgba(124, 92, 255, 0.10), transparent 60%),
-             radial-gradient(900px 600px at 50% 120%, rgba(251, 191, 36, 0.05), transparent 60%)
+             radial-gradient(1000px 520px at 15% -5%, rgba(16, 185, 129, 0.18), transparent 65%),
+             radial-gradient(800px 480px at 90% 25%, rgba(45, 212, 191, 0.10), transparent 60%),
+             radial-gradient(900px 600px at 50% 115%, rgba(14, 165, 233, 0.07), transparent 60%)
            `
          }}>
 
       {/* NAVBAR */}
-      <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0b1220]/80 backdrop-blur-md">
+      <header className="sticky top-0 z-50 border-b border-white/[0.08] bg-[#070c17]/75 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-4">
              <Logo className="h-9 md:h-10 w-auto" />
@@ -72,12 +72,12 @@ export default function Landing() {
              </Link>
           </div>
 
-          <nav className="hidden md:flex gap-6 text-sm font-medium text-slate-400 items-center">
+          <nav className="hidden md:flex gap-5 text-sm font-medium text-slate-400 items-center whitespace-nowrap">
             <Link to="/rent" className="hover:text-emerald-400 transition-colors flex items-center gap-1">
               <Key className="w-3.5 h-3.5 text-emerald-400" /> Renta
             </Link>
-            <Link to="/rent" className="hover:text-indigo-400 transition-colors flex items-center gap-1">
-              <Tag className="w-3.5 h-3.5 text-indigo-400" /> Venta
+            <Link to="/rent" className="hover:text-teal-300 transition-colors flex items-center gap-1">
+              <Tag className="w-3.5 h-3.5 text-teal-300" /> Venta
             </Link>
             <Link to="/rent-your-car" className="text-slate-300 hover:text-white transition-colors">
               Publicar Carro
@@ -97,11 +97,11 @@ export default function Landing() {
 
           <div className="flex items-center gap-2 md:gap-4">
             {/* Social Icons */}
-            <div className="hidden sm:flex items-center gap-2 md:gap-3 pr-2 md:pr-3 border-r border-white/10">
+            <div className="hidden sm:flex items-center gap-2 md:gap-3 pr-2 md:pr-3 border-r border-white/[0.08]">
               <a href="https://www.instagram.com/allatyourenting/" target="_blank" rel="noopener noreferrer" aria-label="Instagram" className="text-slate-400 hover:text-pink-500 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
                 <Instagram className="w-5 h-5" />
               </a>
-              <a href="https://www.facebook.com/profile.php?id=61587315881723" target="_blank" rel="noopener noreferrer" aria-label="Facebook" className="text-slate-400 hover:text-blue-500 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+              <a href="https://www.facebook.com/profile.php?id=61587315881723" target="_blank" rel="noopener noreferrer" aria-label="Facebook" className="text-slate-400 hover:text-sky-500 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
                 <Facebook className="w-5 h-5" />
               </a>
               <a href="https://www.tiktok.com/@allatyourenting" target="_blank" rel="noopener noreferrer" aria-label="TikTok" className="text-slate-400 hover:text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
@@ -109,7 +109,7 @@ export default function Landing() {
               </a>
             </div>
             {/* WhatsApp CTA */}
-             <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 transition-all hover:-translate-y-1">
+             <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-xl bg-gradient-to-r from-emerald-400 to-teal-400 text-slate-950 hover:brightness-110 px-4 py-2 text-xs font-bold shadow-lg shadow-emerald-500/20 transition-all hover:-translate-y-1">
                WhatsApp
              </a>
           </div>
@@ -117,20 +117,20 @@ export default function Landing() {
       </header>
 
       {/* BANNER DESTACADO: CARROS LISTOS PARA ALQUILER Y VENTA */}
-      <div className="bg-gradient-to-r from-emerald-950/60 via-slate-900/80 to-indigo-950/60 border-b border-white/10 py-3.5 px-4 backdrop-blur-xs">
+      <div className="bg-gradient-to-r from-emerald-950/70 via-[#0a1322]/80 to-teal-950/60 border-b border-white/[0.08] py-3.5 px-4 backdrop-blur-xs">
         <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
           <div className="flex items-center gap-2.5">
             <span className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 shrink-0">
               <Sparkles className="w-4 h-4" />
             </span>
             <p className="text-xs sm:text-sm text-slate-200">
-              <strong className="text-white">¿Buscas un carro listo para entrega inmediata?</strong> Flota verificada disponible para <span className="text-emerald-400 font-bold">Alquiler</span> y para <span className="text-indigo-400 font-bold">Venta</span>.
+              <strong className="text-white">¿Buscas un carro listo para entrega inmediata?</strong> Flota verificada disponible para <span className="text-emerald-400 font-bold">Alquiler</span> y para <span className="text-teal-300 font-bold">Venta</span>.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Link
               to="/rent"
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-500 text-slate-950 text-xs font-black shadow-md hover:bg-emerald-400 transition-all"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-emerald-400 to-teal-400 text-slate-950 hover:brightness-110 text-xs font-black shadow-md shadow-emerald-500/20 transition-all"
             >
               Ver Carros Listos <ArrowRight className="w-3.5 h-3.5" />
             </Link>
@@ -162,7 +162,7 @@ export default function Landing() {
               onClick={() => handleTabChange('servicios')}
               className={`shrink-0 px-5 py-2.5 rounded-full text-sm font-bold transition-all ${
                 activeTab === 'servicios' 
-                  ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' 
+                  ? 'bg-sky-500/10 text-sky-400 border border-sky-500/30' 
                   : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent'
               }`}
             >
@@ -200,14 +200,14 @@ export default function Landing() {
         <div className="mx-auto max-w-6xl px-4 mt-12">
           <TrustSection />
 
-          <section id="faq" className="mb-20 rounded-3xl border border-white/10 bg-[#101a33]/50 p-8">
+          <section id="faq" className="mb-20 rounded-3xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] border border-white/[0.08] bg-[#101a33]/50 p-8">
               <h2 className="text-2xl font-bold text-white mb-6">Preguntas frecuentes</h2>
               <FaqSection />
           </section>
         </div>
       </main>
 
-      <footer className="border-t border-white/10 pt-12 pb-8 text-center text-xs text-slate-500">
+      <footer className="border-t border-white/[0.08] pt-12 pb-8 text-center text-xs text-slate-500">
         <div className="flex justify-center items-center gap-6 mb-4">
           <Link to="/rent" className="hover:text-emerald-400 transition-colors text-sm font-medium">Catálogo de Carros</Link>
           <Link to="/rent-your-car" className="hover:text-emerald-400 transition-colors text-sm font-medium">Publicar Carro</Link>
@@ -219,7 +219,7 @@ export default function Landing() {
            <a href="https://www.instagram.com/allatyourenting/" target="_blank" rel="noopener noreferrer" aria-label="Instagram" className="text-slate-400 hover:text-pink-500 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
               <Instagram className="w-5 h-5" />
            </a>
-           <a href="https://www.facebook.com/profile.php?id=61587315881723" target="_blank" rel="noopener noreferrer" aria-label="Facebook" className="text-slate-400 hover:text-blue-500 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+           <a href="https://www.facebook.com/profile.php?id=61587315881723" target="_blank" rel="noopener noreferrer" aria-label="Facebook" className="text-slate-400 hover:text-sky-500 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
               <Facebook className="w-5 h-5" />
            </a>
            <a href="https://www.tiktok.com/@allatyourenting" target="_blank" rel="noopener noreferrer" aria-label="TikTok" className="text-slate-400 hover:text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-md">

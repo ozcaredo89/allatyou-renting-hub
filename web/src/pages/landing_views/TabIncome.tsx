@@ -15,14 +15,14 @@ export function TabIncome({ referralCode }: { referralCode: string | null }) {
       <div className="mx-auto max-w-6xl px-4">
         <section className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-12 items-center mb-12">
           {/* Left: Copy de Venta */}
-          <div className="rounded-3xl border border-white/10 bg-white/[0.02] p-8 shadow-2xl backdrop-blur-sm">
+          <div className="rounded-3xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-8 shadow-2xl shadow-black/30 backdrop-blur-sm">
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-bold text-emerald-400 mb-6">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"/>
               Marketplace: Propietarios ↔ Conductores
             </div>
             
             <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-white mb-6 leading-[1.1]">
-              Pon tu carro a producir <span className="text-emerald-400">sin manejarlo.</span>
+              Pon tu carro a producir <span className="bg-gradient-to-r from-emerald-300 to-teal-300 bg-clip-text text-transparent">sin manejarlo.</span>
             </h1>
             
             <p className="text-lg text-slate-400 mb-8 leading-relaxed max-w-xl">
@@ -33,11 +33,11 @@ export function TabIncome({ referralCode }: { referralCode: string | null }) {
             <div className="flex flex-col gap-6 mb-8">
               {/* Botones Principales */}
               <div className="flex flex-wrap gap-4">
-                <a href="#simulador" className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-4 text-sm font-bold text-white shadow-xl shadow-emerald-600/20 hover:bg-emerald-500 hover:-translate-y-0.5 transition-all">
+                <a href="#simulador" className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-400 text-slate-950 hover:brightness-110 px-6 py-4 text-sm font-bold shadow-xl shadow-emerald-500/20 hover:-translate-y-0.5 transition-all">
                   <Calculator className="w-4 h-4" />
                   Simular Ganancias
                 </a>
-                <a href="#como" className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm font-bold text-slate-200 hover:bg-white/10 transition-all">
+                <a href="#como" className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/5 px-6 py-4 text-sm font-bold text-slate-200 hover:bg-white/10 transition-all">
                   <Info className="w-4 h-4" />
                   Cómo funciona
                 </a>
@@ -80,13 +80,13 @@ export function TabIncome({ referralCode }: { referralCode: string | null }) {
           <InvestmentVaki />
         </div>
 
-        <section id="como" className="rounded-3xl border border-white/10 bg-[#101a33]/50 p-8 backdrop-blur-sm mb-16">
+        <section id="como" className="rounded-3xl border border-white/[0.08] bg-[#0c1426]/70 p-8 backdrop-blur-sm mb-16">
           <h2 className="text-2xl font-bold text-white mb-2">Cómo funciona (Propietarios)</h2>
           <p className="text-slate-400 mb-8 max-w-2xl">Tu carro entra a una operación administrada profesionalmente. Nosotros nos encargamos del "trabajo sucio".</p>
           <ProcessSteps />
         </section>
 
-        <section id="flujo" className="rounded-3xl border border-white/10 bg-[#101a33]/50 p-8 backdrop-blur-sm mb-20 mt-10">
+        <section id="flujo" className="rounded-3xl border border-white/[0.08] bg-[#0c1426]/70 p-8 backdrop-blur-sm mb-20 mt-10">
           <h2 className="text-2xl font-bold text-white mb-2">Flujo del dinero</h2>
           <p className="text-slate-400 mb-8">La confianza se construye con cuentas claras. Así se distribuye el ingreso.</p>
           <MoneyFlow />
@@ -99,19 +99,19 @@ export function TabIncome({ referralCode }: { referralCode: string | null }) {
             <p className="text-slate-400 text-sm mb-6 leading-relaxed">Accede a un vehículo en condiciones óptimas. Sin jefes, pero con el respaldo de un equipo que quiere verte crecer.</p>
             <ShareButton title="Conduce con AllAtYou" text="Oportunidad para conductores." hash="#conductores" colorClass="text-emerald-400" />
           </div>
-          <div className="rounded-3xl border border-white/10 bg-[#101a33]/80 p-1">
+          <div className="rounded-3xl border border-white/[0.08] bg-[#0c1426]/90 p-1">
             <DriverApplicationForm referralCode={referralCode || undefined} />
           </div>
         </section>
 
         <section id="propietarios" className="mb-20 grid lg:grid-cols-[1fr_1.5fr] gap-12 items-start lg:grid-flow-col-dense">
           <div className="lg:col-start-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-[10px] font-bold text-blue-400 mb-4">RENTABILIDAD SEGURA</div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-sky-500/30 bg-sky-500/10 px-3 py-1 text-[10px] font-bold text-sky-400 mb-4">RENTABILIDAD SEGURA</div>
             <h2 className="text-3xl font-bold text-white mb-4">Registra tu Vehículo</h2>
             <p className="text-slate-400 text-sm mb-6 leading-relaxed">Deja de perder dinero con el carro parqueado. Empieza a facturar hoy mismo con operaciones blindadas.</p>
-            <ShareButton title="Administración AllAtYou" text="Rentabiliza tu vehículo." hash="#propietarios" colorClass="text-blue-400" />
+            <ShareButton title="Administración AllAtYou" text="Rentabiliza tu vehículo." hash="#propietarios" colorClass="text-sky-400" />
           </div>
-          <div className="lg:col-start-1 rounded-3xl border border-white/10 bg-[#101a33]/80 p-1">
+          <div className="lg:col-start-1 rounded-3xl border border-white/[0.08] bg-[#0c1426]/90 p-1">
             <VehicleApplicationForm />
           </div>
         </section>
