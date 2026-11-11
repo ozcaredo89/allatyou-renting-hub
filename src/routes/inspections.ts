@@ -31,8 +31,17 @@ const parseRoadTest = (raw: unknown): boolean | null | undefined => {
 const hasPhotos = (photos: unknown) =>
   !!photos && typeof photos === "object" && Object.keys(photos as object).length > 0;
 
-// DuraciÃ³n total de la revisiÃ³n: desde que se iniciÃ³ hasta que se finalizÃ³ (incluye pausas entre personas)
-const computeDuration = (startedAt: string | null | undefined, completedAt: Date): number | null => {
+// Duración efectiva de la revisión: usa elapsed_seconds del cronómetro si viene (descuenta pausas),
+// o cae al cálculo pared (completedAt - startedAt) como respaldo.
+const computeDuration = (
+  startedAt: string | null | undefined,
+  completedAt: Date,
+  rawElapsed?: unknown
+): number | null => {
+  if (rawElapsed !== undefined && rawElapsed !== null && rawElapsed !== "") {
+    const n = Math.round(Number(rawElapsed));
+    if (!isNaN(n) && n >= 0) return n;
+  }
   if (!startedAt) return null;
   const secs = Math.round((completedAt.getTime() - new Date(startedAt).getTime()) / 1000);
   return secs >= 0 ? secs : null;
@@ -129,7 +138,7 @@ r.post("/", async (req: Request, res: Response) => {
         continue_token: isDraft ? randomUUID() : null,
         started_at: startedAt,
         completed_at: isDraft ? null : now.toISOString(),
-        duration_seconds: isDraft ? null : computeDuration(startedAt, now),
+        duration_seconds: computeDuration(startedAt, now, body.elapsed_seconds),
       })
       .select(SELECT_FULL)
       .single();
@@ -294,7 +303,10 @@ publicInspectionsRoutes.put("/continue/:token", async (req: Request, res: Respon
       const now = new Date();
       updates.status = "completed";
       updates.completed_at = now.toISOString();
-      updates.duration_seconds = computeDuration(current.started_at, now);
+      updates.duration_seconds = computeDuration(current.started_at, now, body.elapsed_seconds);
+    } else if (body.elapsed_seconds !== undefined && body.elapsed_seconds !== null) {
+      const n = Math.round(Number(body.elapsed_seconds));
+      if (!isNaN(n) && n >= 0) updates.duration_seconds = n;
     }
 
     const { data, error } = await supabase

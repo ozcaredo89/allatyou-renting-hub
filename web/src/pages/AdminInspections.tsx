@@ -59,9 +59,11 @@ type Inspection = {
 const continueUrlOf = (insp: Inspection) =>
     insp.continue_token ? `${window.location.origin}/inspection/continue/${insp.continue_token}` : "";
 
-// Tiempo transcurrido de un borrador abierto (desde que se inició)
+// Tiempo transcurrido de un borrador abierto: usa tiempo efectivo (duration_seconds) si ya fue guardado, o tiempo desde started_at
 const openSecs = (insp: Inspection) =>
-    insp.started_at ? (Date.now() - new Date(insp.started_at).getTime()) / 1000 : 0;
+    insp.duration_seconds != null && insp.duration_seconds > 0
+        ? insp.duration_seconds
+        : insp.started_at ? (Date.now() - new Date(insp.started_at).getTime()) / 1000 : 0;
 
 export default function AdminInspections() {
     const [inspections, setInspections] = useState<Inspection[]>([]);
