@@ -11,7 +11,31 @@ const SUPPORT_WHATSAPP = "573113738912";
 // Listas estáticas para facilitar el llenado y evitar datos basura
 const CITIES = ["Cali", "Jamundí", "Yumbo", "Palmira", "Buga", "Otra"];
 
-const COMMON_COLORS = ["Blanco", "Gris", "Plata", "Negro", "Rojo", "Azul", "Beige"];
+const VEHICLE_COLORS = [
+  "Blanco",
+  "Gris",
+  "Plata",
+  "Negro",
+  "Rojo",
+  "Azul",
+  "Beige",
+  "Marrón",
+  "Verde",
+  "Naranja",
+  "Amarillo",
+  "Vino Tinto",
+  "Dorado",
+] as const;
+
+const TOP_COLORS = [
+  { name: "Blanco", bg: "bg-white", border: "border-slate-300" },
+  { name: "Gris", bg: "bg-gray-500", border: "border-gray-400" },
+  { name: "Plata", bg: "bg-slate-300", border: "border-slate-400" },
+  { name: "Negro", bg: "bg-slate-950", border: "border-slate-600" },
+  { name: "Rojo", bg: "bg-red-600", border: "border-red-500" },
+  { name: "Azul", bg: "bg-blue-600", border: "border-blue-500" },
+] as const;
+
 const FUELS = ["Gasolina", "Gas/Gasolina", "Diesel", "Eléctrico", "Híbrido"];
 
 const APPOINTMENT_SUGGESTIONS = [
@@ -104,6 +128,10 @@ export function VehicleApplicationForm() {
 
   // Manejo para marca personalizada ("Otra")
   const [customBrand, setCustomBrand] = useState("");
+
+  // Manejo para color personalizado ("Otro")
+  const [isCustomColor, setIsCustomColor] = useState(false);
+  const [customColor, setCustomColor] = useState("");
 
   const clearErrors = () => {
     setError(null);
@@ -237,8 +265,8 @@ export function VehicleApplicationForm() {
         return false;
       }
 
-      const color = formData.vehicle.color.trim();
-      if (!color || color.length < 3 || isGibberishText(color)) {
+      const effectiveColor = isCustomColor ? customColor.trim() : formData.vehicle.color.trim();
+      if (!effectiveColor || effectiveColor.length < 3 || isGibberishText(effectiveColor)) {
         showError("Por favor indica el color del vehículo.");
         return false;
       }
@@ -282,6 +310,7 @@ export function VehicleApplicationForm() {
 
     const effectiveBrand = formData.vehicle.brand === "Otra" ? customBrand.trim() : formData.vehicle.brand.trim();
     const effectiveLine = formData.vehicle.line.trim();
+    const effectiveColor = isCustomColor ? customColor.trim() : formData.vehicle.color.trim();
     const isBrandNew = formData.vehicle.brand === "Otra";
     const knownLines = BRAND_LINES[effectiveBrand] || [];
     const isLineNew = isBrandNew || !knownLines.some(l => l.toLowerCase() === effectiveLine.toLowerCase());
@@ -295,6 +324,7 @@ export function VehicleApplicationForm() {
         isBrandNewSuggestion: isBrandNew,
         line: effectiveLine,
         isLineNewSuggestion: isLineNew,
+        color: effectiveColor,
       },
     };
 
@@ -576,21 +606,81 @@ export function VehicleApplicationForm() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Color *</label>
-              <input
-                list="common-vehicle-colors"
+
+              {/* Atajos rápidos de 1 toque para los colores más comunes */}
+              <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1 scrollbar-none">
+                {TOP_COLORS.map(c => {
+                  const isSelected = !isCustomColor && formData.vehicle.color === c.name;
+                  return (
+                    <button
+                      key={c.name}
+                      type="button"
+                      onClick={() => {
+                        clearErrors();
+                        setIsCustomColor(false);
+                        setCustomColor("");
+                        setFormData(prev => ({
+                          ...prev,
+                          vehicle: { ...prev.vehicle, color: c.name },
+                        }));
+                      }}
+                      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium transition-all shrink-0 ${
+                        isSelected
+                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 shadow-sm"
+                          : "bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10"
+                      }`}
+                      title={c.name}
+                    >
+                      <span className={`w-2.5 h-2.5 rounded-full ${c.bg} border ${c.border} shrink-0`} />
+                      <span>{c.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Selector estándar tipo select */}
+              <select
                 className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-400"
-                placeholder="Ej: Blanco, Gris, Plata..."
-                value={formData.vehicle.color}
+                value={isCustomColor ? "Otro" : formData.vehicle.color}
                 onChange={e => {
                   clearErrors();
-                  setFormData({ ...formData, vehicle: { ...formData.vehicle, color: e.target.value } });
+                  if (e.target.value === "Otro") {
+                    setIsCustomColor(true);
+                  } else {
+                    setIsCustomColor(false);
+                    setCustomColor("");
+                    setFormData(prev => ({
+                      ...prev,
+                      vehicle: { ...prev.vehicle, color: e.target.value },
+                    }));
+                  }
                 }}
-              />
-              <datalist id="common-vehicle-colors">
-                {COMMON_COLORS.map(c => (
-                  <option key={c} value={c} />
+              >
+                {VEHICLE_COLORS.map(c => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
                 ))}
-              </datalist>
+                <option value="Otro">Otro color...</option>
+              </select>
+
+              {/* Campo para color libre si escoge 'Otro' */}
+              {isCustomColor && (
+                <div className="mt-2">
+                  <input
+                    type="text"
+                    maxLength={30}
+                    placeholder="Escribe el color (ej: Champagne, Vinotinto, Turquesa...)"
+                    value={customColor}
+                    onChange={e => {
+                      clearErrors();
+                      setCustomColor(e.target.value);
+                    }}
+                    className="w-full rounded-xl border border-emerald-500/40 bg-slate-950 px-4 py-2 text-sm text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-emerald-400"
+                    autoFocus
+                  />
+                </div>
+              )}
             </div>
 
             <div>
