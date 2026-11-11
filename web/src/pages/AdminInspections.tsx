@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Eye, X, User, FileText, Truck, Edit, Save, History, Trash2, Gauge, Fuel, Share2 } from "lucide-react";
+import { Eye, X, User, FileText, Truck, Edit, Save, History, Trash2, Gauge, Fuel, Share2, Timer, Car, AlertTriangle, PlayCircle } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
+import { formatDuration } from "../utils/formatDuration";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -47,7 +48,20 @@ type Inspection = {
     photos: Record<string, string>;
     comments: string;
     inspector_name: string;
+    status?: "draft" | "completed";
+    continue_token?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+    duration_seconds?: number | null;
+    road_test?: boolean | null;
 };
+
+const continueUrlOf = (insp: Inspection) =>
+    insp.continue_token ? `${window.location.origin}/inspection/continue/${insp.continue_token}` : "";
+
+// Tiempo transcurrido de un borrador abierto (desde que se inició)
+const openSecs = (insp: Inspection) =>
+    insp.started_at ? (Date.now() - new Date(insp.started_at).getTime()) / 1000 : 0;
 
 export default function AdminInspections() {
     const [inspections, setInspections] = useState<Inspection[]>([]);
@@ -61,15 +75,19 @@ export default function AdminInspections() {
     const [showLogs, setShowLogs] = useState(false);
     const [saving, setSaving] = useState(false);
     const [viewingImages, setViewingImages] = useState<{ urls: { url: string; title?: string }[]; startingIndex: number } | null>(null);
+    const [onlyDrafts, setOnlyDrafts] = useState(false);
 
     useEffect(() => {
         loadData();
     }, []);
 
+    const drafts = inspections.filter(i => i.status === "draft");
+    const visibleInspections = onlyDrafts ? drafts : inspections;
+
     // Cargar logs cuando se selecciona una inspección
     useEffect(() => {
         if (selected?.id) {
-            fetch(`${API}/inspections/${selected.id}/logs`)
+            fetch(`${API}/inspections/${selected.id}/logs`, { headers: { Authorization: ensureBasicAuth() } })
                 .then(res => res.json())
                 .then(data => setLogs(Array.isArray(data) ? data : []))
                 .catch(console.error);
@@ -159,13 +177,21 @@ export default function AdminInspections() {
         }
     };
 
+    const handleShareContinue = (insp: Inspection) => {
+        const url = continueUrlOf(insp);
+        if (!url) return;
+        const text = `🛠️ *INSPECCIÓN EN PROGRESO — CONTINÚALA*\n🚗 *Vehículo:* ${insp.vehicle_plate}\n👤 *Último avance:* ${insp.inspector_name || "N/A"}\n⏱️ *Abierta hace:* ${formatDuration(openSecs(insp))}\n📸 *Fotos tomadas:* ${Object.keys(insp.photos || {}).length}\n\n👉 *Continúa y finaliza aquí:* ${url}`;
+        window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+    };
+
     const handleShareWhatsApp = (insp: Inspection) => {
+        if (insp.status === "draft") return handleShareContinue(insp);
         const viewUrl = `${window.location.origin}/inspection/${insp.id}`;
         const kmText = insp.mileage ? `${Number(insp.mileage).toLocaleString("es-CO")} km` : "No registrado";
         const fuelText = insp.fuel_level ? insp.fuel_level : "No registrado";
         const typeLabel = insp.type === "entrega" ? "Entrega" : insp.type === "recepcion" ? "Recepción" : "Control General";
 
-        const text = `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n🚗 *Vehículo:* ${insp.vehicle_plate}\n📅 *Fecha:* ${formatDate(insp.created_at)}\n🔍 *Tipo:* ${typeLabel}\n👤 *Inspector:* ${insp.inspector_name || "N/A"}\n🛣️ *Kilometraje:* ${kmText}\n⛽ *Combustible:* ${fuelText}\n\n📸 *Ver reporte y fotos:* ${viewUrl}`;
+        const text = `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n🚗 *Vehículo:* ${insp.vehicle_plate}\n📅 *Fecha:* ${formatDate(insp.created_at)}\n🔍 *Tipo:* ${typeLabel}\n👤 *Inspector:* ${insp.inspector_name || "N/A"}\n🛣️ *Kilometraje:* ${kmText}\n⛽ *Combustible:* ${fuelText}\n🚦 *Prueba de ruta:* ${insp.road_test ? "Sí" : insp.road_test === false ? "No" : "No registrado"}\n${insp.duration_seconds ? `⏱️ *Duración de la revisión:* ${formatDuration(insp.duration_seconds)}\n` : ""}\n📸 *Ver reporte y fotos:* ${viewUrl}`;
 
         const cleanPhone = (insp.driver?.phone || "").replace(/\D/g, "");
         const waUrl = cleanPhone
@@ -205,10 +231,45 @@ export default function AdminInspections() {
                         <h1 className="text-2xl font-bold text-slate-900">Auditoría de Inspecciones</h1>
                         <p className="text-slate-500 text-sm">Registro histórico de revisiones de flota, odómetro y estado de combustible</p>
                     </div>
-                    <button onClick={loadData} className="text-sm text-emerald-600 font-bold hover:underline">
-                        Refrescar Lista
-                    </button>
+                    <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-1.5 text-sm text-slate-600 font-semibold cursor-pointer">
+                            <input type="checkbox" checked={onlyDrafts} onChange={e => setOnlyDrafts(e.target.checked)} />
+                            Solo abiertas
+                        </label>
+                        <button onClick={loadData} className="text-sm text-emerald-600 font-bold hover:underline">
+                            Refrescar Lista
+                        </button>
+                    </div>
                 </div>
+
+                {/* AVISO DE INSPECCIONES ABIERTAS */}
+                {drafts.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 shadow-sm">
+                        <div className="flex items-center gap-2 text-amber-800 font-black text-sm mb-3">
+                            <AlertTriangle className="w-5 h-5" />
+                            {drafts.length === 1
+                                ? "Hay 1 inspección abierta pendiente de completar y cerrar"
+                                : `Hay ${drafts.length} inspecciones abiertas pendientes de completar y cerrar`}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {drafts.map(d => (
+                                <div key={d.id} className="bg-white border border-amber-200 rounded-lg px-3 py-2 flex items-center gap-3 text-xs">
+                                    <span className="font-black text-slate-800">{d.vehicle_plate}</span>
+                                    <span className="text-slate-500">{d.inspector_name || "Sin nombre"}</span>
+                                    <span className="font-mono text-amber-700 flex items-center gap-1">
+                                        <Timer className="w-3 h-3" /> {formatDuration(openSecs(d))}
+                                    </span>
+                                    <a href={continueUrlOf(d)} target="_blank" rel="noreferrer" className="text-emerald-700 font-bold hover:underline flex items-center gap-1">
+                                        <PlayCircle className="w-3.5 h-3.5" /> Continuar
+                                    </a>
+                                    <button onClick={() => handleShareContinue(d)} className="text-emerald-700 font-bold hover:underline flex items-center gap-1">
+                                        <Share2 className="w-3.5 h-3.5" /> Pasar
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* TABLA PRINCIPAL */}
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -217,24 +278,34 @@ export default function AdminInspections() {
                             <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
                                 <tr>
                                     <th className="px-6 py-4">Fecha</th>
+                                    <th className="px-6 py-4">Estado</th>
                                     <th className="px-6 py-4">Vehículo</th>
                                     <th className="px-6 py-4">Conductor</th>
                                     <th className="px-6 py-4">Tipo</th>
                                     <th className="px-6 py-4">Kilometraje</th>
                                     <th className="px-6 py-4">Combustible</th>
+                                    <th className="px-6 py-4">Prueba ruta</th>
+                                    <th className="px-6 py-4">Duración</th>
                                     <th className="px-6 py-4">Inspector</th>
                                     <th className="px-6 py-4 text-right">Acción</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {loading ? (
-                                    <tr><td colSpan={8} className="p-8 text-center text-slate-400">Cargando...</td></tr>
-                                ) : inspections.length === 0 ? (
-                                    <tr><td colSpan={8} className="p-8 text-center text-slate-400">No hay registros aún.</td></tr>
+                                    <tr><td colSpan={11} className="p-8 text-center text-slate-400">Cargando...</td></tr>
+                                ) : visibleInspections.length === 0 ? (
+                                    <tr><td colSpan={11} className="p-8 text-center text-slate-400">No hay registros aún.</td></tr>
                                 ) : (
-                                    inspections.map(i => (
-                                        <tr key={i.id} className="hover:bg-slate-50 transition-colors">
+                                    visibleInspections.map(i => (
+                                        <tr key={i.id} className={`transition-colors ${i.status === "draft" ? "bg-amber-50/60 hover:bg-amber-50" : "hover:bg-slate-50"}`}>
                                             <td className="px-6 py-4 font-mono text-slate-600 whitespace-nowrap">{formatDate(i.created_at)}</td>
+                                            <td className="px-6 py-4">
+                                                {i.status === "draft" ? (
+                                                    <span className="px-2 py-1 rounded-full text-[10px] uppercase font-black bg-amber-100 text-amber-800 border border-amber-300 whitespace-nowrap">Abierta</span>
+                                                ) : (
+                                                    <span className="px-2 py-1 rounded-full text-[10px] uppercase font-bold bg-emerald-50 text-emerald-700 whitespace-nowrap">Cerrada</span>
+                                                )}
+                                            </td>
                                             <td className="px-6 py-4 font-black">{i.vehicle_plate}</td>
                                             <td className="px-6 py-4 text-slate-600">{i.driver?.full_name || "N/A"}</td>
                                             <td className="px-6 py-4"><TypeBadge type={i.type} /></td>
@@ -242,9 +313,28 @@ export default function AdminInspections() {
                                                 {i.mileage ? `${Number(i.mileage).toLocaleString("es-CO")} km` : "-"}
                                             </td>
                                             <td className="px-6 py-4"><FuelBadge level={i.fuel_level} /></td>
+                                            <td className="px-6 py-4 text-xs font-bold text-slate-600">
+                                                {i.road_test === true ? "Sí" : i.road_test === false ? "No" : "-"}
+                                            </td>
+                                            <td className="px-6 py-4 font-mono text-xs text-slate-600 whitespace-nowrap">
+                                                {i.status === "draft"
+                                                    ? <span className="text-amber-700">{formatDuration(openSecs(i))} (abierta)</span>
+                                                    : i.duration_seconds != null ? formatDuration(i.duration_seconds) : "-"}
+                                            </td>
                                             <td className="px-6 py-4 text-slate-500 text-xs uppercase">{i.inspector_name || "-"}</td>
                                             <td className="px-6 py-4 text-right">
                                                 <div className="flex items-center justify-end gap-1">
+                                                    {i.status === "draft" && (
+                                                        <a
+                                                            href={continueUrlOf(i)}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            className="text-amber-700 hover:bg-amber-100 p-2 rounded-full transition-colors"
+                                                            title="Continuar inspección"
+                                                        >
+                                                            <PlayCircle className="w-4 h-4" />
+                                                        </a>
+                                                    )}
                                                     <button
                                                         onClick={() => handleShareWhatsApp(i)}
                                                         className="text-emerald-600 hover:bg-emerald-50 p-2 rounded-full transition-colors"
@@ -381,6 +471,53 @@ export default function AdminInspections() {
                                     </div>
                                 </div>
                             )}
+
+                            {/* ESTADO, PRUEBA DE RUTA Y DURACIÓN */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                                        <Car className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Prueba de ruta</span>
+                                        {isEditing ? (
+                                            <select
+                                                value={editForm.road_test == null ? "" : String(editForm.road_test)}
+                                                onChange={e => setEditForm({ ...editForm, road_test: e.target.value === "" ? null : e.target.value === "true" })}
+                                                className="block p-1 text-xs border border-slate-300 rounded font-bold bg-white"
+                                            >
+                                                <option value="">-- Sin registrar --</option>
+                                                <option value="true">Sí</option>
+                                                <option value="false">No</option>
+                                            </select>
+                                        ) : (
+                                            <p className="text-lg font-black text-slate-800">
+                                                {selected.road_test === true ? "Sí, se probó andando" : selected.road_test === false ? "No" : "No registrado"}
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className={`p-4 rounded-xl border shadow-sm flex items-center gap-3 ${selected.status === "draft" ? "bg-amber-50 border-amber-300" : "bg-white border-slate-200"}`}>
+                                    <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                                        <Timer className="w-5 h-5" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                            {selected.status === "draft" ? "Abierta hace (pendiente de cerrar)" : "Duración de la revisión"}
+                                        </span>
+                                        <p className="text-lg font-black text-slate-800 font-mono">
+                                            {selected.status === "draft"
+                                                ? formatDuration(openSecs(selected))
+                                                : selected.duration_seconds != null ? formatDuration(selected.duration_seconds) : "No registrado"}
+                                        </p>
+                                        {selected.status === "draft" && (
+                                            <a href={continueUrlOf(selected)} target="_blank" rel="noreferrer" className="text-xs font-bold text-emerald-700 hover:underline">
+                                                Continuar inspección →
+                                            </a>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
 
                             {/* TARJETAS DE ODÓMETRO Y COMBUSTIBLE */}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { ensureBasicAuth } from "../lib/auth";
 import { compressImage } from "../utils/compressImage";
-import { Camera, X, Check, Plus, Image as ImageIcon, Gauge, Fuel, Share2, CheckCircle2, RotateCcw, ArrowRight } from "lucide-react";
+import { formatDuration } from "../utils/formatDuration";
+import { Camera, X, Check, Plus, Image as ImageIcon, Gauge, Fuel, Share2, CheckCircle2, RotateCcw, ArrowRight, Timer, Car, Save, Users } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -46,9 +47,40 @@ interface CreatedInspectionResult {
   comments?: string | null;
   inspector_name?: string | null;
   photos?: Record<string, string>;
+  road_test?: boolean | null;
+  duration_seconds?: number | null;
+  started_at?: string | null;
+  continue_token?: string | null;
+  status?: string;
+  participants?: string[];
+  last_known_mileage?: number | null;
 }
 
+const lastInspectorName = () => {
+  try {
+    return localStorage.getItem("last_inspector_name") || "";
+  } catch {
+    return "";
+  }
+};
+
+const emptyForm = () => ({
+  vehicle_plate: "",
+  driver_id: "",
+  type: "general",
+  mileage: "",
+  fuel_level: "1/2",
+  comments: "",
+  inspector_name: lastInspectorName(),
+  photos: {} as Record<string, string>,
+  road_test: null as boolean | null,
+});
+
 export default function NewInspection() {
+  // Si viene :token estamos continuando un borrador compartido (ruta pública, sin Basic Auth)
+  const { token: routeToken } = useParams<{ token?: string }>();
+  const isContinueMode = !!routeToken;
+
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -57,17 +89,20 @@ export default function NewInspection() {
   // Guardado exitoso con reporte generado
   const [createdInspection, setCreatedInspection] = useState<CreatedInspectionResult | null>(null);
 
+  // Borrador: token de continuación, inicio de la revisión y participantes
+  const [draftToken, setDraftToken] = useState<string | null>(routeToken || null);
+  const [startedAt, setStartedAt] = useState<Date>(() => new Date());
+  const [participants, setParticipants] = useState<string[]>([]);
+  const [lastKnownMileage, setLastKnownMileage] = useState<number | null>(null);
+  const [draftLoadState, setDraftLoadState] = useState<"idle" | "loading" | "ready" | "completed" | "error">(
+    isContinueMode ? "loading" : "idle"
+  );
+  const [completedId, setCompletedId] = useState<number | null>(null);
+  const [savedDraft, setSavedDraft] = useState<CreatedInspectionResult | null>(null);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+
   // Estado del formulario
-  const [form, setForm] = useState({
-    vehicle_plate: "",
-    driver_id: "",
-    type: "general",
-    mileage: "",
-    fuel_level: "1/2",
-    comments: "",
-    inspector_name: localStorage.getItem("last_inspector_name") || "",
-    photos: {} as Record<string, string>,
-  });
+  const [form, setForm] = useState(emptyForm);
 
   // Estado para el Action Sheet (Menú Inferior)
   const [actionSheetField, setActionSheetField] = useState<{ key: string; label: string } | null>(null);
@@ -82,12 +117,53 @@ export default function NewInspection() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    if (isContinueMode) return; // quien continúa por enlace no tiene credenciales admin
     const auth = ensureBasicAuth();
     fetch(`${API}/vehicles`, { headers: { Authorization: auth } })
       .then((res) => res.json())
       .then((data) => setVehicles(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Error fetching vehicles:", err));
+  }, [isContinueMode]);
+
+  // Cargar borrador cuando se abre un enlace de continuación
+  useEffect(() => {
+    if (!routeToken) return;
+    fetch(`${API}/public/inspections/continue/${routeToken}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error("not found");
+        return res.json();
+      })
+      .then((d: CreatedInspectionResult) => {
+        if (d.status === "completed") {
+          setCompletedId(d.id);
+          setDraftLoadState("completed");
+          return;
+        }
+        setForm({
+          vehicle_plate: d.vehicle_plate,
+          driver_id: d.driver_id ? String(d.driver_id) : "",
+          type: d.type || "general",
+          mileage: d.mileage ? String(d.mileage) : "",
+          fuel_level: d.fuel_level || "1/2",
+          comments: d.comments || "",
+          inspector_name: lastInspectorName(),
+          photos: d.photos || {},
+          road_test: d.road_test ?? null,
+        });
+        if (d.started_at) setStartedAt(new Date(d.started_at));
+        setParticipants(d.participants || []);
+        setLastKnownMileage(d.last_known_mileage ?? null);
+        setDraftLoadState("ready");
+      })
+      .catch(() => setDraftLoadState("error"));
+  }, [routeToken]);
+
+  // Cronómetro visible de la revisión
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
   }, []);
+  const elapsedSecs = (nowTick - startedAt.getTime()) / 1000;
 
   const selectedVehicle = vehicles.find((v) => v.plate === form.vehicle_plate);
 
@@ -221,44 +297,72 @@ export default function NewInspection() {
     }
   };
 
-  // --- GUARDAR INSPECCIÓN ---
+  // --- GUARDAR (avance o finalización) ---
+  // Sin token: POST admin (crea). Con token: PUT público por enlace de continuación.
+  const persist = async (finalize: boolean): Promise<CreatedInspectionResult> => {
+    const name = form.inspector_name.trim();
+    try {
+      if (name) localStorage.setItem("last_inspector_name", name);
+    } catch {
+      /* almacenamiento no disponible: no crítico */
+    }
+
+    const payload = {
+      vehicle_plate: form.vehicle_plate,
+      driver_id: form.driver_id || null,
+      type: form.type,
+      mileage: form.mileage ? Number(form.mileage) : null,
+      fuel_level: form.fuel_level || null,
+      comments: form.comments,
+      inspector_name: name,
+      photos: form.photos,
+      road_test: form.road_test,
+      started_at: startedAt.toISOString(),
+    };
+
+    let res: Response;
+    if (draftToken) {
+      res = await fetch(`${API}/public/inspections/continue/${draftToken}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, finalize }),
+      });
+    } else {
+      const auth = ensureBasicAuth();
+      res = await fetch(`${API}/inspections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: auth },
+        body: JSON.stringify({ ...payload, status: finalize ? "completed" : "draft" }),
+      });
+    }
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || "Error al guardar la inspección");
+    }
+    return res.json();
+  };
+
+  const validateBase = () => {
+    if (!form.vehicle_plate) return "Selecciona un vehículo";
+    if (!form.inspector_name.trim()) return "Escribe tu nombre (inspector responsable)";
+    return null;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.vehicle_plate) return alert("Selecciona un vehículo");
+    const err = validateBase();
+    if (err) return alert(err);
     if (Object.keys(form.photos).length === 0) {
       return alert("Por favor toma al menos una foto de evidencia");
+    }
+    if (form.road_test === null) {
+      return alert("Indica si la revisión incluyó prueba de ruta (sí / no)");
     }
 
     setLoading(true);
     try {
-      const auth = ensureBasicAuth();
-      if (form.inspector_name) {
-        localStorage.setItem("last_inspector_name", form.inspector_name.trim());
-      }
-
-      const payload = {
-        vehicle_plate: form.vehicle_plate,
-        driver_id: form.driver_id || null,
-        type: form.type,
-        mileage: form.mileage ? Number(form.mileage) : null,
-        fuel_level: form.fuel_level || null,
-        comments: form.comments,
-        inspector_name: form.inspector_name,
-        photos: form.photos,
-      };
-
-      const res = await fetch(`${API}/inspections`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: auth },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || "Error al guardar la inspección");
-      }
-
-      const created = await res.json();
+      const created = await persist(true);
       setCreatedInspection(created);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Error guardando la inspección";
@@ -266,6 +370,39 @@ export default function NewInspection() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSaveDraft = async () => {
+    const err = validateBase();
+    if (err) return alert(err);
+
+    setLoading(true);
+    try {
+      const saved = await persist(false);
+      if (saved.continue_token) setDraftToken(saved.continue_token);
+      if (saved.participants) setParticipants(saved.participants);
+      setSavedDraft(saved);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Error guardando el avance";
+      alert(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --- COMPARTIR ENLACE DE CONTINUACIÓN POR WHATSAPP ---
+  const continueUrl = draftToken ? `${window.location.origin}/inspection/continue/${draftToken}` : "";
+  const handleShareContinue = () => {
+    if (!continueUrl) return;
+    const photos = Object.keys(form.photos).length;
+    const text =
+      `🛠️ *INSPECCIÓN EN PROGRESO — CONTINÚALA*\n` +
+      `🚗 *Vehículo:* ${form.vehicle_plate}\n` +
+      `👤 *Avance guardado por:* ${form.inspector_name.trim() || "N/A"}\n` +
+      `⏱️ *Tiempo en revisión:* ${formatDuration(elapsedSecs)}\n` +
+      `📸 *Fotos tomadas:* ${photos} / ${PHOTO_FIELDS.length}\n` +
+      `\n👉 *Continúa y finaliza aquí:* ${continueUrl}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   };
 
   // --- COMPARTIR POR WHATSAPP ---
@@ -293,6 +430,10 @@ export default function NewInspection() {
       `👤 *Inspector:* ${createdInspection.inspector_name || "N/A"}\n` +
       `🛣️ *Kilometraje:* ${kmText}\n` +
       `⛽ *Combustible:* ${fuelText}\n` +
+      `🚦 *Prueba de ruta:* ${createdInspection.road_test ? "Sí" : "No"}\n` +
+      (createdInspection.duration_seconds
+        ? `⏱️ *Duración de la revisión:* ${formatDuration(createdInspection.duration_seconds)}\n`
+        : "") +
       (createdInspection.comments ? `📝 *Observaciones:* ${createdInspection.comments}\n` : "") +
       `\n📸 *Ver reporte y fotos:* ${viewUrl}`;
 
@@ -305,17 +446,17 @@ export default function NewInspection() {
   };
 
   const handleResetForNew = () => {
+    if (isContinueMode) {
+      // Desde un enlace público no hay acceso al formulario admin: ir al reporte final
+      if (createdInspection) window.location.href = `/inspection/${createdInspection.id}`;
+      return;
+    }
     setCreatedInspection(null);
-    setForm({
-      vehicle_plate: "",
-      driver_id: "",
-      type: "general",
-      mileage: "",
-      fuel_level: "1/2",
-      comments: "",
-      inspector_name: localStorage.getItem("last_inspector_name") || "",
-      photos: {},
-    });
+    setSavedDraft(null);
+    setDraftToken(null);
+    setParticipants([]);
+    setStartedAt(new Date());
+    setForm(emptyForm());
   };
 
   const groupedFields = PHOTO_FIELDS.reduce((acc, field) => {
@@ -325,6 +466,38 @@ export default function NewInspection() {
   }, {} as Record<string, typeof PHOTO_FIELDS>);
 
   const photosCount = Object.keys(form.photos).length;
+  const referenceMileage = selectedVehicle?.current_mileage ?? lastKnownMileage;
+
+  // Estados del enlace de continuación (cargando / inválido / ya finalizado)
+  if (isContinueMode && draftLoadState !== "ready") {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
+        {draftLoadState === "loading" ? (
+          <>
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-emerald-600 border-t-transparent mb-4"></div>
+            <p className="text-slate-600 font-semibold text-sm">Cargando inspección en progreso...</p>
+          </>
+        ) : draftLoadState === "completed" ? (
+          <>
+            <CheckCircle2 className="w-14 h-14 text-emerald-600 mb-3" />
+            <h2 className="text-xl font-black text-slate-800 mb-1">Esta inspección ya fue finalizada</h2>
+            <p className="text-slate-500 text-sm mb-5">Ya no se puede editar, pero puedes ver el reporte.</p>
+            {completedId && (
+              <Link to={`/inspection/${completedId}`} className="px-5 py-2.5 bg-slate-900 text-white font-bold rounded-xl text-sm">
+                Ver reporte
+              </Link>
+            )}
+          </>
+        ) : (
+          <>
+            <X className="w-14 h-14 text-rose-500 mb-3" />
+            <h2 className="text-xl font-black text-slate-800 mb-1">Enlace no válido</h2>
+            <p className="text-slate-500 text-sm">No encontramos la inspección de este enlace.</p>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 p-3 sm:p-6 relative">
@@ -349,17 +522,39 @@ export default function NewInspection() {
             <span className="text-[11px] font-extrabold uppercase tracking-widest text-emerald-400">
               Operaciones · Revisión Móvil
             </span>
-            <Link
-              to="/inspections"
-              className="text-xs text-slate-400 hover:text-white underline"
-            >
-              Ver Historial
-            </Link>
+            {!isContinueMode && (
+              <Link
+                to="/inspections"
+                className="text-xs text-slate-400 hover:text-white underline"
+              >
+                Ver Historial
+              </Link>
+            )}
           </div>
-          <h1 className="text-2xl font-black">Nueva Inspección</h1>
+          <h1 className="text-2xl font-black">
+            {draftToken ? "Inspección en Progreso" : "Nueva Inspección"}
+          </h1>
           <p className="text-slate-400 text-xs">
-            Registro ágil del vehículo con fotos comprimidas para campo
+            {draftToken
+              ? "Continúa donde quedó la revisión y finalízala"
+              : "Registro ágil del vehículo con fotos comprimidas para campo"}
           </p>
+          {participants.length > 0 && (
+            <p className="mt-2 text-[11px] text-slate-300 flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-emerald-400" />
+              Han trabajado en ella: <span className="font-bold">{participants.join(" → ")}</span>
+            </p>
+          )}
+        </div>
+
+        {/* CRONÓMETRO DE LA REVISIÓN */}
+        <div className="sticky top-0 z-30 bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+            <Timer className="w-4 h-4" /> Tiempo en revisión
+          </span>
+          <span className="font-mono font-black text-amber-900 text-base tabular-nums">
+            {formatDuration(elapsedSecs)}
+          </span>
         </div>
 
         <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-6">
@@ -369,20 +564,33 @@ export default function NewInspection() {
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                 Vehículo a Inspeccionar
               </label>
-              <select
-                className="w-full p-3 rounded-xl border border-slate-300 font-black text-slate-800 uppercase bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
-                value={form.vehicle_plate}
-                onChange={(e) => handleVehicleChange(e.target.value)}
-                required
-              >
-                <option value="">-- SELECCIONAR PLACA --</option>
-                {vehicles.map((v) => (
-                  <option key={v.plate} value={v.plate}>
-                    {v.plate} · {v.driver?.full_name || "LIBRE (Sin conductor)"}
-                  </option>
-                ))}
-              </select>
+              {draftToken ? (
+                // En un borrador la placa queda fija
+                <div className="w-full p-3 rounded-xl border border-slate-300 font-black text-slate-800 uppercase bg-white">
+                  {form.vehicle_plate}
+                </div>
+              ) : (
+                <select
+                  className="w-full p-3 rounded-xl border border-slate-300 font-black text-slate-800 uppercase bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                  value={form.vehicle_plate}
+                  onChange={(e) => handleVehicleChange(e.target.value)}
+                  required
+                >
+                  <option value="">-- SELECCIONAR PLACA --</option>
+                  {vehicles.map((v) => (
+                    <option key={v.plate} value={v.plate}>
+                      {v.plate} · {v.driver?.full_name || "LIBRE (Sin conductor)"}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
+
+            {!selectedVehicle && referenceMileage && (
+              <div className="text-xs text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100 inline-block">
+                Último Km: {Number(referenceMileage).toLocaleString("es-CO")} km
+              </div>
+            )}
 
             {selectedVehicle && (
               <div className="text-xs bg-white p-3 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2">
@@ -539,6 +747,38 @@ export default function NewInspection() {
             </div>
           </div>
 
+          {/* 4.1 PRUEBA DE RUTA */}
+          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
+            <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <Car className="w-4 h-4 text-blue-600" />
+              ¿Incluye prueba de ruta?
+            </label>
+            <p className="text-[11px] text-slate-500">
+              Se subieron al carro y lo anduvieron para probarlo y escucharlo.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { v: true, label: "Sí, se probó andando" },
+                { v: false, label: "No" },
+              ].map((opt) => (
+                <button
+                  key={String(opt.v)}
+                  type="button"
+                  onClick={() => setForm({ ...form, road_test: opt.v })}
+                  className={`py-3 rounded-xl border text-sm font-extrabold transition-all ${
+                    form.road_test === opt.v
+                      ? opt.v
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                        : "bg-slate-800 text-white border-slate-800 shadow-sm"
+                      : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* 5. FOTOS DE EVIDENCIA (GRID MÓVIL) */}
           <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
@@ -625,14 +865,25 @@ export default function NewInspection() {
             />
           </div>
 
-          {/* BOTÓN SUBMIT */}
-          <button
-            type="submit"
-            disabled={loading || uploading}
-            className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-lg shadow-xl disabled:opacity-50 transition-all active:scale-98"
-          >
-            {loading ? "Guardando Inspección..." : "Guardar y Finalizar Revisión"}
-          </button>
+          {/* BOTONES: GUARDAR AVANCE / FINALIZAR */}
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={handleSaveDraft}
+              disabled={loading || uploading}
+              className="w-full py-3.5 rounded-2xl border-2 border-slate-900 bg-white hover:bg-slate-50 text-slate-900 font-black text-base disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+            >
+              <Save className="w-4 h-4" />
+              {loading ? "Guardando..." : "Guardar avance y pasar a otra persona"}
+            </button>
+            <button
+              type="submit"
+              disabled={loading || uploading}
+              className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-lg shadow-xl disabled:opacity-50 transition-all active:scale-98"
+            >
+              {loading ? "Guardando Inspección..." : "Guardar y Finalizar Revisión"}
+            </button>
+          </div>
         </form>
       </div>
 
@@ -720,6 +971,66 @@ export default function NewInspection() {
         </div>
       )}
 
+      {/* --- MODAL DE AVANCE GUARDADO & PASAR A OTRA PERSONA --- */}
+      {savedDraft && !createdInspection && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 text-center shadow-2xl space-y-5">
+            <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full mx-auto flex items-center justify-center shadow-inner">
+              <Save className="w-8 h-8" />
+            </div>
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-wider text-amber-600">Inspección abierta</span>
+              <h2 className="text-2xl font-black text-slate-900 mt-0.5">¡Avance guardado!</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Queda pendiente de completar y cerrar. Envía el enlace para que otra persona la continúe.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 rounded-2xl p-4 text-left text-xs space-y-2 border border-slate-200">
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold">Vehículo:</span>
+                <span className="font-black text-slate-800">{form.vehicle_plate}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold">Tiempo en revisión:</span>
+                <span className="font-bold text-slate-800 font-mono">{formatDuration(elapsedSecs)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold">Fotos:</span>
+                <span className="font-bold text-slate-800">{photosCount} / {PHOTO_FIELDS.length}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <button
+                onClick={handleShareContinue}
+                className="w-full py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg transition active:scale-95"
+              >
+                <Share2 className="w-4 h-4" /> Pasar por WhatsApp para continuar
+              </button>
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(continueUrl).then(
+                    () => alert("Enlace copiado"),
+                    () => prompt("Copia el enlace:", continueUrl)
+                  );
+                }}
+                className="w-full py-2.5 px-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs"
+              >
+                Copiar enlace
+              </button>
+            </div>
+
+            <button
+              onClick={() => setSavedDraft(null)}
+              className="text-xs text-slate-500 hover:text-slate-800 font-bold flex items-center justify-center gap-1 mx-auto pt-1"
+            >
+              Seguir yo con la revisión
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* --- MODAL DE ÉXITO & COMPARTIR POR WHATSAPP --- */}
       {createdInspection && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm animate-in fade-in duration-200">
@@ -761,6 +1072,18 @@ export default function NewInspection() {
                 </span>
               </div>
               <div className="flex justify-between">
+                <span className="text-slate-400 font-bold">Prueba de ruta:</span>
+                <span className="font-bold text-slate-800">{createdInspection.road_test ? "Sí" : "No"}</span>
+              </div>
+              {createdInspection.duration_seconds != null && (
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold">Duración revisión:</span>
+                  <span className="font-bold text-slate-800 font-mono">
+                    {formatDuration(createdInspection.duration_seconds)}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between">
                 <span className="text-slate-400 font-bold">Evidencias:</span>
                 <span className="font-bold text-emerald-600">
                   {Object.keys(createdInspection.photos || {}).length} fotos adjuntas
@@ -800,7 +1123,7 @@ export default function NewInspection() {
               onClick={handleResetForNew}
               className="text-xs text-slate-500 hover:text-slate-800 font-bold flex items-center justify-center gap-1 mx-auto pt-2"
             >
-              <RotateCcw className="w-3.5 h-3.5" /> Realizar otra inspección
+              <RotateCcw className="w-3.5 h-3.5" /> {isContinueMode ? "Ir al reporte final" : "Realizar otra inspección"}
             </button>
           </div>
         </div>

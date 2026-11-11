@@ -82,6 +82,7 @@ export default function App() {
               <Route path="/landing-test" element={<Landing />} />
               <Route path="/bid/:id" element={<BidTrip />} />
               <Route path="/inspection/:id" element={<PublicInspectionView />} />
+              <Route path="/inspection/continue/:token" element={<NewInspection />} />
               <Route path="/inspections/view/:id" element={<PublicInspectionView />} />
             </Route>
 
@@ -134,6 +135,7 @@ export default function App() {
             <Route path="/assistance" element={<Assistance />} />
             <Route path="/bid/:id" element={<BidTrip />} />
             <Route path="/inspection/:id" element={<PublicInspectionView />} />
+              <Route path="/inspection/continue/:token" element={<NewInspection />} />
             <Route path="/inspections/view/:id" element={<PublicInspectionView />} />
             {/* Cualquier otra cosa en la landing va al home */}
             <Route path="*" element={<Navigate to="/" replace />} />
