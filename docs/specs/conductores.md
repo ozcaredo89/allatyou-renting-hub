@@ -95,3 +95,36 @@ Se utiliza la API `navigator.mediaDevices.getUserMedia` con configuraciones espe
 1.  **Unicidad:** No pueden existir dos conductores con el mismo `document_number`. El backend retorna error `409 Conflict`.
 2.  **Archivos:** Los documentos se suben primero al endpoint genérico `/uploads`, y la URL resultante se guarda en la tabla `drivers`.
 3.  **Promoción:** Existe un flujo separado (`POST /promote/:id`) para convertir un aspirante (`driver_applications`) en conductor oficial, copiando sus datos básicos.
+
+
+---
+
+## 6. Retiro de Conductor, Liquidación, Paz y Salvo y Devolución de Garantía (Regla 20 días SIMIT)
+
+**Código principal:** `src/routes/liquidations.ts`, `src/lib/pazSalvoGenerator.ts`, `src/templates/paz-salvo.html`, `src/lib/fleetReminders.ts`, `web/src/components/LiquidationModal.tsx`, `web/src/pages/AdminDrivers.tsx`
+
+### 6.1 Flujo de Retiro y Liquidación
+1. Cuando un conductor se retira y entrega el vehículo, se registra su liquidación en `liquidations` (`POST /liquidations`).
+2. El conductor pasa a estado `inactive` con fecha `terminated_at`, se cierra su asignación activa en `vehicle_assignments` y el vehículo queda sin conductor asignado.
+3. Se consolidan los **saldos a favor** (depósito inicial + ahorro acumulado) y los **descuentos** (gasolina, lavado, entregas pendientes, préstamos, comparendos, reparaciones, días en mora).
+
+### 6.2 Plazo de 20 Días Calendario para Validación en SIMIT (`payment_due_date`)
+1. **Regla de negocio (Decisión 2026-11-10 — Issue #23):** A partir de la fecha de entrega material del vehículo (`liquidation_date`), AllAtYou Renting S.A.S. cuenta con **veinte (20) días calendario** para validar en el sistema **SIMIT** (y organismos de tránsito) posibles comparendos, fotomultas o infracciones ocurridas durante el período de tenencia del vehículo antes de desembolsar el saldo final de la liquidación.
+2. Por defecto, al crear una liquidación se calcula `payment_due_date = liquidation_date + 20 días calendario`.
+3. **Reflejo en el Documento Oficial de Paz y Salvo (`src/templates/paz-salvo.html`):**
+   - La **Cláusula Cuarta (Devolución de la Garantía y Plazo de Validación en SIMIT)** deja constancia expresa del término de **veinte (20) días calendario** posteriores a la entrega del vehículo para la validación de multas en el SIMIT.
+   - El campo `fecha_devolucion` del acta se inicializa por defecto en `liquidation_date + 20 días calendario` (editable por el administrador al generar el documento).
+
+### 6.3 Notificación por Correo 3 Días Antes del Vencimiento del Pago
+1. El job diario de recordatorios de flota (`src/lib/fleetReminders.ts`, ejecutado por `POST /reminders/run` en la ventana de la mañana) verifica todas las liquidaciones pendientes de pago (`payment_proof_url IS NULL` y `paid_at IS NULL`).
+2. Cuando faltan **3 días o menos** para `payment_due_date` (es decir, desde el día 17 posterior al retiro, o si ya se encuentra vencida), se incluye la alerta en el correo enviado a `FLEET_REMINDER_EMAILS` para que administración valide el SIMIT, genere el Paz y Salvo definitivo y realice el pago.
+3. Una vez se adjunta el comprobante de pago, la liquidación queda marcada como pagada y deja de generar alertas.
+
+### 6.4 Calendario de Retiros y Soportes de Cierre (Paz y Salvo + Comprobante de Pago)
+1. En `/drivers` (`AdminDrivers.tsx`), el administrador cuenta con una vista de **Calendario de Retiros y Liquidaciones** (accesible también con `?view=calendar`).
+2. El calendario muestra en cada día:
+   - Qué conductor se retiró en esa fecha (`liquidation_date` / `terminated_at`).
+   - Qué día vence el pago de su liquidación tras los 20 días de validación SIMIT (`payment_due_date`).
+3. Al hacer clic en el registro del día se abre el detalle de la liquidación con acceso directo a:
+   - **Documento de Paz y Salvo** (descarga del PDF oficial / Word `.docx` en R2 o generación del acta).
+   - **Comprobante de Pago** (`payment_proof_url`, `paid_at`, `payment_notes`): carga y visualización del soporte de transferencia o pago en efectivo.
