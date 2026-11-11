@@ -25,6 +25,16 @@ type Listing = {
 export default function AdminMarketplace() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(false);
+  const [confirmingAction, setConfirmingAction] = useState<{
+    id: number;
+    newStatus: string;
+    title: string;
+    desc: string;
+    buttonText: string;
+    buttonColor: string;
+  } | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -48,32 +58,35 @@ export default function AdminMarketplace() {
       setListings(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
-      alert("Error cargando solicitudes.");
+      setPageError("Error cargando solicitudes.");
     } finally {
       setLoading(false);
     }
   };
 
-  const updateStatus = async (id: number, newStatus: string) => {
-      if(!confirm(`¿Seguro que deseas marcar como ${newStatus}?`)) return;
+  const executeStatusUpdate = async () => {
+    if (!confirmingAction) return;
+    setActionLoading(true);
+    setPageError(null);
+    try {
+      const auth = ensureBasicAuth();
+      const res = await fetch(`${API}/marketplace/admin/${confirmingAction.id}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: auth },
+        body: JSON.stringify({ status: confirmingAction.newStatus })
+      });
 
-      try {
-          const auth = ensureBasicAuth();
-          const res = await fetch(`${API}/marketplace/admin/${id}/status`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json", Authorization: auth },
-              body: JSON.stringify({ status: newStatus })
-          });
-
-          if (!res.ok) throw new Error("Error actualizando");
-          
-          setListings(prev => prev.map(item => 
-              item.id === id ? { ...item, status: newStatus as Listing["status"] } : item
-          ));
-
-      } catch {
-          alert("Error al actualizar estado");
-      }
+      if (!res.ok) throw new Error("Error al actualizar estado en el servidor");
+      
+      setListings(prev => prev.map(item => 
+        item.id === confirmingAction.id ? { ...item, status: confirmingAction.newStatus as Listing["status"] } : item
+      ));
+      setConfirmingAction(null);
+    } catch (err: any) {
+      setPageError(err?.message || "Error al actualizar estado");
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const StatusBadge = ({ status }: { status: string }) => {
@@ -188,19 +201,59 @@ export default function AdminMarketplace() {
                         {/* Acciones */}
                         <div className="p-3 border-t border-slate-100 grid grid-cols-2 gap-3 bg-slate-50">
                             {car.status === 'approved' ? (
-                                <button onClick={() => updateStatus(car.id, 'rejected')} className="col-span-2 py-2 text-red-600 text-xs font-bold hover:bg-red-50 rounded border border-transparent hover:border-red-200 transition-colors">
+                                <button 
+                                  onClick={() => setConfirmingAction({
+                                    id: car.id,
+                                    newStatus: 'rejected',
+                                    title: '¿Ocultar vehículo del catálogo?',
+                                    desc: `¿Deseas ocultar el ${car.brand} ${car.model} (${car.plate}) del catálogo público de clientes?`,
+                                    buttonText: 'Sí, Ocultar',
+                                    buttonColor: 'bg-red-600 hover:bg-red-700'
+                                  })}
+                                  className="col-span-2 py-2 text-red-600 text-xs font-bold hover:bg-red-50 rounded border border-transparent hover:border-red-200 transition-colors"
+                                >
                                     Ocultar del Catálogo
                                 </button>
                             ) : car.status === 'rejected' ? (
-                                <button onClick={() => updateStatus(car.id, 'pending')} className="col-span-2 py-2 text-slate-500 text-xs font-bold hover:bg-slate-200 rounded">
+                                <button 
+                                  onClick={() => setConfirmingAction({
+                                    id: car.id,
+                                    newStatus: 'pending',
+                                    title: '¿Volver a estado de revisión?',
+                                    desc: `¿Deseas regresar el ${car.brand} ${car.model} (${car.plate}) a estado de revisión?`,
+                                    buttonText: 'Sí, Volver a Revisión',
+                                    buttonColor: 'bg-slate-900 hover:bg-slate-800'
+                                  })}
+                                  className="col-span-2 py-2 text-slate-500 text-xs font-bold hover:bg-slate-200 rounded"
+                                >
                                     Volver a Revisión
                                 </button>
                             ) : (
                                 <>
-                                    <button onClick={() => updateStatus(car.id, 'rejected')} className="py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-red-50 hover:text-red-700 text-xs font-bold transition-colors">
+                                    <button 
+                                      onClick={() => setConfirmingAction({
+                                        id: car.id,
+                                        newStatus: 'rejected',
+                                        title: '¿Rechazar publicación?',
+                                        desc: `¿Deseas rechazar la publicación del ${car.brand} ${car.model} (${car.plate}) de ${car.owner_name}? No aparecerá en el catálogo.`,
+                                        buttonText: 'Sí, Rechazar',
+                                        buttonColor: 'bg-red-600 hover:bg-red-700'
+                                      })}
+                                      className="py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-red-50 hover:text-red-700 text-xs font-bold transition-colors"
+                                    >
                                         Rechazar
                                     </button>
-                                    <button onClick={() => updateStatus(car.id, 'approved')} className="py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold shadow-sm transition-colors">
+                                    <button 
+                                      onClick={() => setConfirmingAction({
+                                        id: car.id,
+                                        newStatus: 'approved',
+                                        title: '¿Aprobar y publicar en catálogo?',
+                                        desc: `¿Confirmas que deseas publicar el ${car.brand} ${car.model} (${car.plate}) de ${car.owner_name} para que sea visible de inmediato en el catálogo público?`,
+                                        buttonText: 'Sí, Publicar en Catálogo',
+                                        buttonColor: 'bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-200'
+                                      })}
+                                      className="py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold shadow-sm transition-colors"
+                                    >
                                         Aprobar
                                     </button>
                                 </>
@@ -212,6 +265,47 @@ export default function AdminMarketplace() {
             </div>
         )}
       </div>
+
+      {/* Modal de confirmación elegante */}
+      {confirmingAction && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+          onClick={() => !actionLoading && setConfirmingAction(null)}
+        >
+          <div 
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 animate-in fade-in"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-slate-900">{confirmingAction.title}</h3>
+            <p className="mt-2 text-sm text-slate-600 leading-relaxed">{confirmingAction.desc}</p>
+            
+            {pageError && (
+              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 font-medium">
+                {pageError}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={() => setConfirmingAction(null)}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={executeStatusUpdate}
+                className={`px-5 py-2.5 rounded-xl text-xs font-bold text-white transition-colors shadow-md ${confirmingAction.buttonColor} disabled:opacity-50`}
+              >
+                {actionLoading ? "Procesando..." : confirmingAction.buttonText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
