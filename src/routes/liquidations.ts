@@ -2,8 +2,126 @@ import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 import { generatePazSalvo } from "../lib/pazSalvoGenerator";
 import { getSignedDocUrl } from "../lib/documentRenderer";
+import { addCalendarDays, LIQUIDATION_SIMIT_DAYS } from "../lib/fleetReminders";
 
 const r = Router();
+
+function toYmd(value: unknown): string {
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(value || ""));
+  if (m && m[1]) return m[1];
+  return new Date().toISOString().slice(0, 10);
+}
+
+function enrichLiquidationRecord(liq: any) {
+  if (!liq) return null;
+  const meta = liq.document_metadata || {};
+  const auditLog = Array.isArray(liq.audit_log) ? liq.audit_log : [];
+  const hasPazSalvoAudit = auditLog.some((a: any) => a?.action === "GENERATE_PAZ_SALVO");
+
+  const retireYmd = toYmd(liq.liquidation_date || liq.created_at);
+  const paymentDueDate =
+    (liq.payment_due_date ? toYmd(liq.payment_due_date) : null) ||
+    (meta.payment_due_date ? toYmd(meta.payment_due_date) : null) ||
+    addCalendarDays(retireYmd, LIQUIDATION_SIMIT_DAYS);
+
+  const paymentProofUrl = liq.payment_proof_url || meta.payment_proof_url || null;
+  const paidAt = liq.paid_at || meta.paid_at || null;
+  const paymentNotes = liq.payment_notes ?? meta.payment_notes ?? null;
+  const hasPazSalvo = Boolean(liq.pdf_s3_key || meta.pdf_s3_key || hasPazSalvoAudit);
+
+  return {
+    ...liq,
+    retire_date: retireYmd,
+    payment_due_date: paymentDueDate,
+    payment_proof_url: paymentProofUrl,
+    paid_at: paidAt,
+    payment_notes: paymentNotes,
+    has_paz_salvo: hasPazSalvo,
+  };
+}
+
+// 0. GET /liquidations/calendar — Listado completo de retiros y liquidaciones para el Calendario
+r.get("/calendar", async (_req: Request, res: Response) => {
+  try {
+    const [{ data: liqs, error: liqErr }, { data: drivers, error: drvErr }] = await Promise.all([
+      supabase.from("liquidations").select("*").order("liquidation_date", { ascending: false }),
+      supabase
+        .from("drivers")
+        .select("id, full_name, document_number, phone, email, status, terminated_at, created_at"),
+    ]);
+
+    if (liqErr) throw liqErr;
+    if (drvErr) throw drvErr;
+
+    const driverMap = new Map<number, any>();
+    for (const d of drivers || []) {
+      driverMap.set(Number(d.id), d);
+    }
+
+    const liquidatedDriverIds = new Set<number>();
+    const items: any[] = [];
+
+    for (const rawLiq of liqs || []) {
+      const liq = enrichLiquidationRecord(rawLiq);
+      const drv = driverMap.get(Number(rawLiq.driver_id));
+      liquidatedDriverIds.add(Number(rawLiq.driver_id));
+
+      items.push({
+        id: String(liq.id),
+        liquidation_id: String(liq.id),
+        driver_id: Number(liq.driver_id),
+        driver_name: drv?.full_name || `Conductor #${liq.driver_id}`,
+        document_number: drv?.document_number || "—",
+        phone: drv?.phone || "—",
+        plate: liq.plate || null,
+        retire_date: liq.retire_date,
+        payment_due_date: liq.payment_due_date,
+        total_incomes: Number(liq.total_incomes || 0),
+        total_deductions: Number(liq.total_deductions || 0),
+        final_balance: Number(liq.final_balance || 0),
+        has_paz_salvo: liq.has_paz_salvo,
+        payment_proof_url: liq.payment_proof_url,
+        paid_at: liq.paid_at,
+        payment_notes: liq.payment_notes,
+        is_paid: Boolean(liq.payment_proof_url || liq.paid_at),
+        has_liquidation: true,
+      });
+    }
+
+    // Incluir conductores retirados (terminated_at != null) que aún no tengan registro en `liquidations`
+    for (const drv of drivers || []) {
+      if (drv.terminated_at && !liquidatedDriverIds.has(Number(drv.id))) {
+        const retireDate = toYmd(drv.terminated_at);
+        items.push({
+          id: `drv-${drv.id}`,
+          liquidation_id: null,
+          driver_id: Number(drv.id),
+          driver_name: drv.full_name,
+          document_number: drv.document_number || "—",
+          phone: drv.phone || "—",
+          plate: null,
+          retire_date: retireDate,
+          payment_due_date: addCalendarDays(retireDate, LIQUIDATION_SIMIT_DAYS),
+          total_incomes: 0,
+          total_deductions: 0,
+          final_balance: 0,
+          has_paz_salvo: false,
+          payment_proof_url: null,
+          paid_at: null,
+          payment_notes: null,
+          is_paid: false,
+          has_liquidation: false,
+        });
+      }
+    }
+
+    items.sort((a, b) => b.retire_date.localeCompare(a.retire_date));
+    return res.json({ items, simit_days: LIQUIDATION_SIMIT_DAYS });
+  } catch (err: any) {
+    console.error("Error in GET /liquidations/calendar:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // 1. GET data required for the liquidation modal
 r.get("/:driverId/data", async (req: Request, res: Response) => {
@@ -42,6 +160,23 @@ r.get("/:driverId/data", async (req: Request, res: Response) => {
       if (vehicles && vehicles.length > 0) {
         plate = vehicles[0]?.plate;
       }
+    }
+
+    // F. Check if already liquidated (antes de buscar vehículo por si la placa viene en la liquidación)
+    const { data: existingLiquidationRows } = await supabase
+      .from("liquidations")
+      .select("*")
+      .eq("driver_id", driverId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    const existingLiquidation =
+      existingLiquidationRows && existingLiquidationRows.length > 0
+        ? enrichLiquidationRecord(existingLiquidationRows[0])
+        : null;
+
+    if (!plate && existingLiquidation?.plate) {
+      plate = existingLiquidation.plate;
     }
 
     // Datos base del vehículo si existe placa asignada
@@ -158,14 +293,6 @@ r.get("/:driverId/data", async (req: Request, res: Response) => {
       }
     }
 
-    // F. Check if already liquidated
-    const { data: existingLiquidation } = await supabase
-      .from("liquidations")
-      .select("*")
-      .eq("driver_id", driverId)
-      .order("created_at", { ascending: false })
-      .limit(1);
-
     return res.json({
       driver,
       plate,
@@ -179,7 +306,7 @@ r.get("/:driverId/data", async (req: Request, res: Response) => {
       pendingRentDebt,
       pendingRentDebtDetails,
       repairs,
-      existingLiquidation: existingLiquidation && existingLiquidation.length > 0 ? existingLiquidation[0] : null
+      existingLiquidation
     });
 
   } catch (err: any) {
@@ -192,36 +319,59 @@ r.get("/:driverId/data", async (req: Request, res: Response) => {
 r.post("/", async (req: Request, res: Response) => {
   const { 
     driver_id, plate, total_incomes, total_deductions, final_balance, items_detail, 
-    created_by, mark_installments_paid, liquidation_debt_ids
+    created_by, mark_installments_paid, liquidation_debt_ids, liquidation_date, payment_due_date
   } = req.body;
 
   try {
-    // We could re-validate balances here, but since the user allows manual edits,
-    // we'll proceed with the requested items but we'll register the adjustments.
+    const liqDateIso = liquidation_date ? new Date(liquidation_date).toISOString() : new Date().toISOString();
+    const retireYmd = toYmd(liqDateIso);
+    const dueYmd = payment_due_date ? toYmd(payment_due_date) : addCalendarDays(retireYmd, LIQUIDATION_SIMIT_DAYS);
 
-    // 1. Insert Liquidation
-    const { data: liquidation, error: liqErr } = await supabase
+    // 1. Insert Liquidation (con respaldo en document_metadata por si la migración aún no corre)
+    let liquidation: any = null;
+    const { data: liqWithCols, error: liqErr } = await supabase
       .from("liquidations")
       .insert({
         driver_id,
         plate,
+        liquidation_date: liqDateIso,
+        payment_due_date: dueYmd,
         total_incomes,
         total_deductions,
         final_balance,
         items_detail,
         created_by,
+        document_metadata: { payment_due_date: dueYmd },
         audit_log: []
       })
       .select()
       .single();
 
-    if (liqErr) throw liqErr;
+    if (liqErr) {
+      // Fallback si la columna payment_due_date aún no existe en remoto
+      const { data: liqFallback, error: fallbackErr } = await supabase
+        .from("liquidations")
+        .insert({
+          driver_id,
+          plate,
+          liquidation_date: liqDateIso,
+          total_incomes,
+          total_deductions,
+          final_balance,
+          items_detail,
+          created_by,
+          document_metadata: { payment_due_date: dueYmd },
+          audit_log: []
+        })
+        .select()
+        .single();
+      if (fallbackErr) throw fallbackErr;
+      liquidation = liqFallback;
+    } else {
+      liquidation = liqWithCols;
+    }
 
     // 2. Adjust Deposits (Negative balance to leave overall at $0)
-    // If the system owes the driver (positive final_balance), or the driver owes (negative final_balance)
-    // We create a single movement that represents the "LIQUIDATION SETTLEMENT".
-    // Wait, the total_incomes (Ahorro + Deposito) were extracted. We need to withdraw them from the deposits system.
-    // So we add a movement of -total_incomes to clear their savings.
     if (Number(total_incomes) > 0) {
       await supabase.from("driver_deposit_movements").insert({
         driver_id,
@@ -238,22 +388,20 @@ r.post("/", async (req: Request, res: Response) => {
       .from("drivers")
       .update({ 
         status: "inactive", 
-        terminated_at: new Date().toISOString(),
+        terminated_at: liqDateIso,
         updated_at: new Date().toISOString()
       })
       .eq("id", driver_id);
 
     // 4. End vehicle assignment
     if (plate) {
-      // update vehicle_assignments
       await supabase
         .from("vehicle_assignments")
-        .update({ end_date: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .update({ end_date: liqDateIso, updated_at: new Date().toISOString() })
         .eq("driver_id", driver_id)
         .eq("plate", plate)
         .is("end_date", null);
 
-      // update vehicle
       await supabase
         .from("vehicles")
         .update({ current_driver_id: null, owner_name: "SIN CONDUCTOR ASIGNADO", updated_at: new Date().toISOString() })
@@ -290,7 +438,7 @@ r.post("/", async (req: Request, res: Response) => {
       }
     }
 
-    return res.json(liquidation);
+    return res.json(enrichLiquidationRecord(liquidation));
 
   } catch (err: any) {
     console.error("Error in POST /liquidations:", err.message);
@@ -301,10 +449,9 @@ r.post("/", async (req: Request, res: Response) => {
 // 3. PUT edit liquidation
 r.put("/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { total_incomes, total_deductions, final_balance, items_detail, edited_by } = req.body;
+  const { total_incomes, total_deductions, final_balance, items_detail, edited_by, payment_due_date } = req.body;
 
   try {
-    // Fetch old to build audit log
     const { data: oldLiq } = await supabase
       .from("liquidations")
       .select("*")
@@ -325,30 +472,53 @@ r.put("/:id", async (req: Request, res: Response) => {
     };
 
     const newAuditLog = [...(oldLiq.audit_log || []), auditEntry];
+    const nextMeta = {
+      ...(oldLiq.document_metadata || {}),
+      ...(payment_due_date ? { payment_due_date: toYmd(payment_due_date) } : {}),
+    };
 
-    const { data: newLiq, error } = await supabase
+    const updatePayload: any = {
+      total_incomes,
+      total_deductions,
+      final_balance,
+      items_detail,
+      edited_by,
+      document_metadata: nextMeta,
+      audit_log: newAuditLog,
+      updated_at: new Date().toISOString()
+    };
+    if (payment_due_date) {
+      updatePayload.payment_due_date = toYmd(payment_due_date);
+    }
+
+    let newLiq: any = null;
+    const { data: updatedWithCols, error } = await supabase
       .from("liquidations")
-      .update({
-        total_incomes,
-        total_deductions,
-        final_balance,
-        items_detail,
-        edited_by,
-        audit_log: newAuditLog,
-        updated_at: new Date().toISOString()
-      })
+      .update(updatePayload)
       .eq("id", id)
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      delete updatePayload.payment_due_date;
+      const { data: updatedFallback, error: fallbackErr } = await supabase
+        .from("liquidations")
+        .update(updatePayload)
+        .eq("id", id)
+        .select()
+        .single();
+      if (fallbackErr) throw fallbackErr;
+      newLiq = updatedFallback;
+    } else {
+      newLiq = updatedWithCols;
+    }
 
     // Adjust deposits difference
     const incomeDiff = Number(oldLiq.total_incomes) - Number(total_incomes);
     if (incomeDiff !== 0) {
        await supabase.from("driver_deposit_movements").insert({
         driver_id: oldLiq.driver_id,
-        amount: incomeDiff, // if income decreased, difference is positive, so we return to balance. If income increased, diff is negative, so we subtract more.
+        amount: incomeDiff,
         type: "MANUAL_ADJUSTMENT",
         concept: "AJUSTE LIQUIDACIÓN",
         notes: `Ajuste por edición de liquidación ${id}`,
@@ -356,7 +526,7 @@ r.put("/:id", async (req: Request, res: Response) => {
       });
     }
 
-    return res.json(newLiq);
+    return res.json(enrichLiquidationRecord(newLiq));
 
   } catch (err: any) {
     console.error("Error in PUT /liquidations:", err.message);
@@ -388,7 +558,7 @@ r.get("/:id/document-urls", async (req: Request, res: Response) => {
   try {
     const { data: liq, error } = await supabase
       .from("liquidations")
-      .select("id, pdf_s3_key, docx_s3_key, audit_log")
+      .select("*")
       .eq("id", id)
       .single();
 
@@ -415,5 +585,82 @@ r.get("/:id/document-urls", async (req: Request, res: Response) => {
   }
 });
 
-export default r;
+// 6. POST register/update Comprobante de Pago of liquidation
+r.post("/:id/payment-proof", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { payment_proof_url, paid_at, payment_notes, recorded_by } = req.body || {};
 
+  if (!payment_proof_url) {
+    return res.status(400).json({ error: "Se requiere la URL del comprobante de pago (payment_proof_url)" });
+  }
+
+  try {
+    const { data: oldLiq, error: findErr } = await supabase
+      .from("liquidations")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (findErr || !oldLiq) {
+      return res.status(404).json({ error: "Liquidación no encontrada" });
+    }
+
+    const paidAtIso = paid_at ? new Date(paid_at).toISOString() : new Date().toISOString();
+    const auditEntry = {
+      action: "REGISTER_PAYMENT_PROOF",
+      timestamp: new Date().toISOString(),
+      recorded_by: recorded_by || "Admin",
+      payment_proof_url,
+      paid_at: paidAtIso,
+      payment_notes: payment_notes || null,
+    };
+
+    const newAuditLog = [...(oldLiq.audit_log || []), auditEntry];
+    const nextMeta = {
+      ...(oldLiq.document_metadata || {}),
+      payment_proof_url,
+      paid_at: paidAtIso,
+      payment_notes: payment_notes || null,
+    };
+
+    let updated: any = null;
+    const { data: upCols, error: upErr } = await supabase
+      .from("liquidations")
+      .update({
+        payment_proof_url,
+        paid_at: paidAtIso,
+        payment_notes: payment_notes || null,
+        document_metadata: nextMeta,
+        audit_log: newAuditLog,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (upErr) {
+      // Fallback en caso de que las columnas dedicadas aún no estén aplicadas en DB
+      const { data: upFallback, error: fbErr } = await supabase
+        .from("liquidations")
+        .update({
+          document_metadata: nextMeta,
+          audit_log: newAuditLog,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id)
+        .select()
+        .single();
+      if (fbErr) throw fbErr;
+      updated = upFallback;
+    } else {
+      updated = upCols;
+    }
+
+    return res.json(enrichLiquidationRecord(updated));
+  } catch (err: any) {
+    console.error("Error in POST /liquidations/:id/payment-proof:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+export default r;

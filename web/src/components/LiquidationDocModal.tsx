@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, FileText, Download, Printer, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import { ensureBasicAuth } from "../lib/auth";
 
@@ -29,6 +29,10 @@ interface Props {
   finalBalance: number;
   savingsStartDate?: string | null;
   savingsEndDate?: string | null;
+  retireDate?: string | null;
+  paymentDueDate?: string | null;
+  hasExistingDoc?: boolean;
+  onDocumentGenerated?: () => void;
   repairs?: Array<{ date: string; category: string; item?: string; total_amount: number }>;
 }
 
@@ -41,6 +45,14 @@ function formatFormalDate(dateStr?: string | null): string {
     "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
   ];
   return `${d.getDate()} de ${meses[d.getMonth()]} del ${d.getFullYear()}`;
+}
+
+function addDaysYmd(ymdStr: string, days: number): string {
+  const base = ymdStr.slice(0, 10);
+  const d = new Date(`${base}T12:00:00Z`);
+  if (isNaN(d.getTime())) return base;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 export function LiquidationDocModal({
@@ -57,10 +69,18 @@ export function LiquidationDocModal({
   finalBalance,
   savingsStartDate,
   savingsEndDate,
+  retireDate,
+  paymentDueDate,
+  hasExistingDoc,
+  onDocumentGenerated,
   repairs = [],
 }: Props) {
   const todayStr = new Date().toISOString().slice(0, 10);
-  const todayFormal = formatFormalDate(todayStr);
+  const baseRetireYmd = (retireDate || todayStr).slice(0, 10);
+  const defaultDueYmd = (paymentDueDate || addDaysYmd(baseRetireYmd, 20)).slice(0, 10);
+
+  const retireFormal = formatFormalDate(baseRetireYmd);
+  const dueFormal = formatFormalDate(defaultDueYmd);
 
   // Inicializar observaciones de revisión con daños conocidos si existen
   const defaultObservaciones = repairs && repairs.length > 0
@@ -68,13 +88,13 @@ export function LiquidationDocModal({
     : "VEHÍCULO RECIBIDO A SATISFACCIÓN SIN NOVEDADES ESTRUCTURALES NI MECÁNICAS";
 
   const [ciudad, setCiudad] = useState("Cali");
-  const [fechaDocumento, setFechaDocumento] = useState(todayFormal);
-  const [fechaDevolucion, setFechaDevolucion] = useState(todayFormal);
+  const [fechaDocumento, setFechaDocumento] = useState(retireFormal);
+  const [fechaDevolucion, setFechaDevolucion] = useState(dueFormal);
   const [fechaInicioAhorro, setFechaInicioAhorro] = useState(
     savingsStartDate ? formatFormalDate(savingsStartDate) : "fecha de inicio de contrato"
   );
   const [fechaFinAhorro, setFechaFinAhorro] = useState(
-    savingsEndDate ? formatFormalDate(savingsEndDate) : todayFormal
+    savingsEndDate ? formatFormalDate(savingsEndDate) : retireFormal
   );
   const [metodoDevolucion, setMetodoDevolucion] = useState<"transferencia" | "efectivo">("transferencia");
   const [observaciones, setObservaciones] = useState(defaultObservaciones);
@@ -92,6 +112,22 @@ export function LiquidationDocModal({
   const [generating, setGenerating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [docUrls, setDocUrls] = useState<{ pdf_url: string; docx_url: string } | null>(null);
+
+  useEffect(() => {
+    if (isOpen && liquidationId && hasExistingDoc) {
+      const auth = ensureBasicAuth();
+      fetch(`${API}/liquidations/${liquidationId}/document-urls`, {
+        headers: { Authorization: auth },
+      })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => {
+          if (d?.pdf_url) {
+            setDocUrls({ pdf_url: d.pdf_url, docx_url: d.docx_url });
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isOpen, liquidationId, hasExistingDoc]);
 
   if (!isOpen) return null;
 
@@ -136,6 +172,7 @@ export function LiquidationDocModal({
 
       const data = await res.json();
       setDocUrls({ pdf_url: data.pdf_url, docx_url: data.docx_url });
+      onDocumentGenerated?.();
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.message || "No se pudo generar el documento.");
@@ -186,7 +223,7 @@ export function LiquidationDocModal({
                 Resumen de Cifras Oficiales (Guardadas en BD)
               </span>
               <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Liquidación Guardada
+                <CheckCircle2 className="w-3 h-3" /> Plazo SIMIT: 20 días calendario
               </span>
             </div>
 
@@ -222,10 +259,10 @@ export function LiquidationDocModal({
             <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl space-y-3">
               <div className="flex items-center gap-2 text-emerald-800 font-semibold">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                <span>Documento oficial generado con éxito y respaldado en Cloudflare R2</span>
+                <span>Documento oficial disponible en Cloudflare R2</span>
               </div>
               <p className="text-xs text-emerald-700">
-                El acta de 4 páginas ha sido compilada con formato legal y firma digital de archivo. Puedes descargar el PDF oficial, el editable de Word (.docx) o imprimirlo:
+                El acta incluye la cláusula de validación de 20 días calendario en SIMIT. Puedes descargar el PDF oficial, el editable de Word (.docx) o imprimirlo:
               </p>
               <div className="flex flex-wrap gap-3 pt-1">
                 <a
@@ -298,7 +335,7 @@ export function LiquidationDocModal({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">
-                  Ciudad y Fecha del Acta
+                  Ciudad y Fecha de Entrega / Acta
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -320,7 +357,7 @@ export function LiquidationDocModal({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">
-                  Medio y Fecha de Devolución (Cláusula 4ª)
+                  Medio y Fecha de Devolución (+20 días SIMIT — Cláusula 4ª)
                 </label>
                 <div className="flex flex-col gap-2 pt-0.5">
                   <div className="flex gap-4">
@@ -349,7 +386,7 @@ export function LiquidationDocModal({
                     type="text"
                     value={fechaDevolucion}
                     onChange={(e) => setFechaDevolucion(e.target.value)}
-                    placeholder="Fecha de devolución (ej: 11 de septiembre de 2026)"
+                    placeholder="Fecha de devolución (+20 días tras entrega)"
                     className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
