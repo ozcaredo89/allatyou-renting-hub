@@ -1,7 +1,7 @@
 # Especificación Técnica: Sistema de Inspecciones y Auditoría
 
-**Fecha:** 07-Nov-2026  
-**Ticket:** #12, #28  
+**Fecha:** 11-Nov-2026  
+**Ticket:** #12, #28, #44  
 **Autor:** AllAtYou Renting Hub  
 **Estado:** Implementado ✅  
 
@@ -9,9 +9,9 @@
 
 ## 1. Resumen Ejecutivo
 Este módulo gestiona el ciclo de vida de la revisión física y técnica de activos de la flota.
-1. **Captura Móvil Optimizada:** Diseñada para realizarse a pie de vehículo desde un celular, con registro de odómetro (kilometraje), indicador visual de nivel de combustible (vacío, 1/4, 1/2, 3/4, full) y compresión automática de fotografías en el navegador antes de subir al bucket Cloudflare R2 / Supabase Storage.
+1. **Captura Móvil Optimizada:** Diseñada para realizarse a pie de vehículo desde un celular, con registro de odómetro (kilometraje), indicador visual de nivel de combustible (vacío, 1/4, 1/2, 3/4, full), croquis 3D 360° interactivo de daños y compresión automática de fotografías en el navegador antes de subir al bucket Cloudflare R2 / Supabase Storage.
 2. **Distribución Instantánea por WhatsApp:** Al completar o consultar la inspección, se genera un mensaje preformateado con enlace a un visor público ligero para enviar inmediatamente al conductor o cliente.
-3. **Gestión y Auditoría (Admin):** Interfaz para visualizar odómetro, combustible y fotos, con capacidad de corrección controlada respaldada por logs inmutables (`inspection_logs`).
+3. **Gestión y Auditoría (Admin):** Interfaz para visualizar odómetro, combustible, croquis 3D y fotos, con capacidad de corrección controlada respaldada por logs inmutables (`inspection_logs`).
 
 ---
 
@@ -36,13 +36,19 @@ Este módulo gestiona el ciclo de vida de la revisión física y técnica de act
 * **Prueba de ruta (`road_test`):** sí/no — indica que se subieron al carro y lo anduvieron para probarlo y escucharlo. Obligatoria para finalizar.
 * **Endpoints:** `POST /inspections` con `status: 'draft'` (admin) crea el borrador; `GET` / `PUT /public/inspections/continue/:token` cargan y guardan avance (`finalize: true` para cerrar).
 
+### 2.1.2 Croquis 3D 360° Interactivo de Daños (#44)
+* **Silueta 3D 360° (`VehicleDamage3DMapper.tsx`):** Modelo 3D interactivo sobre HTML5 Canvas con giro libre de 360° (arrastre táctil o mouse) y botones de cámara rápida (`360° Libre`, `Frente`, `Izquierda`, `Derecha`, `Atrás`, `Techo`, `Interior / Cabina`).
+* **Marcación de puntos y detección automática de sección:** Al tocar cualquier superficie del vehículo en 3D, se calcula la coordenada 3D exacta `(x, y, z)` mediante interpolación baricéntrica y se identifica automáticamente la pieza tocada (*Capó, Bomper Delantero/Trasero, Puertas, Guardafangos, Costados, Parabrisas, Espejos, Farolas, Stops, Llantas/Rines, Tablero, Timón, Sillas*, etc.).
+* **Etiquetas rápidas contextuales:** Dependiendo de la categoría de la pieza tocada (`body`, `bumper`, `glass`, `lights`, `wheels`, `interior`), se despliegan etiquetas rápidas de 1 toque (ej. `Rayón`, `Hundido / Abolladura`, `Daño de pintura`, `Picado (Piedra)`, `Rin rayado (Andén)`, `Mancha en tapicería`), selector de severidad (`leve`, `medio`, `grave`), campo de nota libre y captura de foto comprimida del daño.
+* **Daños preexistentes:** Permite importar con un toque los daños registrados en la última inspección cerrada de la misma placa.
+
 ### 2.2 Reporte Público de Inspección
-* Ruta pública de visualización (`/inspection/:id` y `/inspections/view/:id`) que permite al conductor, cliente o taller revisar el reporte y fotos en alta resolución con visor fullscreen sin necesidad de credenciales administrativas.
+* Ruta pública de visualización (`/inspection/:id` y `/inspections/view/:id`) que permite al conductor, cliente o taller revisar el reporte, girar la silueta 3D 360° para inspeccionar cada punto de daño marcado y ver las fotos en alta resolución con visor fullscreen sin necesidad de credenciales administrativas.
 * Endpoint API público: `GET /public/inspections/:id`.
 
 ### 2.3 Dashboard Administrativo
-* **Listado Maestro:** Visualización tabular cronológica con columnas para Fecha, Vehículo, Conductor, Tipo, Kilometraje, Combustible e Inspector.
-* **Visor de Detalle y Edición:** Muestra métricas de odómetro y combustible, galería de fotos con zoom (`ImageViewer`), logs de auditoría y botón de compartir WhatsApp.
+* **Listado Maestro:** Visualización tabular cronológica con columnas para Fecha, Vehículo, Conductor, Tipo, Kilometraje, Combustible, Daños 3D e Inspector.
+* **Visor de Detalle y Edición:** Muestra métricas de odómetro y combustible, croquis 3D 360° interactivo (con soporte de edición en modo Admin), galería de fotos con zoom (`ImageViewer`), logs de auditoría y botón de compartir WhatsApp.
 
 ---
 
@@ -61,6 +67,7 @@ Almacena el estado actual de la inspección.
 | `mileage` | `numeric` | Kilometraje / Odómetro en km | Nullable |
 | `fuel_level` | `text` | Nivel de gasolina | `'empty'`, `'1/4'`, `'1/2'`, `'3/4'`, `'full'` |
 | `photos` | `jsonb` | URLs de las imágenes comprimidas | Estructura JSON (Ver 3.3) |
+| `damages` | `jsonb` | Arreglo de puntos de daño 3D marcados | Default `'[]'::jsonb` |
 | `comments` | `text` | Reporte escrito / Observaciones | Nullable |
 | `inspector_name`| `text` | Quien realizó la revisión (último que guardó) | Nullable |
 | `status` | `text` | Estado | `draft`, `completed` (default `completed`) |
