@@ -69,6 +69,14 @@
   - **Intercambio inteligente anti-duplicados:** Si la IA detecta que la segunda foto es la mejor portada exterior, intercambia las fotos (`photo_exterior_url` $\leftrightarrow$ `photo_interior_url`), garantizando que la foto interior nunca quede duplicada con la exterior.
   - **Fallback sin etiquetas inventadas:** Si la IA falla o se agota la cuota, la foto se marca como `kind: "general"`, `tag: "sin_clasificar"`. Jamás inventa etiquetas anatómicas falsas que confundan al administrador.
 
+### 2.4 Selector Estándar de Color de Vehículo
+* **Problema resuelto:** El `<input list="common-colors">` (`<datalist>`) generaba una experiencia atípica y tosca en dispositivos móviles: abría forzosamente el teclado virtual para escribir "Blanco", no mostraba affordance de desplegable en varios navegadores móviles, y no ofrecía certeza visual sobre los colores estándar del RUNT.
+* **Comportamiento:**
+  1. **Chips de 1-toque con swatches visuales:** Acceso inmediato con muestra de color para los 6 colores más comunes de Colombia (>85% del parque automotor: Blanco, Gris, Plata, Negro, Rojo, Azul).
+  2. **Dropdown `<select>` estándar:** Desplegable con los colores vehiculares estándar colombianos (Blanco, Gris, Plata, Negro, Rojo, Azul, Beige, Marrón, Verde, Naranja, Amarillo, Vino Tinto, Dorado, y "Otro color...").
+  3. **Opción "Otro color...":** Al seleccionarla, despliega un campo de texto asistido (`placeholder="Escribe el color (ej: Champagne, Vinotinto...)"`) con autoFocus para colores atípicos o combinaciones especiales.
+  4. Sincronización bidireccional entre chips rápidos y el desplegable.
+
 ---
 
 ## 3. Matriz de Campos y Validaciones
