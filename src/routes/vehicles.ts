@@ -26,15 +26,21 @@ r.get("/", async (req: Request, res: Response) => {
         leasing_contracts (
           id,
           status,
+          driver_id,
           signed_contract_url,
           created_at,
-          signed_at
+          signed_at,
+          driver:drivers!driver_id (
+            id,
+            full_name,
+            phone
+          )
         )
       `)
       .order("plate", { ascending: true });
 
     if (req.query.status !== 'all') {
-      query = query.in("status", ["active", "maintenance"]);
+      query = query.in("status", ["active", "maintenance", "leasing"]);
     }
 
     const { data, error } = await query;
@@ -81,12 +87,19 @@ r.get("/", async (req: Request, res: Response) => {
       }
     }
 
-    // 3. Adjuntar a los vehículos
-    const enhancedData = data.map((v: any) => ({
-      ...v,
-      current_mileage: mileageMap.get(v.plate) || null,
-      last_oil_change_date: oilMap.get(v.plate) || null
-    }));
+    // 3. Adjuntar a los vehículos (y usar conductor del contrato de leasing activo como respaldo si no hay current_driver_id)
+    const enhancedData = data.map((v: any) => {
+      const activeLeasing = Array.isArray(v.leasing_contracts)
+        ? v.leasing_contracts.find((c: any) => c.status === "active")
+        : null;
+      const effectiveDriver = v.driver || activeLeasing?.driver || null;
+      return {
+        ...v,
+        driver: effectiveDriver,
+        current_mileage: mileageMap.get(v.plate) || null,
+        last_oil_change_date: oilMap.get(v.plate) || null,
+      };
+    });
 
     return res.json(enhancedData);
   } catch (err: any) {
