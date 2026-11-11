@@ -37,6 +37,16 @@ const TOP_COLORS = [
 ] as const;
 
 const FUELS = ["Gasolina", "Gas/Gasolina", "Diesel", "Eléctrico", "Híbrido"];
+const TRANSMISSIONS = ["Mecánica", "Automática"];
+
+type ListingType = "rent" | "sale" | "both";
+
+// Modalidades de captación (ticket #38): alquilar = AllAtYou administra el carro.
+const LISTING_OPTIONS: Array<{ value: ListingType; title: string; desc: string }> = [
+  { value: "rent", title: "🔑 Que AllAtYou lo administre", desc: "Lo alquilamos a conductores y te pagamos." },
+  { value: "sale", title: "🏷️ Venderlo", desc: "Lo publicamos en nuestro catálogo de venta." },
+  { value: "both", title: "🔄 Ambas opciones", desc: "Administración mientras aparece un comprador." },
+];
 
 const APPOINTMENT_SUGGESTIONS = [
   "Mañana en la mañana",
@@ -111,11 +121,16 @@ export function VehicleApplicationForm() {
       year: new Date().getFullYear(),
       color: "Blanco",
       fuel: "Gasolina",
+      transmission: "Mecánica",
     },
     business: {
+      // rent = administración AllAtYou · sale = venta en catálogo · both = ambas
+      listingType: "rent" as ListingType,
       appointmentDate: "",
       availability: "unlimited",
       expectedPrice: 70000,
+      salePrice: 0,
+      acceptsPublicContact: false,
     },
     status: {
       mileage: 0,
@@ -273,8 +288,17 @@ export function VehicleApplicationForm() {
     }
 
     if (currentStep === 3) {
-      if (!formData.business.expectedPrice || formData.business.expectedPrice < 20000) {
+      const lt = formData.business.listingType;
+      if ((lt === "rent" || lt === "both") && (!formData.business.expectedPrice || formData.business.expectedPrice < 20000)) {
         showError("Ingresa un precio diario esperado válido (ej: $70.000 COP).");
+        return false;
+      }
+      if ((lt === "sale" || lt === "both") && (!formData.business.salePrice || formData.business.salePrice < 1000000)) {
+        showError("Ingresa un precio de venta válido (ej: $45.000.000 COP).");
+        return false;
+      }
+      if ((lt === "sale" || lt === "both") && !formData.business.acceptsPublicContact) {
+        showError("Para publicar la venta debes autorizar que mostremos tu nombre y WhatsApp a los compradores.");
         return false;
       }
       const appt = formData.business.appointmentDate.trim();
@@ -358,7 +382,8 @@ export function VehicleApplicationForm() {
         <h3 className="text-xl font-bold text-white">¡Vehículo Registrado!</h3>
         <p className="mt-2 text-slate-300 text-sm leading-relaxed">
           Hemos recibido la información de tu <strong>{formData.vehicle.brand === "Otra" ? customBrand : formData.vehicle.brand}</strong> de placa <strong>{formData.vehicle.plate}</strong>.<br />
-          Nuestro equipo comercial te contactará al WhatsApp <strong>{formData.owner.phone}</strong> para agendar la revisión.
+          Nuestro equipo comercial te contactará al WhatsApp <strong>{formData.owner.phone}</strong> para agendar la revisión
+          {formData.business.listingType !== "rent" ? " y publicar tu carro en el catálogo de venta." : "."}
         </p>
       </div>
     );
@@ -699,6 +724,26 @@ export function VehicleApplicationForm() {
             </div>
           </div>
 
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Transmisión *</label>
+            <div className="grid grid-cols-2 gap-2">
+              {TRANSMISSIONS.map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setFormData(prev => ({ ...prev, vehicle: { ...prev.vehicle, transmission: t } }))}
+                  className={`rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
+                    formData.vehicle.transmission === t
+                      ? "bg-emerald-500/20 border-emerald-400 text-emerald-300"
+                      : "bg-slate-950 border-white/15 text-slate-300 hover:border-white/30"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex gap-3 pt-2">
             <button
               onClick={handleBack}
@@ -719,9 +764,75 @@ export function VehicleApplicationForm() {
       {/* STEP 3: Negocio */}
       {step === 3 && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-white">3. Expectativa de Negocio</h3>
+          <h3 className="text-lg font-semibold text-white">3. ¿Qué quieres hacer con tu carro?</h3>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {LISTING_OPTIONS.map(opt => {
+              const isSelected = formData.business.listingType === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => {
+                    clearErrors();
+                    setFormData(prev => ({ ...prev, business: { ...prev.business, listingType: opt.value } }));
+                  }}
+                  className={`text-left rounded-xl border p-3 transition-colors ${
+                    isSelected
+                      ? "bg-emerald-500/15 border-emerald-400"
+                      : "bg-slate-950 border-white/10 hover:border-white/25"
+                  }`}
+                >
+                  <span className={`block text-sm font-bold ${isSelected ? "text-emerald-300" : "text-white"}`}>{opt.title}</span>
+                  <span className="block text-[11px] text-slate-400 mt-0.5">{opt.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {(formData.business.listingType === "sale" || formData.business.listingType === "both") && (
+            <div className="rounded-xl bg-slate-950 p-4 border border-sky-500/20 space-y-3">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Precio de venta (COP) *</label>
+                <input
+                  type="number"
+                  step={500000}
+                  min={1000000}
+                  placeholder="Ej: 45000000"
+                  className="w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-2.5 text-sm text-sky-300 font-bold outline-none focus:ring-2 focus:ring-sky-400"
+                  value={formData.business.salePrice || ""}
+                  onChange={e => {
+                    clearErrors();
+                    setFormData({
+                      ...formData,
+                      business: { ...formData.business, salePrice: Number(e.target.value) },
+                    });
+                  }}
+                />
+              </div>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="accent-sky-500 h-4 w-4 mt-0.5"
+                  checked={formData.business.acceptsPublicContact}
+                  onChange={e => {
+                    clearErrors();
+                    setFormData({
+                      ...formData,
+                      business: { ...formData.business, acceptsPublicContact: e.target.checked },
+                    });
+                  }}
+                />
+                <span className="text-[11px] text-slate-300 leading-relaxed">
+                  Autorizo que mi nombre y WhatsApp se muestren en el catálogo público para que los compradores me contacten (Ley 1581 de 2012). Mi placa y correo no se publican.
+                </span>
+              </label>
+            </div>
+          )}
 
           <div className="rounded-xl bg-slate-950 p-4 border border-white/5 space-y-4">
+            {formData.business.listingType !== "sale" && (
+            <>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Precio diario esperado (COP) *</label>
               <input
@@ -757,6 +868,8 @@ export function VehicleApplicationForm() {
                 <option value="hours">Por horas</option>
               </select>
             </div>
+            </>
+            )}
 
             <div>
               <label className="text-xs text-slate-300 font-medium mb-2 block">

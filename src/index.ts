@@ -118,7 +118,6 @@ app.use("/marketing", marketingRoutes);
 app.use("/chat", chatRoutes);
 
 // --- RUTA MARKETPLACE (PÚBLICA: CATÁLOGO Y UPLOAD) ---
-app.use("/marketplace/admin", basicAuth);
 app.use("/marketplace", marketplaceRoutes);
 
 // --- RUTA PLEDGES (VAKI / CROWDFUNDING) ---

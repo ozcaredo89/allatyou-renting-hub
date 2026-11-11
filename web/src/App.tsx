@@ -25,7 +25,6 @@ import AdminProfit from "./pages/AdminProfit";
 import AdminAmortization from "./pages/AdminAmortization";
 import AdminRecruitment from "./pages/AdminRecruitment";
 import RemindersLog from "./pages/RemindersLog";
-import AdminMarketplace from "./pages/AdminMarketplace";
 
 // Inspecciones
 import NewInspection from "./pages/NewInspection";
@@ -109,7 +108,7 @@ export default function App() {
               <Route path="/reminders-log" element={<RemindersLog />} />
               <Route path="/inspections" element={<AdminInspections />} />
               <Route path="/inspections/new" element={<NewInspection />} />
-              <Route path="/marketplace" element={<AdminMarketplace />} />
+              <Route path="/marketplace" element={<Navigate to="/recruitment?tab=vehicles" replace />} />
               <Route path="/trips" element={<AdminTrips />} />
               <Route path="/audits" element={<AdminAudits />} />
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { StatusBadge } from "../components/StatusBadge";
 import { WhatsAppBtn, EmailBtn } from "../components/ContactButtons";
@@ -6,8 +7,25 @@ import { compressImage } from "../utils/compressImage";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
+const COP = (v: number) => `$${new Intl.NumberFormat("es-CO").format(v)}`;
+
+// Modalidad de captación del vehículo (ticket #38)
+const LISTING_BADGES: Record<string, { label: string; cls: string }> = {
+  rent: { label: "🔑 Administración", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  sale: { label: "🏷️ Venta", cls: "bg-sky-50 text-sky-700 border-sky-200" },
+  both: { label: "🔄 Admin + Venta", cls: "bg-violet-50 text-violet-700 border-violet-200" },
+};
+
+function ListingBadge({ type }: { type?: string | null }) {
+  const b = LISTING_BADGES[type || "rent"] ?? LISTING_BADGES.rent!;
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${b.cls}`}>{b.label}</span>;
+}
+
 export default function AdminRecruitment() {
-  const [tab, setTab] = useState<"drivers" | "vehicles">("drivers");
+  // La pestaña vive en la URL (?tab=vehicles) para poder enlazar la bandeja de vehículos desde el menú
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: "drivers" | "vehicles" = searchParams.get("tab") === "vehicles" ? "vehicles" : "drivers";
+  const setTab = (t: "drivers" | "vehicles") => setSearchParams(t === "vehicles" ? { tab: "vehicles" } : {});
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<any | null>(null);
@@ -84,6 +102,30 @@ export default function AdminRecruitment() {
       loadData();
     } catch (error: any) {
       setActionError(error?.message || "Error al actualizar estado");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Publica o retira un vehículo aprobado del catálogo público /rent
+  const togglePublish = async (id: number, publish: boolean) => {
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const rs = await fetch(`${API}/vehicle-applications/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: ensureBasicAuth() },
+        body: JSON.stringify({ published_in_catalog: publish }),
+      });
+      if (!rs.ok) {
+        const err = await rs.json().catch(() => ({}));
+        setActionError(err.error || "Error al actualizar la publicación");
+        return;
+      }
+      setSelected((prev: any) => (prev ? { ...prev, published_in_catalog: publish } : prev));
+      loadData();
+    } catch (error: any) {
+      setActionError(error?.message || "Error al actualizar la publicación");
     } finally {
       setActionLoading(false);
     }
@@ -221,6 +263,12 @@ export default function AdminRecruitment() {
                             <div className="space-y-1">
                               <div className="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded w-fit">{item.plate}</div>
                               <div className="text-xs">{item.brand} {item.line} ({item.model_year})</div>
+                              <div className="flex flex-wrap gap-1 pt-0.5">
+                                <ListingBadge type={item.listing_type} />
+                                {item.published_in_catalog && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border bg-amber-50 text-amber-700 border-amber-200">🌐 En catálogo</span>
+                                )}
+                              </div>
                             </div>
                           )}
                         </td>
@@ -334,15 +382,28 @@ export default function AdminRecruitment() {
                       <div><dt className="text-slate-500">Vehículo</dt><dd className="font-medium">{selected.brand} {selected.line}</dd></div>
                       <div><dt className="text-slate-500">Modelo</dt><dd className="font-medium">{selected.model_year}</dd></div>
                       <div><dt className="text-slate-500">Combustible</dt><dd className="font-medium">{selected.fuel_type}</dd></div>
-                      <div><dt className="text-slate-500">Color</dt><dd className="font-medium">{selected.color}</dd></div>
+                      <div><dt className="text-slate-500">Transmisión</dt><dd className="font-medium">{selected.transmission || "No indicada"}</dd></div>
+                      <div><dt className="text-slate-500">Color</dt><dd className="font-medium">{selected.color || "No indicado"}</dd></div>
+                      <div><dt className="text-slate-500">Modalidad</dt><dd className="font-medium pt-0.5"><ListingBadge type={selected.listing_type} /></dd></div>
                       <div><dt className="text-slate-500">Kilometraje</dt><dd className="font-medium">{selected.mileage ? selected.mileage.toLocaleString() : "N/A"}</dd></div>
                       <div><dt className="text-slate-500">Seguro Todo Riesgo</dt><dd className="font-medium">{selected.has_all_risk_insurance ? "✅ Sí tiene" : "❌ No tiene"}</dd></div>
                       <div><dt className="text-slate-500">Cita / Disponibilidad</dt><dd className="font-medium">{selected.appointment_date || "No especificada"}</dd></div>
-                      <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-100 sm:col-span-2">
-                        <dt className="text-emerald-800 text-xs font-bold uppercase">Expectativa de Renta</dt>
-                        <dd className="font-bold text-emerald-700 text-lg">${new Intl.NumberFormat('es-CO').format(selected.expected_daily_rent)} / día</dd>
-                        <dd className="text-xs text-emerald-600 mt-1">Disponibilidad: {selected.availability_type}</dd>
-                      </div>
+                      {selected.listing_type !== "sale" && selected.expected_daily_rent != null && (
+                        <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-100 sm:col-span-2">
+                          <dt className="text-emerald-800 text-xs font-bold uppercase">Expectativa de Renta</dt>
+                          <dd className="font-bold text-emerald-700 text-lg">{COP(Number(selected.expected_daily_rent))} / día</dd>
+                          <dd className="text-xs text-emerald-600 mt-1">Disponibilidad: {selected.availability_type || "No indicada"}</dd>
+                        </div>
+                      )}
+                      {(selected.listing_type === "sale" || selected.listing_type === "both") && (
+                        <div className="p-3 bg-sky-50 rounded-xl border border-sky-100 sm:col-span-2">
+                          <dt className="text-sky-800 text-xs font-bold uppercase">Precio de Venta</dt>
+                          <dd className="font-bold text-sky-700 text-lg">{selected.sale_price ? COP(Number(selected.sale_price)) : "No indicado"}</dd>
+                          <dd className="text-xs text-sky-600 mt-1">
+                            Contacto público: {selected.accepts_public_contact ? "✅ Autorizado" : "❌ No autorizado"}
+                          </dd>
+                        </div>
+                      )}
                       {Array.isArray(selected.photos) && selected.photos.length > 0 && (
                         <div className="sm:col-span-2 pt-2">
                           <dt className="text-slate-500 mb-2 font-semibold">Fotos Adjuntas</dt>
@@ -513,6 +574,32 @@ export default function AdminRecruitment() {
                       );
                     })}
                   </div>
+                </div>
+              )}
+
+              {/* Catálogo público /rent (solo vehículos aprobados, ticket #38) */}
+              {tab === "vehicles" && selected.status === "approved" && (
+                <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">Catálogo público (/rent)</h4>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      {selected.published_in_catalog
+                        ? "Visible en el catálogo. La renta se contacta por el WhatsApp de AllAtYou; la venta, por el del dueño."
+                        : "No visible en el catálogo."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={() => togglePublish(selected.id, !selected.published_in_catalog)}
+                    className={`shrink-0 px-4 py-2.5 rounded-xl text-xs font-bold transition-colors disabled:opacity-50 ${
+                      selected.published_in_catalog
+                        ? "bg-white border border-slate-300 text-slate-700 hover:bg-slate-50"
+                        : "bg-amber-500 text-white hover:bg-amber-600"
+                    }`}
+                  >
+                    {actionLoading ? "Guardando..." : selected.published_in_catalog ? "Retirar del catálogo" : "🌐 Publicar en catálogo"}
+                  </button>
                 </div>
               )}
 

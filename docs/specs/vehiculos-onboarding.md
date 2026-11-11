@@ -3,54 +3,42 @@
 **Estado:** Producción  
 **Archivos clave frontend:**  
 - `web/src/components/VehicleApplicationForm.tsx` (Landing Propietarios)
-- `web/src/pages/RentYourCar.tsx` (Marketplace P2P)
+- `web/src/pages/RentYourCar.tsx` (envoltorio de `/rent-your-car`, mismo formulario)
 - `web/src/components/VehicleModelCombobox.tsx` (Buscador/Autocomplete modelos)
 - `web/src/components/VehicleDateField.tsx` (Fechas asistidas SOAT/Tecno)
 - `web/src/constants/vehicleCatalog.ts` (Marcas y líneas estándar)
 - `web/src/utils/compressImage.ts` (Compresión cliente en canvas)
 **Archivos clave backend:**  
 - `src/routes/vehicleApplications.ts` (`POST /vehicle-applications`)
-- `src/routes/marketplace.ts` (`POST /marketplace/upload`)
+- `src/routes/marketplace.ts` (`GET /marketplace/catalog`; `POST /marketplace/upload` retirado)
 - `src/lib/vehicleImageClassifier.ts` (Clasificación visión IA en background)
 
 ---
 
-## 1. Mapa Rápido de los Dos Flujos (¡No Confundir!)
+## 1. Flujo Único de Captación (ticket #38, 10-Nov-2026)
 
-| Característica | 1. Landing Page (Flota Administrada) | 2. Marketplace P2P (Alquiler Directo) |
-| :--- | :--- | :--- |
-| **Público objetivo** | Propietario inversionista que cede la administración a AllAtYou. | Propietario que lista su vehículo para alquilar a terceros (estilo Turo). |
-| **Ruta Frontend** | `allatyou.com/#propietarios` y modal de simulador (`TabIncome.tsx`). | `allatyou.com/rent-your-car` (Header público). |
-| **Componente Formulario** | `VehicleApplicationForm.tsx` (Modal/Wizard 4 pasos, tema oscuro). | `RentYourCar.tsx` (Página completa, tema claro). |
-| **Endpoint Backend** | `POST /vehicle-applications` | `POST /marketplace/upload` |
-| **Tabla Supabase** | `vehicle_applications` | `marketplace_cars` |
-| **Destino Admin** | `web.allatyou.com/recruitment` -> Pestaña **"Vehículos"** (`AdminRecruitment.tsx`). | `web.allatyou.com/marketplace` (`AdminMarketplace.tsx`). |
-| **Estado inicial** | `pending` | `pending` |
-| **Visibilidad en catálogo** | No aplica directamente (entra a flota tras peritaje y contrato). | Requiere aprobación admin (`status = 'approved'`). |
+> Hasta el 10-Nov-2026 existían dos flujos (Landing → `vehicle_applications` y `/rent-your-car` → `marketplace_cars`). Se unificaron: reglas completas en [marketplace.md](marketplace.md) §1.
+
+| Característica | Valor |
+| :--- | :--- |
+| **Rutas públicas** | `allatyou.com/#propietarios` (`TabIncome.tsx`) y `allatyou.com/rent-your-car` (`RentYourCar.tsx`, envoltorio). |
+| **Formulario** | `VehicleApplicationForm.tsx` (wizard 4 pasos, tema oscuro). Paso 3 pregunta la modalidad: administración AllAtYou (`rent`), venta (`sale`) o ambas (`both`). |
+| **Endpoint** | `POST /vehicle-applications` (`POST /marketplace/upload` responde `410`). |
+| **Tabla** | `vehicle_applications` (`marketplace_cars` retirada, solo histórico). |
+| **Bandeja admin** | `web.allatyou.com/recruitment?tab=vehicles` (menú **Operación → 🏪 Vehículos postulados**; `/marketplace` redirige aquí). |
+| **Estado inicial** | `pending` |
+| **Catálogo `/rent`** | Solo `approved` + `published_in_catalog = true` (botón "Publicar en catálogo" en el detalle). |
 
 ---
 
 ### 1.1 Guía Rápida de Aprobación y Moderación Administrativa (Cheat Sheet)
 
-Para localizar y moderar rápidamente cualquier vehículo registrado por un usuario:
-
-#### Caso A: Vehículo registrado desde la Landing Page (`allatyou.com`)
-1. **URL de Administración:** `https://web.allatyou.com/recruitment`
-2. **Navegación:** Menú lateral **Operación → 👥 Reclutamiento** → Pestaña **Vehículos**.
-3. **Identificación:** Se lista por fecha, nombre del propietario, placa (ej. `HBU166`), marca, línea y estado actual (`pending`, `approved`, `rejected`).
-4. **Acción:**
-   - Clic en **"Ver Detalle →"**.
-   - Se abre el modal con fotos, SOAT, tecnomecánica, disponibilidad para peritaje y contacto de WhatsApp/Email.
-   - Botón **"Aprobar / Contactado"** para avanzar la postulación o **"Rechazar"** (requiere motivo).
-
-#### Caso B: Vehículo publicado para Marketplace P2P (`/rent-your-car`)
-1. **URL de Administración:** `https://web.allatyou.com/marketplace`
-2. **Navegación:** Menú lateral **Operación → 🏪 Marketplace**.
-3. **Identificación:** Se lista con foto exterior, precio por día/venta, placa y datos de contacto.
-4. **Moderación:** Botón verde de check para aprobar (`approved`) o cruz para rechazar (`rejected`).
-5. **Aparición en catálogo público:**
-   - **Regla estricta de seguridad:** `GET /marketplace/catalog` filtra exclusivamente `.eq("status", "approved")`.
-   - **Ningún vehículo aparece en `/rent` o `/marketplace` sin aprobación previa del administrador**, garantizando que no se publiquen fotos inapropiadas o precios erróneos.
+1. **URL:** `https://web.allatyou.com/recruitment?tab=vehicles`.
+2. **Identificación:** fecha, propietario, placa, marca/línea/año, badge de modalidad (🔑 Administración · 🏷️ Venta · 🔄 Admin + Venta), badge 🌐 En catálogo y estado.
+3. **Acción:** "Ver Detalle →" abre fotos, SOAT, tecno, precio diario y/o de venta, autorización de contacto público y cita de revisión.
+   - **"Aprobar / Contactado"** o **"Rechazar"** (motivo obligatorio).
+   - Si está aprobado: **"🌐 Publicar en catálogo"** / **"Retirar del catálogo"**. Rechazar o devolver a pendiente despublica.
+4. **Seguridad:** ningún vehículo aparece en `/rent` sin aprobación y publicación explícita del admin.
 
 ---
 
@@ -85,7 +73,7 @@ Para localizar y moderar rápidamente cualquier vehículo registrado por un usua
   - En pantallas táctiles de celular no existe el evento `hover`. El botón de eliminar (🗑️) debe estar **permanentemente visible** en la esquina superior derecha de cada miniatura con área táctil cómoda (`w-7 h-7`), junto con el badge indicador de posición a la izquierda.
 * **Resiliencia en subida por lote y límite notificado:**
   - El estado local se actualiza progresivamente foto por foto. Si una imagen falla a mitad del lote, las anteriores exitosas **no se descartan** y el mensaje de error se reporta en el banner sin usar `alert()`.
-  - Si el usuario selecciona en la galería más fotos del límite permitido (más de 2 en marketplace o más de 8 en landing), la UI no hace un recorte silencioso: sube las permitidas y muestra un aviso informando cuántas se cargaron por tope de cupo.
+  - Si el usuario selecciona en la galería más fotos del límite permitido (más de 8), la UI no hace un recorte silencioso: sube las permitidas y muestra un aviso informando cuántas se cargaron por tope de cupo.
   - El input tipo archivo siempre resetea su valor (`e.target.value = ""`) para permitir volver a elegir la misma foto si el usuario la borró por error.
 * **Compresión en cliente (`compressImage.ts`):** Antes de enviar a `${API}/uploads`, se redimensiona a máx `1600px` y se comprime en canvas a JPEG `0.8`. Reduce el peso de 5-15MB a ~150-300KB (>95% ahorro).
 * **Carpeta R2 obligatoria:** `fd.append("folder", "vehicles")`. **NUNCA omitir**: si se omite, el backend asume `"proofs"` y dispara el OCR concurrente de pagos, saturando el servidor.
