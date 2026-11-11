@@ -1,7 +1,7 @@
 # Especificación Técnica: Sistema de Inspecciones y Auditoría
 
 **Fecha:** 07-Nov-2026  
-**Ticket:** #12  
+**Ticket:** #12, #28  
 **Autor:** AllAtYou Renting Hub  
 **Estado:** Implementado ✅  
 
@@ -22,6 +22,19 @@ Este módulo gestiona el ciclo de vida de la revisión física y técnica de act
 * **Nivel de Gasolina Visual:** Barra segmentada interactiva y botones táctiles grandes para los 5 niveles estándar (`empty`, `1/4`, `1/2`, `3/4`, `full`).
 * **Compresión Client-Side:** Todas las fotos (tomadas con cámara nativa o cargadas desde la galería) se comprimen automáticamente en el navegador mediante HTML5 Canvas (redimensionamiento a máx 1400px y calidad JPEG 75%), reduciendo el peso de ~5-15MB a <250KB por imagen para evitar saturar memoria y bucket.
 * **Compartir por WhatsApp:** Generación instantánea de acta de entrega/recepción con link directo al reporte.
+
+### 2.1.1 Borradores compartibles, cronómetro y prueba de ruta (#28)
+* **Guardar avance:** el formulario permite `Guardar avance y pasar a otra persona` en cualquier punto, sin exigir fotos. La inspección queda con `status = 'draft'` y se genera un `continue_token` (UUID).
+* **Continuar por enlace:** el enlace `/inspection/continue/:token` (público, sin Basic Auth, disponible en `web` y `www`) abre el mismo formulario con todo lo capturado. La placa queda fija.
+* **Reglas de negocio:**
+  * El enlace de continuación **no vence**.
+  * Los borradores **no se borran**: quedan abiertos indefinidamente y se destacan en `/inspections` (aviso "pendientes de completar y cerrar", badge *Abierta*, filtro *Solo abiertas*).
+  * Se puede **pasar en cadena** (A → B → C …) con el mismo enlace, cuantas veces haga falta.
+  * Cada guardado exige el nombre de quien lo hace y deja un registro en `inspection_logs`; `inspector_name` queda con el nombre del último que guardó (quien finaliza). Mientras no existan usuarios en la app es texto libre (ver backlog #29).
+* **Finalizar:** aplica las validaciones normales (mín. 1 foto y prueba de ruta respondida), pasa a `status = 'completed'`, fija `completed_at` y `duration_seconds` y sincroniza el km en `vehicle_mileage_logs` (solo al finalizar). Una vez finalizada, el enlace ya no permite editar (responde 409) y muestra el acceso al reporte.
+* **Cronómetro:** el formulario muestra en vivo cuánto lleva la revisión desde `started_at` (momento en que se abrió el formulario por primera vez). La duración guardada es el **tiempo total de inicio a cierre**, incluyendo pausas entre personas.
+* **Prueba de ruta (`road_test`):** sí/no — indica que se subieron al carro y lo anduvieron para probarlo y escucharlo. Obligatoria para finalizar.
+* **Endpoints:** `POST /inspections` con `status: 'draft'` (admin) crea el borrador; `GET` / `PUT /public/inspections/continue/:token` cargan y guardan avance (`finalize: true` para cerrar).
 
 ### 2.2 Reporte Público de Inspección
 * Ruta pública de visualización (`/inspection/:id` y `/inspections/view/:id`) que permite al conductor, cliente o taller revisar el reporte y fotos en alta resolución con visor fullscreen sin necesidad de credenciales administrativas.
@@ -49,7 +62,13 @@ Almacena el estado actual de la inspección.
 | `fuel_level` | `text` | Nivel de gasolina | `'empty'`, `'1/4'`, `'1/2'`, `'3/4'`, `'full'` |
 | `photos` | `jsonb` | URLs de las imágenes comprimidas | Estructura JSON (Ver 3.3) |
 | `comments` | `text` | Reporte escrito / Observaciones | Nullable |
-| `inspector_name`| `text` | Quien realizó la revisión | Nullable |
+| `inspector_name`| `text` | Quien realizó la revisión (último que guardó) | Nullable |
+| `status` | `text` | Estado | `draft`, `completed` (default `completed`) |
+| `continue_token` | `uuid` | Token del enlace de continuación de borradores | Único, Nullable |
+| `started_at` | `timestamptz` | Inicio de la revisión | Nullable |
+| `completed_at` | `timestamptz` | Cierre de la revisión | Nullable |
+| `duration_seconds` | `integer` | Duración total inicio → cierre | Nullable |
+| `road_test` | `boolean` | Incluye prueba de ruta | Nullable |
 
 ### 3.2 Tabla de Auditoría: `public.inspection_logs`
 Almacena el historial de cambios para trazabilidad.
@@ -58,7 +77,7 @@ Almacena el historial de cambios para trazabilidad.
 | :--- | :--- | :--- |
 | `id` | `bigint` | PK |
 | `inspection_id` | `bigint` | FK -> `inspections(id)` |
-| `actor_name` | `text` | Quién realizó el cambio (Admin) |
+| `actor_name` | `text` | Quién realizó el cambio (Admin o persona que guardó avance/finalizó) |
 | `change_summary` | `text` | Justificación obligatoria |
 | `created_at` | `timestamptz` | Fecha del cambio |
 

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Gauge, Fuel, Calendar, User, FileText, CheckCircle, Share2, ShieldCheck } from "lucide-react";
+import { Gauge, Fuel, Calendar, User, FileText, CheckCircle, Share2, ShieldCheck, Car, Timer, AlertTriangle, Users } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
+import { formatDuration } from "../utils/formatDuration";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -39,6 +40,10 @@ interface PublicInspectionData {
   comments?: string | null;
   inspector_name?: string | null;
   photos?: Record<string, string>;
+  status?: "draft" | "completed";
+  duration_seconds?: number | null;
+  road_test?: boolean | null;
+  participants?: string[];
 }
 
 export default function PublicInspectionView() {
@@ -82,7 +87,7 @@ export default function PublicInspectionView() {
     const fuelText = inspection.fuel_level ? (FUEL_LABELS[inspection.fuel_level]?.label || inspection.fuel_level) : "No registrado";
     const typeLabel = inspection.type === "entrega" ? "Entrega" : inspection.type === "recepcion" ? "Recepción" : "Control General";
 
-    const text = `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n🚗 *Vehículo:* ${inspection.vehicle_plate}\n📅 *Fecha:* ${formatDate(inspection.created_at)}\n🔍 *Tipo:* ${typeLabel}\n👤 *Inspector:* ${inspection.inspector_name || "N/A"}\n🛣️ *Kilometraje:* ${kmText}\n⛽ *Combustible:* ${fuelText}\n\n📸 *Ver reporte y fotos:* ${currentUrl}`;
+    const text = `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n🚗 *Vehículo:* ${inspection.vehicle_plate}\n📅 *Fecha:* ${formatDate(inspection.created_at)}\n🔍 *Tipo:* ${typeLabel}\n👤 *Inspector:* ${inspection.inspector_name || "N/A"}\n🛣️ *Kilometraje:* ${kmText}\n⛽ *Combustible:* ${fuelText}\n🚦 *Prueba de ruta:* ${inspection.road_test ? "Sí" : inspection.road_test === false ? "No" : "No registrado"}\n\n📸 *Ver reporte y fotos:* ${currentUrl}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   };
 
@@ -166,6 +171,46 @@ export default function PublicInspectionView() {
             )}
           </div>
         </div>
+
+        {inspection.status === "draft" && (
+          <div className="bg-amber-50 border border-amber-300 text-amber-800 rounded-2xl p-4 text-sm font-bold flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+            Inspección en progreso: aún no ha sido completada y cerrada.
+          </div>
+        )}
+
+        {/* PRUEBA DE RUTA, DURACIÓN Y PARTICIPANTES */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 flex-shrink-0">
+              <Car className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-xs uppercase font-bold text-slate-400 tracking-wider">Prueba de ruta</p>
+              <p className="text-lg font-black text-slate-800">
+                {inspection.road_test === true ? "Sí, se probó andando" : inspection.road_test === false ? "No" : "No registrado"}
+              </p>
+            </div>
+          </div>
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100 flex-shrink-0">
+              <Timer className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-xs uppercase font-bold text-slate-400 tracking-wider">Duración de la revisión</p>
+              <p className="text-lg font-black text-slate-800 font-mono">
+                {inspection.duration_seconds != null ? formatDuration(inspection.duration_seconds) : "—"}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {inspection.participants && inspection.participants.length > 1 && (
+          <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm text-sm text-slate-700 flex items-center gap-2">
+            <Users className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+            <span>Realizada por: <span className="font-bold">{inspection.participants.join(" → ")}</span></span>
+          </div>
+        )}
 
         {/* MÉTRICAS CLAVE (ODÓMETRO Y COMBUSTIBLE) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
