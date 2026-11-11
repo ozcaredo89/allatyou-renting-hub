@@ -11,9 +11,11 @@ export default function AdminRecruitment() {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<any | null>(null);
+  const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [rejectError, setRejectError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
   const loadData = async () => {
@@ -43,15 +45,16 @@ export default function AdminRecruitment() {
   useEffect(() => {
     loadData();
     setSelected(null);
+    setApproving(false);
     setRejecting(false);
     setRejectReason("");
     setRejectError(null);
+    setActionError(null);
   }, [tab]);
 
   const changeStatus = async (id: number, newStatus: string, reason?: string) => {
-    if (newStatus !== "rejected" && !confirm(`¿Estás seguro de marcar esto como ${newStatus.toUpperCase()}?`)) return;
-    
     setActionLoading(true);
+    setActionError(null);
     const endpoint = tab === "drivers" ? "/driver-applications" : "/vehicle-applications";
     try {
       const rs = await fetch(`${API}${endpoint}/${id}`, {
@@ -68,17 +71,19 @@ export default function AdminRecruitment() {
 
       if (!rs.ok) {
         const err = await rs.json().catch(() => ({}));
-        alert(err.error || "Error actualizando estado");
+        setActionError(err.error || "Error al actualizar estado");
         return;
       }
       
       setSelected(null);
+      setApproving(false);
       setRejecting(false);
       setRejectReason("");
       setRejectError(null);
+      setActionError(null);
       loadData();
-    } catch (error) {
-      alert("Error actualizando estado");
+    } catch (error: any) {
+      setActionError(error?.message || "Error al actualizar estado");
     } finally {
       setActionLoading(false);
     }
@@ -515,7 +520,47 @@ export default function AdminRecruitment() {
               <div className="pt-6 border-t border-slate-100">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Gestionar Estado</h4>
                 
-                {rejecting ? (
+                {approving ? (
+                  <div className="p-5 bg-emerald-50/90 border border-emerald-200 rounded-2xl space-y-3 animate-in fade-in">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-emerald-900 uppercase tracking-wider">
+                        Confirmar Aprobación
+                      </label>
+                      <span className="text-[11px] text-emerald-700 font-semibold">Pasa a estado Contactado</span>
+                    </div>
+                    <p className="text-sm text-slate-700 leading-relaxed">
+                      ¿Confirmas que deseas marcar como <strong>Aprobado / Contactado</strong> la postulación de{" "}
+                      <strong>{selected.full_name || selected.owner_name}</strong>
+                      {tab === "vehicles" && selected.plate ? (
+                        <> para el vehículo con placa <strong>{selected.plate}</strong> ({selected.brand} {selected.line})</>
+                      ) : null}?
+                    </p>
+                    {actionError && (
+                      <p className="text-xs font-semibold text-red-600">{actionError}</p>
+                    )}
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button 
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={() => {
+                          setApproving(false);
+                          setActionError(null);
+                        }}
+                        className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-800 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                      <button 
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={() => changeStatus(selected.id, "approved")}
+                        className="px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-emerald-200"
+                      >
+                        {actionLoading ? "Aprobando..." : "Sí, Aprobar Postulación"}
+                      </button>
+                    </div>
+                  </div>
+                ) : rejecting ? (
                   <div className="p-5 bg-red-50/90 border border-red-200 rounded-2xl space-y-3 animate-in fade-in">
                     <div className="flex items-center justify-between">
                       <label className="text-xs font-bold text-red-900 uppercase tracking-wider">
@@ -545,6 +590,7 @@ export default function AdminRecruitment() {
                           setRejecting(false);
                           setRejectReason("");
                           setRejectError(null);
+                          setActionError(null);
                         }}
                         className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-800 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
                       >
@@ -567,27 +613,40 @@ export default function AdminRecruitment() {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex gap-4">
-                    <button 
-                      disabled={actionLoading}
-                      onClick={() => changeStatus(selected.id, "approved")}
-                      className="flex-1 bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all active:scale-95 disabled:opacity-50"
-                    >
-                      {actionLoading ? "Procesando..." : "Aprobar / Contactado"}
-                    </button>
-                    {selected.status !== "rejected" && (
+                  <div className="space-y-3">
+                    {actionError && (
+                      <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 font-medium">
+                        {actionError}
+                      </div>
+                    )}
+                    <div className="flex gap-4">
                       <button 
                         disabled={actionLoading}
                         onClick={() => {
-                          setRejecting(true);
-                          setRejectReason("");
-                          setRejectError(null);
+                          setApproving(true);
+                          setRejecting(false);
+                          setActionError(null);
                         }}
-                        className="px-6 py-3 border border-red-200 text-red-600 bg-red-50 rounded-xl font-bold hover:bg-red-100 transition-colors active:scale-95 disabled:opacity-50"
+                        className="flex-1 bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all active:scale-95 disabled:opacity-50"
                       >
-                        Rechazar
+                        Aprobar / Contactado
                       </button>
-                    )}
+                      {selected.status !== "rejected" && (
+                        <button 
+                          disabled={actionLoading}
+                          onClick={() => {
+                            setRejecting(true);
+                            setApproving(false);
+                            setRejectReason("");
+                            setRejectError(null);
+                            setActionError(null);
+                          }}
+                          className="px-6 py-3 border border-red-200 text-red-600 bg-red-50 rounded-xl font-bold hover:bg-red-100 transition-colors active:scale-95 disabled:opacity-50"
+                        >
+                          Rechazar
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
