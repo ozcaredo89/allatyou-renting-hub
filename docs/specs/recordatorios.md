@@ -19,7 +19,7 @@ GitHub Action `reminders.yml` llama `POST /reminders/run` (header `X-Internal-Se
 
 - **Fuentes:**
   1. `vehicles.soat_expires_at` / `vehicles.tecno_expires_at` de vehículos con `status` `active` o `maintenance`. Son las fechas que se actualizan al registrar el gasto de renovación en `/expenses` (spec gastos §7).
-  2. `liquidations` (unida con `drivers`): liquidaciones de conductores retirados pendientes de pago (`payment_proof_url IS NULL` y `paid_at IS NULL`).
+  2. `liquidations` (unida con `drivers`): liquidaciones de conductores retirados pendientes de pago (`payment_proof_url IS NULL` y `paid_at IS NULL`). Se alertan también las de saldo ≤ 0, hasta que se marquen como saldadas (spec conductores §6.3).
 - **Qué incluye:**
   - SOAT que vence en **≤ 15 días**; Tecnomecánica en **≤ 10 días** (mismos defaults que las suscripciones públicas), más vigencias **ya vencidas** mientras el vehículo siga activo.
   - **Liquidaciones de conductores (Decisión 2026-11-10 — Issue #23):** A partir de la fecha de retiro/entrega del vehículo (`liquidation_date`), se cuentan **20 días calendario** para validar comparendos en SIMIT (`payment_due_date = liquidation_date + 20 días`). El sistema avisa por correo **3 días antes** de `payment_due_date` (cuando faltan ≤ 3 días o si ya está vencida y sigue sin comprobante de pago).

@@ -75,7 +75,7 @@ export function LiquidationDocModal({
   onDocumentGenerated,
   repairs = [],
 }: Props) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = new Date().toLocaleDateString("en-CA");
   const baseRetireYmd = (retireDate || todayStr).slice(0, 10);
   const defaultDueYmd = (paymentDueDate || addDaysYmd(baseRetireYmd, 20)).slice(0, 10);
 

@@ -11,6 +11,7 @@ import path from "path";
 import { supabase } from "./supabase";
 import { fmt, toWords } from "./numberToWords";
 import { renderDualDocument } from "./documentRenderer";
+import { addCalendarDays, bogotaYmd, LIQUIDATION_SIMIT_DAYS } from "./fleetReminders";
 
 const TEMPLATE_PATH = path.resolve(process.cwd(), "src/templates/paz-salvo.html");
 
@@ -44,22 +45,14 @@ export interface PazSalvoResult {
 /** Formatea fecha YYYY-MM-DD a formato formal "DD de Mes del YYYY" */
 function formatFormalDate(dateStr?: string): string {
   if (!dateStr) return "";
-  const d = new Date(dateStr.includes("T") ? dateStr : `${dateStr}T12:00:00`);
-  if (isNaN(d.getTime())) return dateStr;
+  // Timestamps se llevan a la fecha de Colombia (el servidor corre en UTC)
+  const ymd = bogotaYmd(dateStr);
+  if (!ymd) return dateStr;
   const meses = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
   ];
-  return `${String(d.getDate()).padStart(2, "0")} de ${meses[d.getMonth()]} del ${d.getFullYear()}`;
-}
-
-/** Suma N días calendario a una fecha ISO/YYYY-MM-DD y retorna YYYY-MM-DD */
-function addCalendarDaysYmd(dateStr: string, days: number): string {
-  const baseYmd = dateStr.slice(0, 10);
-  const d = new Date(`${baseYmd}T12:00:00Z`);
-  if (isNaN(d.getTime())) return baseYmd;
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+  return `${ymd.slice(8, 10)} de ${meses[Number(ymd.slice(5, 7)) - 1]} del ${ymd.slice(0, 4)}`;
 }
 
 export async function generatePazSalvo(params: PazSalvoParams): Promise<PazSalvoResult> {
@@ -126,11 +119,10 @@ export async function generatePazSalvo(params: PazSalvoParams): Promise<PazSalvo
     : '<div class="descuento-item"><span>Sin descuentos aplicados</span><span>$0</span></div>';
 
   // 6. Preparar fechas (la fecha de devolución por defecto es +20 días calendario para validación SIMIT)
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const baseRetiroYmd = String(liq.liquidation_date || liq.created_at || todayStr).slice(0, 10);
-  const defaultDueYmd = liq.payment_due_date
-    ? String(liq.payment_due_date).slice(0, 10)
-    : addCalendarDaysYmd(baseRetiroYmd, 20);
+  const todayStr = bogotaYmd(new Date().toISOString())!;
+  const baseRetiroYmd = bogotaYmd(liq.liquidation_date || liq.created_at) || todayStr;
+  const defaultDueYmd =
+    bogotaYmd(liq.payment_due_date) || addCalendarDays(baseRetiroYmd, LIQUIDATION_SIMIT_DAYS);
   const fechaDoc = params.fecha_documento || formatFormalDate(liq.liquidation_date || todayStr);
   const fechaDevolucion = params.fecha_devolucion || formatFormalDate(defaultDueYmd);
   const fechaInicioAhorro = params.fecha_inicio_ahorro || "la fecha de inicio de contrato";
