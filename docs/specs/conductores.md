@@ -122,7 +122,7 @@ Se utiliza la API `navigator.mediaDevices.getUserMedia` con configuraciones espe
 4. **Cómo se marca como pagada (Decisión 2026-11-10 — Issue #31):**
    - **Saldo a devolver (`final_balance > 0`):** solo subiendo el comprobante de pago (`payment_proof_url` obligatorio).
    - **Saldo ≤ 0** (el conductor debe o queda en cero, no hay transferencia): botón **"Marcar como saldada"**, sin comprobante (queda en `audit_log` como `MARK_SETTLED`). Opcionalmente se puede adjuntar soporte.
-5. **Liquidaciones históricas:** las que vencían antes del 2026-11-10 (anteriores a este control) se marcaron como pagadas en la migración `2026111001`, con nota "Histórica: pagada antes del control de pagos".
+5. **Liquidaciones históricas:** las que vencían antes del 2026-11-10 (anteriores a este control) se marcaron como pagadas en la migración `2026111003`, con nota "Histórica: pagada antes del control de pagos".
 6. **Fechas en hora Colombia:** retiro, vencimiento y fecha de pago se calculan con la fecha de America/Bogota (no UTC). Las fechas elegidas en pantalla se guardan al mediodía de Colombia para que no cambien de día.
 7. **Fuente única:** los datos de pago viven solo en las columnas `payment_due_date`, `payment_proof_url`, `paid_at`, `payment_notes` de `liquidations` (no en `document_metadata`).
 
