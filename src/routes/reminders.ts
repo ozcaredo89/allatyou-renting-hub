@@ -118,8 +118,8 @@ r.get("/log", async (req: Request, res: Response) => {
  * POST /reminders/run
  * Ejecuta el envío masivo (Cron Job).
  * Verifica hora Y día de la semana para Pico y Placa.
- * Además envía el resumen diario de vencimientos de la flota (Issue #15).
- * Query `force_fleet=1`: dispara el resumen de flota sin importar la hora.
+ * Además envía el resumen diario de alertas de la flota (Issues #15, #47): una vez al día,
+ * en la primera corrida de ese día. Query `force_fleet=1`: lo reenvía aunque ya se haya enviado hoy.
  */
 r.post("/run", async (req: Request, res: Response) => {
   const secretHeader = (req.headers["x-internal-secret"] || "") as string;

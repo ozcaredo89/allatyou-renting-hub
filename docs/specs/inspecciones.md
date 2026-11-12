@@ -1,7 +1,7 @@
 # Especificación Técnica: Sistema de Inspecciones y Auditoría
 
 **Fecha:** 11-Nov-2026  
-**Ticket:** #12, #28, #44  
+**Ticket:** #12, #28, #44, #47  
 **Autor:** AllAtYou Renting Hub  
 **Estado:** Implementado ✅  
 
@@ -42,6 +42,10 @@ Este módulo gestiona el ciclo de vida de la revisión física y técnica de act
 * **Etiquetas rápidas contextuales:** Dependiendo de la categoría de la pieza tocada (`body`, `bumper`, `glass`, `lights`, `wheels`, `interior`), se despliegan etiquetas rápidas de 1 toque (ej. `Rayón`, `Hundido / Abolladura`, `Daño de pintura`, `Picado (Piedra)`, `Rin rayado (Andén)`, `Mancha en tapicería`), selector de severidad (`leve`, `medio`, `grave`), campo de nota libre y captura de foto comprimida del daño.
 * **Daños preexistentes:** Permite importar con un toque los daños registrados en la última inspección cerrada de la misma placa.
 
+### 2.1.3 Semáforo de última revisión en flota (#47)
+* En `/vehicles` la columna **Últ. Revisión** muestra la fecha de la última inspección **finalizada** (`completed_at`, o `created_at` en inspecciones anteriores a #28) y los días transcurridos. Los borradores abiertos no cuentan como revisión.
+* **Verde:** < 10 días · **Amarillo:** 10–14 días · **Rojo:** ≥ 15 días o nunca revisado. Botón "Revisiones pendientes" para filtrar solo amarillos/rojos.
+* Los vehículos en rojo entran en el correo diario de alertas de flota (ver `recordatorios.md` §3).
 ### 2.2 Reporte Público de Inspección
 * Ruta pública de visualización (`/inspection/:id` y `/inspections/view/:id`) que permite al conductor, cliente o taller revisar el reporte, girar la silueta 3D 360° para inspeccionar cada punto de daño marcado y ver las fotos en alta resolución con visor fullscreen sin necesidad de credenciales administrativas.
 * Endpoint API público: `GET /public/inspections/:id`.
