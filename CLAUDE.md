@@ -52,11 +52,11 @@ Database schema changes are plain SQL files in `supabase/migrations/`, named `YY
 - `middleware/basicAuth.ts` — the only auth mechanism for internal/admin routes (see Auth below).
 
 ### Auth model
-There is no session/JWT auth. Admin-facing routes are gated by **HTTP Basic Auth** (`middleware/basicAuth.ts`, credentials from `ADMIN_BASIC_USER`/`ADMIN_BASIC_PASS`), applied per-route at mount time in `index.ts` (e.g. `app.use("/vehicles", basicAuth, vehiclesRoutes)`). Driver/public-facing routes (`/drivers`, `/payments`, `/marketing`, `/chat`, `/marketplace`, `/pledges`, `/trips`, `/driver-applications`, `/vehicle-applications`) are unauthenticated by design. When adding a new route, decide up front whether it needs `basicAuth` and mount it accordingly — don't add auth logic inside the route handler itself.
+Admin-facing routes are gated by the `basicAuth` middleware (`middleware/basicAuth.ts`), applied per-route at mount time in `index.ts` (e.g. `app.use("/vehicles", basicAuth, vehiclesRoutes)`). Despite its name it accepts **personal user sessions** (`Authorization: Bearer <token>`, users in `admin_users`, login with Google or email+password, see `routes/auth.ts` and `docs/specs/usuarios-auth.md`) and, until `LEGACY_BASIC_AUTH_UNTIL` (2026-11-22), the legacy shared Basic credentials. It sets `req.adminUser` (null for legacy). Driver/public-facing routes (`/drivers`, `/payments`, `/marketing`, `/chat`, `/marketplace`, `/pledges`, `/trips`, `/driver-applications`, `/vehicle-applications`) are unauthenticated by design. When adding a new route, decide up front whether it needs `basicAuth` and mount it accordingly — don't add auth logic inside the route handler itself.
 
 Separately, the **`companies`** resource (accounts-receivable / cuentas de cobro) has its own lightweight OTP flow (`routes/companies.ts`: `/companies/auth/request` + `/auth/verify`, code sent via WhatsApp+email, verified client-side by `web/src/components/CompanyLock.tsx` storing an unlock in memory) — unrelated to the admin Basic Auth.
 
-The frontend has a matching `web/src/lib/auth.ts`: prompts for admin credentials once, caches the Basic Auth header in `sessionStorage`, and `requestWithBasicAuth()` wraps `fetch` to attach it automatically. Use that helper (not raw `fetch`) for any new admin API call.
+The frontend has a matching `web/src/lib/auth.ts`: `ensureBasicAuth()` returns the current Authorization header (Bearer session from `localStorage`, or legacy Basic) and redirects to `/login` when there is none; `requestWithBasicAuth()` wraps `fetch` to attach it automatically. Use that helper (not raw `fetch`) for any new admin API call.
 
 ### Background daemons (started from `src/index.ts` on server boot)
 1. **Oráculo telemetry daemon** (`startOracleDaemon()`) — GPS ingestion every 3 min, market-opportunity detection daily, a nightly (03:00) PostGIS DBSCAN hotspot-clustering RPC call, all on `setInterval`.
@@ -117,6 +117,7 @@ Business rules live in `docs/specs/` (index: `docs/specs/README.md`). **Before c
 - Expenses, maintenance fund, debit notes → `docs/specs/gastos-fondo-mantenimiento.md`
 - Reminders (public subscriptions + daily fleet SOAT/Tecno digest) → `docs/specs/recordatorios.md`
 - Profit/rentabilidad panel (`/profit`, `routes/profit.ts`, `vehicle_month_*` views) → `docs/specs/utilidades.md`
+- Users, login (Google/password), password recovery, legacy Basic retirement → `docs/specs/usuarios-auth.md`
 - Environment variables (registry, boot check, CI check, Railway healthcheck) → `docs/specs/variables-entorno.md`. Any new `process.env.X` / `import.meta.env.VITE_X` must be declared in `src/lib/env.ts` / `web/src/vite-env-required.ts` in the same PR, or CI fails.
 - Flujo Git & Tickets (Issue obligatorio, ramas y commits con #ID) → `docs/specs/flujo-git-tickets.md`
 

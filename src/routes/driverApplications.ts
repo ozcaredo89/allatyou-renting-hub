@@ -1,4 +1,5 @@
 // src/routes/driverApplications.ts
+import { basicAuth } from "../middleware/basicAuth";
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
 
@@ -460,12 +461,7 @@ r.post("/", async (req: Request, res: Response) => {
 // ============================================
 
 // GET /driver-applications (Admin List)
-r.get("/", async (req: Request, res: Response) => {
-  // 1. Basic Auth Check
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Basic ")) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+r.get("/", basicAuth, async (req: Request, res: Response) => {
 
   // 2. Query Params
   const { status, limit = "50" } = req.query;
@@ -492,12 +488,7 @@ r.get("/", async (req: Request, res: Response) => {
 });
 
 // PATCH /driver-applications/:id (Admin Update Status)
-r.patch("/:id", async (req: Request, res: Response) => {
-  // 1. Basic Auth Check
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Basic ")) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+r.patch("/:id", basicAuth, async (req: Request, res: Response) => {
 
   const { id } = req.params;
   const { status, status_reason } = req.body;
@@ -528,11 +519,7 @@ r.patch("/:id", async (req: Request, res: Response) => {
 });
 
 // POST /driver-applications/:id/documents (Admin attach / update document)
-r.post("/:id/documents", async (req: Request, res: Response) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Basic ")) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+r.post("/:id/documents", basicAuth, async (req: Request, res: Response) => {
 
   const { id } = req.params;
   const { kind, url, metadata } = req.body;

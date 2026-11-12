@@ -13,6 +13,10 @@ export const ENV_VARS: EnvVar[] = [
   { name: "SUPABASE_SERVICE_ROLE", required: true, description: "Llave service-role de Supabase" },
   { name: "ADMIN_BASIC_USER", required: true, description: "Usuario Basic Auth del admin" },
   { name: "ADMIN_BASIC_PASS", required: true, description: "Clave Basic Auth del admin" },
+  { name: "LEGACY_BASIC_AUTH_UNTIL", required: false, description: "Último día (YYYY-MM-DD) del acceso genérico (default 2026-11-22)" },
+  { name: "GOOGLE_CLIENT_ID", required: false, description: "OAuth Client ID de Google (login con Google; sin él se oculta)" },
+  { name: "ADMIN_SIGNUP_NOTIFY_EMAIL", required: false, description: "Correo que recibe el aviso de usuarios nuevos" },
+  { name: "ADMIN_WEB_URL", required: false, description: "URL del panel para enlaces de recuperación (default https://web.allatyou.com)" },
 
   // Almacenamiento (Cloudflare R2)
   { name: "R2_ENDPOINT", required: true, description: "Endpoint S3 de R2" },
