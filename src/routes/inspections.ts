@@ -29,6 +29,20 @@ const parseRoadTest = (raw: unknown): boolean | null | undefined => {
   return raw === true || raw === "true";
 };
 
+const VALID_HARNESS_STATUS = ["good", "damaged"];
+const parseHarnessStatus = (raw: unknown): string | null | undefined => {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === "") return null;
+  return VALID_HARNESS_STATUS.includes(String(raw)) ? String(raw) : null;
+};
+
+const VALID_COOLANT_STATUS = ["no_leaks", "leak_detected"];
+const parseCoolantStatus = (raw: unknown): string | null | undefined => {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === "") return null;
+  return VALID_COOLANT_STATUS.includes(String(raw)) ? String(raw) : null;
+};
+
 const cleanPhotosOnly = (photos: unknown): Record<string, string> => {
   if (!photos || typeof photos !== "object") return {};
   const out: Record<string, string> = {};
@@ -165,6 +179,10 @@ const buildFormUpdates = (body: any) => {
   if (fuel !== undefined) updates.fuel_level = fuel;
   const roadTest = parseRoadTest(body.road_test);
   if (roadTest !== undefined) updates.road_test = roadTest;
+  const harness = parseHarnessStatus(body.electrical_harness_status);
+  if (harness !== undefined) updates.electrical_harness_status = harness;
+  const coolant = parseCoolantStatus(body.coolant_leaks_status);
+  if (coolant !== undefined) updates.coolant_leaks_status = coolant;
   return updates;
 };
 
@@ -293,6 +311,10 @@ r.put("/:id", async (req: Request, res: Response) => {
     if (mileage !== undefined) updates.mileage = mileage;
     const roadTest = parseRoadTest(body.road_test);
     if (roadTest !== undefined) updates.road_test = roadTest;
+    const harness = parseHarnessStatus(body.electrical_harness_status);
+    if (harness !== undefined) updates.electrical_harness_status = harness;
+    const coolant = parseCoolantStatus(body.coolant_leaks_status);
+    if (coolant !== undefined) updates.coolant_leaks_status = coolant;
 
     let { data: updatedInspection, error: updateError } = await supabase
       .from("inspections")

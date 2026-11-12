@@ -4,7 +4,7 @@ import { ensureBasicAuth } from "../lib/auth";
 import { compressImage } from "../utils/compressImage";
 import { formatDuration } from "../utils/formatDuration";
 import VehicleDamage3DMapper, { type VehicleDamagePoint } from "../components/VehicleDamage3DMapper";
-import { Camera, X, Check, Plus, Image as ImageIcon, Gauge, Fuel, Share2, CheckCircle2, RotateCcw, ArrowRight, Timer, Car, Save, Users, Play, Pause, AlertCircle, Search } from "lucide-react";
+import { Camera, X, Check, Plus, Image as ImageIcon, Gauge, Fuel, Share2, CheckCircle2, RotateCcw, ArrowRight, Timer, Car, Save, Users, Play, Pause, AlertCircle, Search, Wrench, Zap, Droplets } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -68,6 +68,8 @@ interface CreatedInspectionResult {
   photos?: Record<string, string>;
   damages?: VehicleDamagePoint[];
   road_test?: boolean | null;
+  electrical_harness_status?: string | null;
+  coolant_leaks_status?: string | null;
   duration_seconds?: number | null;
   started_at?: string | null;
   continue_token?: string | null;
@@ -97,6 +99,8 @@ const emptyForm = () => ({
   photos: {} as Record<string, string>,
   damages: [] as VehicleDamagePoint[],
   road_test: null as boolean | null,
+  electrical_harness_status: null as string | null,
+  coolant_leaks_status: null as string | null,
 });
 
 export default function NewInspection() {
@@ -185,6 +189,8 @@ export default function NewInspection() {
           photos: d.photos || {},
           damages: Array.isArray(d.damages) ? d.damages : [],
           road_test: d.road_test ?? null,
+          electrical_harness_status: d.electrical_harness_status ?? null,
+          coolant_leaks_status: d.coolant_leaks_status ?? null,
         });
         if (d.started_at) setStartedAt(new Date(d.started_at));
         const initialAccum =
@@ -437,6 +443,8 @@ export default function NewInspection() {
       photos: form.photos,
       damages: form.damages,
       road_test: form.road_test,
+      electrical_harness_status: form.electrical_harness_status,
+      coolant_leaks_status: form.coolant_leaks_status,
       started_at: startedAt.toISOString(),
       elapsed_seconds: currentElapsed,
     };
@@ -564,6 +572,12 @@ export default function NewInspection() {
       `🛣️ *Kilometraje:* ${kmText}\n` +
       `⛽ *Combustible:* ${fuelText}\n` +
       `🚦 *Prueba de ruta:* ${createdInspection.road_test ? "Sí" : "No"}\n` +
+      (createdInspection.electrical_harness_status
+        ? `⚡ *Ramal eléctrico:* ${createdInspection.electrical_harness_status === "good" ? "✔ Buen estado" : "✖ Tostada / Dañada"}\n`
+        : "") +
+      (createdInspection.coolant_leaks_status
+        ? `💧 *Fugas refrigerante:* ${createdInspection.coolant_leaks_status === "no_leaks" ? "✔ Sin fugas" : "✖ Fuga detectada"}\n`
+        : "") +
       (dmgCount > 0 ? `⚠️ *Daños / Detalles marcados en 3D:* ${dmgCount}\n` : "") +
       (createdInspection.duration_seconds
         ? `⏱️ *Duración de la revisión:* ${formatDuration(createdInspection.duration_seconds)}\n`
@@ -1172,6 +1186,104 @@ export default function NewInspection() {
                 </div>
               </div>
 
+              {/* 4.2 CHEQUEO MECÁNICO: VANO MOTOR */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-4">
+                <div>
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                    <Wrench className="w-4 h-4 text-emerald-600" /> Chequeo Mecánico Crítico
+                  </span>
+                  <p className="text-[11px] text-slate-500">
+                    Inspección visual del vano motor para prevenir fallas eléctricas y recalentamiento.
+                  </p>
+                </div>
+
+                {/* 1. Coraza del ramal eléctrico */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-500" />
+                      Coraza del ramal eléctrico
+                    </label>
+                    {form.electrical_harness_status && (
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
+                        form.electrical_harness_status === "good"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-rose-100 text-rose-800"
+                      }`}>
+                        {form.electrical_harness_status === "good" ? "✔ Buen estado" : "✖ Tostada / Dañada"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, electrical_harness_status: "good" })}
+                      className={`py-3 px-2 rounded-xl border text-xs sm:text-sm font-extrabold transition-all flex items-center justify-center gap-1.5 ${
+                        form.electrical_harness_status === "good"
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      <Check className="w-4 h-4" /> Buen estado
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, electrical_harness_status: "damaged" })}
+                      className={`py-3 px-2 rounded-xl border text-xs sm:text-sm font-extrabold transition-all flex items-center justify-center gap-1.5 ${
+                        form.electrical_harness_status === "damaged"
+                          ? "bg-rose-600 text-white border-rose-600 shadow-sm"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-rose-50 hover:text-rose-700"
+                      }`}
+                    >
+                      <X className="w-4 h-4" /> Tostada / Dañada
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Fugas de refrigerante */}
+                <div className="space-y-1.5 pt-2 border-t border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <Droplets className="w-3.5 h-3.5 text-blue-500" />
+                      Fugas de refrigerante
+                    </label>
+                    {form.coolant_leaks_status && (
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
+                        form.coolant_leaks_status === "no_leaks"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-rose-100 text-rose-800"
+                      }`}>
+                        {form.coolant_leaks_status === "no_leaks" ? "✔ Sin fugas" : "✖ Fuga detectada"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, coolant_leaks_status: "no_leaks" })}
+                      className={`py-3 px-2 rounded-xl border text-xs sm:text-sm font-extrabold transition-all flex items-center justify-center gap-1.5 ${
+                        form.coolant_leaks_status === "no_leaks"
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      <Check className="w-4 h-4" /> Sin fugas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, coolant_leaks_status: "leak_detected" })}
+                      className={`py-3 px-2 rounded-xl border text-xs sm:text-sm font-extrabold transition-all flex items-center justify-center gap-1.5 ${
+                        form.coolant_leaks_status === "leak_detected"
+                          ? "bg-rose-600 text-white border-rose-600 shadow-sm"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-rose-50 hover:text-rose-700"
+                      }`}
+                    >
+                      <X className="w-4 h-4" /> Fuga detectada
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* 4.2 SILUETA 3D 360° INTERACTIVA DE DAÑOS */}
               <VehicleDamage3DMapper
                 value={form.damages}
@@ -1492,6 +1604,22 @@ export default function NewInspection() {
                 <span className="text-slate-400 font-bold">Prueba de ruta:</span>
                 <span className="font-bold text-slate-800">{createdInspection.road_test ? "Sí" : "No"}</span>
               </div>
+              {createdInspection.electrical_harness_status && (
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold">Ramal eléctrico:</span>
+                  <span className={`font-bold ${createdInspection.electrical_harness_status === "good" ? "text-emerald-700" : "text-rose-700"}`}>
+                    {createdInspection.electrical_harness_status === "good" ? "✔ Buen estado" : "✖ Tostada / Dañada"}
+                  </span>
+                </div>
+              )}
+              {createdInspection.coolant_leaks_status && (
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold">Fugas refrigerante:</span>
+                  <span className={`font-bold ${createdInspection.coolant_leaks_status === "no_leaks" ? "text-emerald-700" : "text-rose-700"}`}>
+                    {createdInspection.coolant_leaks_status === "no_leaks" ? "✔ Sin fugas" : "✖ Fuga detectada"}
+                  </span>
+                </div>
+              )}
               {createdInspection.duration_seconds != null && (
                 <div className="flex justify-between">
                   <span className="text-slate-400 font-bold">Duración revisión:</span>

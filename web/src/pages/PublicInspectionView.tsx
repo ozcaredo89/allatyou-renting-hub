@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Gauge, Fuel, Calendar, User, FileText, CheckCircle, Share2, ShieldCheck, Car, Timer, AlertTriangle, Users } from "lucide-react";
+import { Gauge, Fuel, Calendar, User, FileText, CheckCircle, Share2, ShieldCheck, Car, Timer, AlertTriangle, Users, Zap, Droplets, Wrench } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import VehicleDamage3DMapper, { type VehicleDamagePoint } from "../components/VehicleDamage3DMapper";
 import { formatDuration } from "../utils/formatDuration";
@@ -45,6 +45,8 @@ interface PublicInspectionData {
   status?: "draft" | "completed";
   duration_seconds?: number | null;
   road_test?: boolean | null;
+  electrical_harness_status?: string | null;
+  coolant_leaks_status?: string | null;
   participants?: string[];
 }
 
@@ -99,6 +101,12 @@ export default function PublicInspectionView() {
       `🛣️ *Kilometraje:* ${kmText}\n` +
       `⛽ *Combustible:* ${fuelText}\n` +
       `🚦 *Prueba de ruta:* ${inspection.road_test ? "Sí" : inspection.road_test === false ? "No" : "No registrado"}\n` +
+      (inspection.electrical_harness_status
+        ? `⚡ *Ramal eléctrico:* ${inspection.electrical_harness_status === "good" ? "✔ Buen estado" : "✖ Tostada / Dañada"}\n`
+        : "") +
+      (inspection.coolant_leaks_status
+        ? `💧 *Fugas refrigerante:* ${inspection.coolant_leaks_status === "no_leaks" ? "✔ Sin fugas" : "✖ Fuga detectada"}\n`
+        : "") +
       (dmgCount > 0 ? `⚠️ *Daños marcados en 3D:* ${dmgCount}\n` : "") +
       `\n📸 *Ver reporte y fotos:* ${currentUrl}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
@@ -224,6 +232,36 @@ export default function PublicInspectionView() {
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm text-sm text-slate-700 flex items-center gap-2">
             <Users className="w-4 h-4 text-emerald-600 flex-shrink-0" />
             <span>Realizada por: <span className="font-bold">{inspection.participants.join(" → ")}</span></span>
+          </div>
+        )}
+
+        {(inspection.electrical_harness_status || inspection.coolant_leaks_status) && (
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
+            <p className="text-xs uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
+              <Wrench className="w-4 h-4 text-emerald-600" /> Chequeo Mecánico / Vano Motor
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              {inspection.electrical_harness_status && (
+                <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
+                  <span className="text-slate-600 font-medium flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-amber-500" /> Ramal eléctrico:
+                  </span>
+                  <span className={`font-black text-xs px-2.5 py-1 rounded-lg ${inspection.electrical_harness_status === 'good' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                    {inspection.electrical_harness_status === 'good' ? '✔ Buen estado' : '✖ Tostada / Dañada'}
+                  </span>
+                </div>
+              )}
+              {inspection.coolant_leaks_status && (
+                <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
+                  <span className="text-slate-600 font-medium flex items-center gap-1.5">
+                    <Droplets className="w-4 h-4 text-blue-500" /> Fugas de refrigerante:
+                  </span>
+                  <span className={`font-black text-xs px-2.5 py-1 rounded-lg ${inspection.coolant_leaks_status === 'no_leaks' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                    {inspection.coolant_leaks_status === 'no_leaks' ? '✔ Sin fugas' : '✖ Fuga detectada'}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

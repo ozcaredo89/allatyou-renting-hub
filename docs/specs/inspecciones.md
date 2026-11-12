@@ -1,7 +1,7 @@
 # Especificación Técnica: Sistema de Inspecciones y Auditoría
 
 **Fecha:** 11-Nov-2026  
-**Ticket:** #12, #28, #44, #46, #47, #51  
+**Ticket:** #12, #28, #44, #46, #47, #51, #57  
 **Autor:** AllAtYou Renting Hub  
 **Estado:** Implementado ✅  
 
@@ -48,6 +48,15 @@ Este módulo gestiona el ciclo de vida de la revisión física y técnica de act
 * En `/vehicles` la columna **Últ. Revisión** muestra la fecha de la última inspección **finalizada** (`completed_at`, o `created_at` en inspecciones anteriores a #28) y los días transcurridos. Los borradores abiertos no cuentan como revisión.
 * **Verde:** < 10 días · **Amarillo:** 10–14 días · **Rojo:** ≥ 15 días o nunca revisado. Botón "Revisiones pendientes" para filtrar solo amarillos/rojos.
 * Los vehículos en rojo entran en el correo diario de alertas de flota (ver `recordatorios.md` §3).
+
+### 2.1.4 Chequeo Mecánico / Vano Motor (#57)
+* **Coraza del ramal eléctrico (`electrical_harness_status`):** Selector táctil de 1 toque:
+  * `[ ✔ Buen estado ]` (`good`)
+  * `[ ✖ Tostada / Dañada ]` (`damaged`)
+* **Fugas de refrigerante (`coolant_leaks_status`):** Selector táctil de 1 toque:
+  * `[ ✔ Sin fugas ]` (`no_leaks`)
+  * `[ ✖ Fuga detectada ]` (`leak_detected`)
+* Integrado en todo el flujo: persistencia en borradores y guardado de avance, modal de resumen de éxito, vista pública (`/inspection/:id`), administración con edición auditada (`/inspections`) y actas enviadas por WhatsApp.
 ### 2.2 Reporte Público de Inspección
 * Ruta pública de visualización (`/inspection/:id` y `/inspections/view/:id`) que permite al conductor, cliente o taller revisar el reporte, girar la silueta 3D 360° para inspeccionar cada punto de daño marcado y ver las fotos en alta resolución con visor fullscreen sin necesidad de credenciales administrativas.
 * Endpoint API público: `GET /public/inspections/:id`.
@@ -82,6 +91,8 @@ Almacena el estado actual de la inspección.
 | `completed_at` | `timestamptz` | Cierre de la revisión | Nullable |
 | `duration_seconds` | `integer` | Duración total inicio → cierre | Nullable |
 | `road_test` | `boolean` | Incluye prueba de ruta | Nullable |
+| `electrical_harness_status` | `text` | Estado coraza ramal eléctrico | Nullable, `'good'`, `'damaged'` |
+| `coolant_leaks_status` | `text` | Estado fugas de refrigerante | Nullable, `'no_leaks'`, `'leak_detected'` |
 
 ### 3.2 Tabla de Auditoría: `public.inspection_logs`
 Almacena el historial de cambios para trazabilidad.
