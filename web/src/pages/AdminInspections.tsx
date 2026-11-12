@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
-import { Eye, X, User, FileText, Truck, Edit, Save, History, Trash2, Gauge, Fuel, Share2, Timer, Car, AlertTriangle, PlayCircle, Rotate3d } from "lucide-react";
+import { Eye, X, User, FileText, Truck, Edit, Save, History, Trash2, Gauge, Fuel, Share2, Timer, Car, AlertTriangle, PlayCircle, Rotate3d, Zap, Droplets, Wrench } from "lucide-react";
 import { ImageViewer } from "../components/ImageViewer";
 import VehicleDamage3DMapper, { type VehicleDamagePoint } from "../components/VehicleDamage3DMapper";
 import { formatDuration } from "../utils/formatDuration";
@@ -56,6 +56,8 @@ type Inspection = {
     completed_at?: string | null;
     duration_seconds?: number | null;
     road_test?: boolean | null;
+    electrical_harness_status?: "good" | "damaged" | null;
+    coolant_leaks_status?: "no_leaks" | "leak_detected" | null;
 };
 
 const continueUrlOf = (insp: Inspection) =>
@@ -196,8 +198,10 @@ export default function AdminInspections() {
         const fuelText = insp.fuel_level ? insp.fuel_level : "No registrado";
         const typeLabel = insp.type === "entrega" ? "Entrega" : insp.type === "recepcion" ? "Recepción" : "Control General";
         const dmgCount = insp.damages?.length || 0;
+        const harnessText = insp.electrical_harness_status === 'good' ? '✔ Buen estado' : insp.electrical_harness_status === 'damaged' ? '✖ Tostada / Dañada' : null;
+        const coolantText = insp.coolant_leaks_status === 'no_leaks' ? '✔ Sin fugas' : insp.coolant_leaks_status === 'leak_detected' ? '✖ Fuga detectada' : null;
 
-        const text = `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n🚗 *Vehículo:* ${insp.vehicle_plate}\n📅 *Fecha:* ${formatDate(insp.created_at)}\n🔍 *Tipo:* ${typeLabel}\n👤 *Inspector:* ${insp.inspector_name || "N/A"}\n🛣️ *Kilometraje:* ${kmText}\n⛽ *Combustible:* ${fuelText}\n🚦 *Prueba de ruta:* ${insp.road_test ? "Sí" : insp.road_test === false ? "No" : "No registrado"}\n${dmgCount > 0 ? `⚠️ *Daños marcados en 3D:* ${dmgCount}\n` : ""}${insp.duration_seconds ? `⏱️ *Duración de la revisión:* ${formatDuration(insp.duration_seconds)}\n` : ""}\n📸 *Ver reporte y fotos:* ${viewUrl}`;
+        const text = `📋 *ACTA DE INSPECCIÓN VEHICULAR*\n🚗 *Vehículo:* ${insp.vehicle_plate}\n📅 *Fecha:* ${formatDate(insp.created_at)}\n🔍 *Tipo:* ${typeLabel}\n👤 *Inspector:* ${insp.inspector_name || "N/A"}\n🛣️ *Kilometraje:* ${kmText}\n⛽ *Combustible:* ${fuelText}\n🚦 *Prueba de ruta:* ${insp.road_test ? "Sí" : insp.road_test === false ? "No" : "No registrado"}\n${harnessText ? `⚡ *Ramal eléctrico:* ${harnessText}\n` : ""}${coolantText ? `💧 *Fugas de refrigerante:* ${coolantText}\n` : ""}${dmgCount > 0 ? `⚠️ *Daños marcados en 3D:* ${dmgCount}\n` : ""}${insp.duration_seconds ? `⏱️ *Duración de la revisión:* ${formatDuration(insp.duration_seconds)}\n` : ""}\n📸 *Ver reporte y fotos:* ${viewUrl}`;
 
         const cleanPhone = (insp.driver?.phone || "").replace(/\D/g, "");
         const waUrl = cleanPhone
@@ -537,6 +541,59 @@ export default function AdminInspections() {
                                     </div>
                                 </div>
                             </div>
+
+                            {/* CHEQUEO DE VANO MOTOR / MECÁNICA */}
+                            {(selected.electrical_harness_status || selected.coolant_leaks_status || isEditing) && (
+                                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+                                    <div className="flex items-center gap-2">
+                                        <Wrench className="w-4 h-4 text-emerald-600" />
+                                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Chequeo Mecánico / Vano Motor</span>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                                        <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
+                                            <span className="text-slate-600 font-medium flex items-center gap-1.5 text-xs">
+                                                <Zap className="w-4 h-4 text-amber-500" /> Ramal eléctrico:
+                                            </span>
+                                            {isEditing ? (
+                                                <select
+                                                    value={editForm.electrical_harness_status || ""}
+                                                    onChange={e => setEditForm({ ...editForm, electrical_harness_status: (e.target.value as "good" | "damaged") || null })}
+                                                    className="p-1 text-xs border border-slate-300 rounded font-bold bg-white"
+                                                >
+                                                    <option value="">-- Sin registrar --</option>
+                                                    <option value="good">✔ Buen estado</option>
+                                                    <option value="damaged">✖ Tostada / Dañada</option>
+                                                </select>
+                                            ) : (
+                                                <span className={`font-black text-xs px-2.5 py-1 rounded-lg ${selected.electrical_harness_status === 'good' ? 'bg-emerald-100 text-emerald-800' : selected.electrical_harness_status === 'damaged' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-500'}`}>
+                                                    {selected.electrical_harness_status === 'good' ? '✔ Buen estado' : selected.electrical_harness_status === 'damaged' ? '✖ Tostada / Dañada' : 'No registrado'}
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
+                                            <span className="text-slate-600 font-medium flex items-center gap-1.5 text-xs">
+                                                <Droplets className="w-4 h-4 text-blue-500" /> Fugas de refrigerante:
+                                            </span>
+                                            {isEditing ? (
+                                                <select
+                                                    value={editForm.coolant_leaks_status || ""}
+                                                    onChange={e => setEditForm({ ...editForm, coolant_leaks_status: (e.target.value as "no_leaks" | "leak_detected") || null })}
+                                                    className="p-1 text-xs border border-slate-300 rounded font-bold bg-white"
+                                                >
+                                                    <option value="">-- Sin registrar --</option>
+                                                    <option value="no_leaks">✔ Sin fugas</option>
+                                                    <option value="leak_detected">✖ Fuga detectada</option>
+                                                </select>
+                                            ) : (
+                                                <span className={`font-black text-xs px-2.5 py-1 rounded-lg ${selected.coolant_leaks_status === 'no_leaks' ? 'bg-emerald-100 text-emerald-800' : selected.coolant_leaks_status === 'leak_detected' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-500'}`}>
+                                                    {selected.coolant_leaks_status === 'no_leaks' ? '✔ Sin fugas' : selected.coolant_leaks_status === 'leak_detected' ? '✖ Fuga detectada' : 'No registrado'}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
 
                             {/* TARJETAS DE ODÓMETRO Y COMBUSTIBLE */}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
