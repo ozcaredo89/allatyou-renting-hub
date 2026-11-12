@@ -3,6 +3,7 @@ import "./validateEnv"; // Debe ir antes de los demás imports (Issue #18)
 import express, { Request, Response } from "express";
 import cors, { CorsOptionsDelegate } from "cors";
 import { basicAuth } from "./middleware/basicAuth";
+import { ensureMigrationsApplied } from "./lib/migrationGuard";
 
 import advancesRoutes from "./routes/advances";
 import companiesRoutes from "./routes/companies";
@@ -159,32 +160,34 @@ app.use("/fleet-map", basicAuth, fleetMapRoutes);
 app.use("/expenses", basicAuth, expenses);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`API up on http://localhost:${PORT}`);
+// Issue #55: no escuchar (y por tanto fallar el healthcheck de Railway) si faltan migraciones.
+ensureMigrationsApplied().then(() => {
+  app.listen(PORT, () => {
+    console.log(`API up on http://localhost:${PORT}`);
 
-  // Encender el Demonio del Oráculo de Telemetría
-  console.log("Iniciando daemon de telemetría (Oráculo)...");
-  startOracleDaemon().catch(err => console.error("Fallo al iniciar el Oráculo:", err));
+    // Encender el Demonio del Oráculo de Telemetría
+    console.log("Iniciando daemon de telemetría (Oráculo)...");
+    startOracleDaemon().catch(err => console.error("Fallo al iniciar el Oráculo:", err));
 
-  // Arrancar el Daemon de Kilometraje al inicio (con delay para no bloquear)
-  setTimeout(() => {
-    // 1. Intentar emparejar nuevos IMEIs con nuevos Vehículos
-    syncGpsImeis().catch(err => console.error("Error inicial Sync IMEI:", err));
-
-    // 2. Extraer el kilometraje de los IMEIs emparejados
+    // Arrancar el Daemon de Kilometraje al inicio (con delay para no bloquear)
     setTimeout(() => {
-      syncProtrackMileage().catch(err => console.error("Error inicial Daemon Kilometraje:", err));
-    }, 30000); // 30s después del emparejamiento
+      // 1. Intentar emparejar nuevos IMEIs con nuevos Vehículos
+      syncGpsImeis().catch(err => console.error("Error inicial Sync IMEI:", err));
 
-    // Y luego repetir el ciclo cada 12 horas (43200000 ms)
-    setInterval(() => {
-      syncGpsImeis().catch(err => console.error("Error periódico Sync IMEI:", err));
-
+      // 2. Extraer el kilometraje de los IMEIs emparejados
       setTimeout(() => {
-        syncProtrackMileage().catch(err => console.error("Error periódico Daemon Kilometraje:", err));
-      }, 30000); // 30s después del emparejamiento cíclico
+        syncProtrackMileage().catch(err => console.error("Error inicial Daemon Kilometraje:", err));
+      }, 30000); // 30s después del emparejamiento
 
-    }, 43200000);
-  }, 10000); // 10 segundos después del inicio
+      // Y luego repetir el ciclo cada 12 horas (43200000 ms)
+      setInterval(() => {
+        syncGpsImeis().catch(err => console.error("Error periódico Sync IMEI:", err));
+
+        setTimeout(() => {
+          syncProtrackMileage().catch(err => console.error("Error periódico Daemon Kilometraje:", err));
+        }, 30000); // 30s después del emparejamiento cíclico
+
+      }, 43200000);
+    }, 10000); // 10 segundos después del inicio
+  });
 });
- 

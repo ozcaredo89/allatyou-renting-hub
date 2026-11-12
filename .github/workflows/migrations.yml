@@ -21,6 +21,9 @@ jobs:
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
     steps:
       - uses: actions/checkout@v4
+      - name: Versiones de migración únicas
+        run: node scripts/check-migrations.js
+
       - uses: supabase/setup-cli@v1
         with:
           version: 3.0.0
