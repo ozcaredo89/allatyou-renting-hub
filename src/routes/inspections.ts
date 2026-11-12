@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { randomUUID } from "crypto";
 import { supabase } from "../lib/supabase";
+import { getCurrentOdometers } from "../lib/odometer";
 
 const r = Router();
 
@@ -369,13 +370,9 @@ publicInspectionsRoutes.get("/continue/:token", async (req: Request, res: Respon
     if (error || !data) return res.status(404).json({ error: "Enlace de inspección no válido" });
 
     // Último km conocido del vehículo (referencia para quien continúa)
-    const { data: lastKm } = await supabase
-      .from("vehicle_mileage_logs")
-      .select("mileage_km")
-      .eq("plate", data.vehicle_plate)
-      .order("mileage_km", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const odometers = await getCurrentOdometers([data.vehicle_plate]);
+    const lastKm = { mileage_km: odometers.get(data.vehicle_plate) ?? null };
+
 
     // Daños registrados en la última inspección cerrada de esta placa (para poder precargar preexistentes)
     const { data: prevInsp } = await supabase

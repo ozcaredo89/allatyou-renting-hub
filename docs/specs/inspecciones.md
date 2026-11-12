@@ -1,7 +1,7 @@
 # Especificación Técnica: Sistema de Inspecciones y Auditoría
 
 **Fecha:** 11-Nov-2026  
-**Ticket:** #12, #28, #44, #47  
+**Ticket:** #12, #28, #44, #46, #47, #51  
 **Autor:** AllAtYou Renting Hub  
 **Estado:** Implementado ✅  
 
@@ -18,7 +18,9 @@ Este módulo gestiona el ciclo de vida de la revisión física y técnica de act
 ## 2. Alcance Funcional
 
 ### 2.1 Captura en Campo (Mobile-First)
-* **Odómetro (Kilometraje):** Input ergonómico numérico (`inputMode="numeric"`) con vista previa con separador de miles y recordatorio del último kilometraje registrado en flota. Sincroniza automáticamente en `vehicle_mileage_logs`.
+* **Odómetro (Kilometraje):** Input ergonómico numérico (`inputMode="numeric"`) con vista previa con separador de miles y recordatorio del último kilometraje registrado en flota. Sincroniza automáticamente en `vehicle_mileage_logs` (`source = 'manual'`).
+  * **Odómetro de referencia (#51):** última lectura `manual` + suma del recorrido diario GPS (`source = 'protrack_api'`, que es un delta, no un odómetro) registrado después de ella (`src/lib/odometer.ts`, misma fórmula que `get_global_mileage_stats`). Sin lectura manual de base no se muestra km. Aplica también a la columna Odómetro de `/vehicles`.
+* **Buscador de vehículo (#46, #51):** filtra por placa (ignora espacios/guiones), conductor, marca o línea, sin distinguir tildes ni mayúsculas. Etiqueta Leasing / Reservado / Mantenimiento / Renting según `vehicles.status`.
 * **Nivel de Gasolina Visual:** Barra segmentada interactiva y botones táctiles grandes para los 5 niveles estándar (`empty`, `1/4`, `1/2`, `3/4`, `full`).
 * **Compresión Client-Side:** Todas las fotos (tomadas con cámara nativa o cargadas desde la galería) se comprimen automáticamente en el navegador mediante HTML5 Canvas (redimensionamiento a máx 1400px y calidad JPEG 75%), reduciendo el peso de ~5-15MB a <250KB por imagen para evitar saturar memoria y bucket.
 * **Compartir por WhatsApp:** Generación instantánea de acta de entrega/recepción con link directo al reporte.

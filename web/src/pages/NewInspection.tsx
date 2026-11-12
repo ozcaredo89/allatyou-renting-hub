@@ -40,6 +40,21 @@ interface VehicleOption {
   line?: string;
 }
 
+// Etiqueta de modalidad según vehicles.status (Issue #51)
+const VEHICLE_STATUS_BADGES: Record<string, { label: string; cls: string }> = {
+  leasing: { label: "🚗 Leasing", cls: "bg-amber-100 text-amber-800 border-amber-300 font-black" },
+  reserved: { label: "Reservado", cls: "bg-blue-100 text-blue-700 border-blue-200 font-bold" },
+  maintenance: { label: "Mantenimiento", cls: "bg-orange-100 text-orange-700 border-orange-200 font-bold" },
+};
+const VehicleStatusBadge = ({ status, small }: { status?: string; small?: boolean }) => {
+  const b = VEHICLE_STATUS_BADGES[status || ""] || { label: "Renting", cls: "bg-slate-100 text-slate-600 border-slate-200 font-bold" };
+  return (
+    <span className={`${small ? "px-1.5 py-0.5 rounded text-[9px]" : "px-2.5 py-0.5 rounded-full text-[10px]"} uppercase border ${b.cls}`}>
+      {b.label}
+    </span>
+  );
+};
+
 interface CreatedInspectionResult {
   id: number;
   vehicle_plate: string;
@@ -139,7 +154,7 @@ export default function NewInspection() {
       .then((res) => res.json())
       .then((data) => {
         if (!Array.isArray(data)) return setVehicles([]);
-        const operational = data.filter((v: any) => v.status !== "sold" && v.status !== "inactive");
+        const operational = data.filter((v: VehicleOption) => v.status !== "sold" && v.status !== "inactive");
         setVehicles(operational);
       })
       .catch((err) => console.error("Error fetching vehicles:", err));
@@ -233,14 +248,15 @@ export default function NewInspection() {
 
   const selectedVehicle = vehicles.find((v) => v.plate === form.vehicle_plate);
 
+  // Búsqueda sin tildes ni mayúsculas; en la placa se ignoran espacios y guiones ("dbc 859" → DBC859)
+  const normalizeText = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+  const normalizePlate = (s: string) => s.replace(/[^a-z0-9]/gi, "").toLowerCase();
   const filteredVehicles = vehicles.filter((v) => {
-    if (!vehicleSearch.trim()) return true;
-    const q = vehicleSearch.trim().toLowerCase();
-    const plate = (v.plate || "").toLowerCase();
-    const driverName = (v.driver?.full_name || "").toLowerCase();
-    const line = (v.line || "").toLowerCase();
-    const brand = (v.brand || "").toLowerCase();
-    return plate.includes(q) || driverName.includes(q) || line.includes(q) || brand.includes(q);
+    const q = normalizeText(vehicleSearch);
+    if (!q) return true;
+    const qPlate = normalizePlate(q);
+    const text = normalizeText(`${v.driver?.full_name || ""} ${v.brand || ""} ${v.line || ""}`);
+    return (qPlate && normalizePlate(v.plate || "").includes(qPlate)) || text.includes(q);
   });
 
   // Auto-asignar conductor y buscar daños preexistentes cuando cambia el vehículo
@@ -687,15 +703,7 @@ export default function NewInspection() {
                       <span className="text-2xl font-black tracking-wider text-slate-900 font-mono">
                         {form.vehicle_plate}
                       </span>
-                      {selectedVehicle.status === "leasing" ? (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-300">
-                          🚗 Leasing
-                        </span>
-                      ) : (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200">
-                          Renting
-                        </span>
-                      )}
+                      <VehicleStatusBadge status={selectedVehicle.status} />
                     </div>
                     <button
                       type="button"
@@ -784,15 +792,7 @@ export default function NewInspection() {
                                 <span className="font-mono font-black text-base text-slate-900 tracking-wider">
                                   {v.plate}
                                 </span>
-                                {v.status === "leasing" ? (
-                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-300">
-                                    Leasing
-                                  </span>
-                                ) : (
-                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200">
-                                    Renting
-                                  </span>
-                                )}
+                                <VehicleStatusBadge status={v.status} small />
                               </div>
                               <p className="text-xs text-slate-600">
                                 {v.driver?.full_name ? (
