@@ -1,7 +1,7 @@
 # Spec — Usuarios del panel admin y autenticación
 
 **Estado:** Vigente · **Última revisión:** 2026-11-12 (Issue #49)
-**Código principal:** `src/lib/adminAuth.ts`, `src/middleware/basicAuth.ts`, `src/routes/auth.ts`, `web/src/lib/auth.ts`, `web/src/pages/Login.tsx`, `web/src/pages/ResetPassword.tsx`, `web/src/components/AccountOnboarding.tsx`, `web/src/components/GoogleButton.tsx`, migración `2026111200_admin_users.sql`
+**Código principal:** `src/lib/adminAuth.ts`, `src/middleware/basicAuth.ts`, `src/routes/auth.ts`, `web/src/lib/auth.ts`, `web/src/pages/Login.tsx`, `web/src/pages/ResetPassword.tsx`, `web/src/components/AccountOnboarding.tsx`, `web/src/components/GoogleButton.tsx`, migración `2026111201_admin_users.sql`
 
 ---
 
