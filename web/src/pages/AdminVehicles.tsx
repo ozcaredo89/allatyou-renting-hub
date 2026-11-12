@@ -47,6 +47,7 @@ type Vehicle = {
   // MÉTRICAS GLOBALES
   current_mileage?: number;
   last_oil_change_date?: string;
+  last_inspection_at?: string | null; // última inspección finalizada (Issue #47)
 
   // NOTA: 'active' en vehicles.status significa "Disponible / Operativo", NO tiene
   // relación con leasing_contracts.status = 'active'. Nomenclatura histórica,
@@ -95,6 +96,50 @@ function getOilChangeStatus(dateStr?: string) {
   if (diffMonths > 4) return { color: "text-red-700 bg-red-100 font-bold", label: dateStr };
   if (diffMonths > 3) return { color: "text-amber-700 bg-amber-100 font-bold", label: dateStr };
   return { color: "text-emerald-700 bg-emerald-100 font-medium", label: dateStr };
+}
+
+// Semáforo de inspecciones (Issue #47): amarillo desde 10 días sin revisión, rojo desde 15 (o nunca revisado)
+const INSPECTION_WARN_DAYS = 10;
+const INSPECTION_ALERT_DAYS = 15;
+
+function daysSinceInspection(iso?: string | null): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((today.getTime() - start.getTime()) / 86400000);
+}
+
+function getInspectionStatus(iso?: string | null): { level: 'red' | 'yellow' | 'green'; color: string; label: string; tooltip: string } {
+  const days = daysSinceInspection(iso);
+  if (days === null) return {
+    level: 'red',
+    color: "text-red-700 bg-red-100 font-bold",
+    label: "Nunca",
+    tooltip: "🔴 Sin inspecciones finalizadas registradas",
+  };
+  const dateLabel = new Date(iso!).toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
+  const label = `${dateLabel} · ${days}d`;
+  if (days >= INSPECTION_ALERT_DAYS) return {
+    level: 'red',
+    color: "text-red-700 bg-red-100 font-bold",
+    label,
+    tooltip: `🔴 ${days} días sin revisión (se incluye en el correo diario de alertas)`,
+  };
+  if (days >= INSPECTION_WARN_DAYS) return {
+    level: 'yellow',
+    color: "text-amber-700 bg-amber-100 font-bold",
+    label,
+    tooltip: `🟡 ${days} días sin revisión: programar inspección`,
+  };
+  return {
+    level: 'green',
+    color: "text-emerald-700 bg-emerald-100 font-medium",
+    label,
+    tooltip: `✅ Revisado hace ${days} día(s)`,
+  };
 }
 
 const StatusBadge = ({ status, onClick }: { status?: string; onClick?: () => void }) => {
@@ -165,18 +210,19 @@ function getGpsStatus(dateStr?: string | null): { color: string; label: string; 
 
 // Columnas opcionales de la tabla — persistidas en localStorage
 const COLUMNS_STORAGE_KEY = "admin_vehicles_columns";
-type ColumnKey = 'soat' | 'tecno' | 'gps' | 'odometro' | 'aceite' | 'docs' | 'historial';
+type ColumnKey = 'soat' | 'tecno' | 'gps' | 'odometro' | 'aceite' | 'revision' | 'docs' | 'historial';
 const ALL_COLUMNS: { key: ColumnKey; label: string }[] = [
   { key: 'soat', label: 'SOAT' },
   { key: 'tecno', label: 'Tecno' },
   { key: 'gps', label: 'Renov. GPS' },
   { key: 'odometro', label: 'Odómetro' },
   { key: 'aceite', label: 'Últ. Aceite' },
+  { key: 'revision', label: 'Últ. Revisión' },
   { key: 'docs', label: 'Docs' },
   { key: 'historial', label: 'Historial' },
 ];
 const DEFAULT_COLUMNS: Record<ColumnKey, boolean> = {
-  soat: true, tecno: true, gps: true, odometro: true, aceite: true, docs: true, historial: true,
+  soat: true, tecno: true, gps: true, odometro: true, aceite: true, revision: true, docs: true, historial: true,
 };
 
 function getInitialColumns(): Record<ColumnKey, boolean> {
@@ -223,10 +269,15 @@ export default function AdminVehicles() {
   const leasingCount = items.filter(v => getVehicleCategory(v.status) === 'leasing' && matchesVehicleQuery(v, plateFilter)).length;
   const inactiveCount = items.filter(v => getVehicleCategory(v.status) === 'inactive' && matchesVehicleQuery(v, plateFilter)).length;
 
-  const filteredItems = items.filter(v => {
-    if (getVehicleCategory(v.status) !== statusFilter) return false;
-    return matchesVehicleQuery(v, plateFilter);
-  });
+  // Filtro rápido: solo vehículos con revisión vencida (amarillo/rojo) — Issue #47
+  const [onlyOverdueInspection, setOnlyOverdueInspection] = useState(false);
+  const tabItems = items.filter(v => getVehicleCategory(v.status) === statusFilter && matchesVehicleQuery(v, plateFilter));
+  const inspectionRedCount = tabItems.filter(v => getInspectionStatus(v.last_inspection_at).level === 'red').length;
+  const inspectionYellowCount = tabItems.filter(v => getInspectionStatus(v.last_inspection_at).level === 'yellow').length;
+
+  const filteredItems = tabItems.filter(v =>
+    !onlyOverdueInspection || getInspectionStatus(v.last_inspection_at).level !== 'green'
+  );
   const { items: sortedItems, requestSort, sortConfig } = useSortableData(filteredItems);
 
   const SortIcon = ({ columnKey }: { columnKey: string }) => {
@@ -826,6 +877,18 @@ export default function AdminVehicles() {
                 {inactiveCount}
               </span>
             </button>
+            {statusFilter !== 'inactive' && (inspectionRedCount + inspectionYellowCount > 0 || onlyOverdueInspection) && (
+              <button
+                onClick={() => setOnlyOverdueInspection(prev => !prev)}
+                className={`px-3 py-2 text-xs font-bold rounded-xl border transition-all flex items-center gap-2 ${onlyOverdueInspection ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                title="Mostrar solo vehículos con 10 o más días sin inspección"
+              >
+                Revisiones pendientes:
+                <span className="rounded-full px-2 py-0.5 bg-red-100 text-red-700">🔴 {inspectionRedCount}</span>
+                <span className="rounded-full px-2 py-0.5 bg-amber-100 text-amber-700">🟡 {inspectionYellowCount}</span>
+                {onlyOverdueInspection && <span className="text-[10px] underline">ver todos</span>}
+              </button>
+            )}
           </div>
 
           <div className="relative flex items-center gap-2">
@@ -949,6 +1012,13 @@ export default function AdminVehicles() {
                     <th className="px-4 py-3 text-center min-w-[100px]">
                       <div onClick={() => requestSort('last_oil_change_date')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max">
                         Últ. Aceite <SortIcon columnKey="last_oil_change_date" />
+                      </div>
+                    </th>
+                  )}
+                  {visibleColumns.revision && (
+                    <th className="px-4 py-3 text-center min-w-[110px]">
+                      <div onClick={() => requestSort('last_inspection_at')} className="flex items-center justify-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors mx-auto w-max" title="Última inspección finalizada · amarillo ≥10 días, rojo ≥15 días">
+                        Últ. Revisión <SortIcon columnKey="last_inspection_at" />
                       </div>
                     </th>
                   )}
@@ -1151,6 +1221,17 @@ export default function AdminVehicles() {
                           </span>
                         </td>
                       )}
+                      {/* ÚLTIMA REVISIÓN (semáforo de inspecciones) */}
+                      {visibleColumns.revision && (() => {
+                        const insp = getInspectionStatus(v.last_inspection_at);
+                        return (
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-mono whitespace-nowrap ${insp.color}`} title={insp.tooltip}>
+                              {insp.label}
+                            </span>
+                          </td>
+                        );
+                      })()}
                       {/* DOCS */}
                       {visibleColumns.docs && (
                         <td className="px-4 py-3 text-slate-500 space-y-1">

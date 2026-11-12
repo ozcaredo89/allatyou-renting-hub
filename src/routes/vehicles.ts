@@ -87,6 +87,23 @@ r.get("/", async (req: Request, res: Response) => {
       }
     }
 
+    // 2b. Última inspección finalizada de cada placa (semáforo de revisiones, Issue #47)
+    const { data: inspRows } = await supabase
+      .from("inspections")
+      .select("vehicle_plate, created_at, completed_at")
+      .in("vehicle_plate", plates)
+      .eq("status", "completed")
+      .order("created_at", { ascending: false });
+
+    const inspectionMap = new Map<string, string>();
+    for (const row of inspRows || []) {
+      const at = row.completed_at || row.created_at;
+      const prev = inspectionMap.get(row.vehicle_plate);
+      if (at && (!prev || new Date(at).getTime() > new Date(prev).getTime())) {
+        inspectionMap.set(row.vehicle_plate, at);
+      }
+    }
+
     // 3. Adjuntar a los vehículos (y usar conductor del contrato de leasing activo como respaldo si no hay current_driver_id)
     const enhancedData = data.map((v: any) => {
       const activeLeasing = Array.isArray(v.leasing_contracts)
@@ -98,6 +115,7 @@ r.get("/", async (req: Request, res: Response) => {
         driver: effectiveDriver,
         current_mileage: mileageMap.get(v.plate) || null,
         last_oil_change_date: oilMap.get(v.plate) || null,
+        last_inspection_at: inspectionMap.get(v.plate) || null,
       };
     });
 
