@@ -20,6 +20,10 @@ jobs:
       - name: Variables de entorno declaradas
         run: node scripts/check-env.js
 
+      # Issue #55: versiones de migración únicas (una duplicada rompe `supabase db push` en main)
+      - name: Migraciones con versión única
+        run: node scripts/check-migrations.js
+
       - name: Build API
         run: |
           npm ci

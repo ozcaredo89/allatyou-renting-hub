@@ -29,3 +29,16 @@ No debe llegar a producción código que use una variable de entorno que no est�
 - `NODE_ENV` y `RAILWAY_ENVIRONMENT_NAME` las inyecta la plataforma: no se declaran.
 - Variables usadas solo en scripts locales (`test-*.ts`, `bank-sync/`) no entran al registro.
 - Los deploys **Preview** de Vercel también validan: `VITE_API_URL` debe existir en ese entorno.
+
+## 5. Migraciones y deploy (Decisión 2026-11-12 — Issue #55)
+
+Incidente: `2026111200_admin_users.sql` compartía versión con `2026111200_fleet_digest_runs.sql`; el job de migraciones falló en `main` pero el API nuevo quedó desplegado sin su tabla. Regla: **si una migración falla, el deploy del API también falla.**
+
+| Barrera | Cuándo | Qué hace |
+|---|---|---|
+| `scripts/check-migrations.js` (en `ci.yml` y `migrations.yml`) | Cada PR y push a `main` | Falla si dos archivos comparten versión o el nombre no es `YYYYMMDDNN_descripcion.sql`. |
+| Dry run (`migrations.yml`) | PR que toca `supabase/migrations/` | Muestra qué se aplicaría. |
+| Arranque del API (`src/lib/migrationGuard.ts`) | Cada arranque en Railway | Compara `supabase/migrations/` con `public.applied_migration_versions()`. Si falta alguna, reintenta 90 s (el job puede seguir corriendo) y luego termina el proceso → healthcheck falla → Railway mantiene el deploy anterior. En local solo advierte. |
+| "Wait for CI" en Railway | Push a `main` | Railway no despliega si algún workflow del commit falla. |
+
+El frontend (Vercel) no espera las migraciones; como depende del API, una falla deja al API anterior respondiendo.
