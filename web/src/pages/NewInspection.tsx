@@ -4,7 +4,7 @@ import { ensureBasicAuth } from "../lib/auth";
 import { compressImage } from "../utils/compressImage";
 import { formatDuration } from "../utils/formatDuration";
 import VehicleDamage3DMapper, { type VehicleDamagePoint } from "../components/VehicleDamage3DMapper";
-import { Camera, X, Check, Plus, Image as ImageIcon, Gauge, Fuel, Share2, CheckCircle2, RotateCcw, ArrowRight, Timer, Car, Save, Users, Play, Pause, AlertCircle } from "lucide-react";
+import { Camera, X, Check, Plus, Image as ImageIcon, Gauge, Fuel, Share2, CheckCircle2, RotateCcw, ArrowRight, Timer, Car, Save, Users, Play, Pause, AlertCircle, Search } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
@@ -35,6 +35,9 @@ interface VehicleOption {
   plate: string;
   driver?: { id?: number; full_name?: string; phone?: string } | null;
   current_mileage?: number | null;
+  status?: string;
+  brand?: string;
+  line?: string;
 }
 
 interface CreatedInspectionResult {
@@ -87,6 +90,8 @@ export default function NewInspection() {
   const isContinueMode = !!routeToken;
 
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
+  const [vehicleSearch, setVehicleSearch] = useState("");
+  const [isVehiclePickerOpen, setIsVehiclePickerOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>("");
@@ -130,9 +135,13 @@ export default function NewInspection() {
   useEffect(() => {
     if (isContinueMode) return; // quien continúa por enlace no tiene credenciales admin
     const auth = ensureBasicAuth();
-    fetch(`${API}/vehicles`, { headers: { Authorization: auth } })
+    fetch(`${API}/vehicles?status=all`, { headers: { Authorization: auth } })
       .then((res) => res.json())
-      .then((data) => setVehicles(Array.isArray(data) ? data : []))
+      .then((data) => {
+        if (!Array.isArray(data)) return setVehicles([]);
+        const operational = data.filter((v: any) => v.status !== "sold" && v.status !== "inactive");
+        setVehicles(operational);
+      })
       .catch((err) => console.error("Error fetching vehicles:", err));
   }, [isContinueMode]);
 
@@ -223,6 +232,16 @@ export default function NewInspection() {
   };
 
   const selectedVehicle = vehicles.find((v) => v.plate === form.vehicle_plate);
+
+  const filteredVehicles = vehicles.filter((v) => {
+    if (!vehicleSearch.trim()) return true;
+    const q = vehicleSearch.trim().toLowerCase();
+    const plate = (v.plate || "").toLowerCase();
+    const driverName = (v.driver?.full_name || "").toLowerCase();
+    const line = (v.line || "").toLowerCase();
+    const brand = (v.brand || "").toLowerCase();
+    return plate.includes(q) || driverName.includes(q) || line.includes(q) || brand.includes(q);
+  });
 
   // Auto-asignar conductor y buscar daños preexistentes cuando cambia el vehículo
   const handleVehicleChange = (plate: string) => {
@@ -656,38 +675,157 @@ export default function NewInspection() {
           /* --- PASO PREVIO: SELECCIONAR PLACA Y EMPEZAR REVISIÓN --- */
           <div className="p-5 sm:p-6 space-y-5">
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  1. Selecciona la Placa del Vehículo a Revisar
-                </label>
-                <select
-                  className="w-full p-3.5 rounded-xl border border-slate-300 font-black text-slate-800 uppercase bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-base"
-                  value={form.vehicle_plate}
-                  onChange={(e) => handleVehicleChange(e.target.value)}
-                >
-                  <option value="">-- SELECCIONAR PLACA --</option>
-                  {vehicles.map((v) => (
-                    <option key={v.plate} value={v.plate}>
-                      {v.plate} · {v.driver?.full_name || "LIBRE (Sin conductor)"}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                1. Vehículo a Inspeccionar
+              </label>
 
-              {selectedVehicle && (
-                <div className="text-xs bg-white p-3 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <span className="text-slate-400">Conductor: </span>
-                    <span className="font-bold text-slate-800">
-                      {selectedVehicle.driver?.full_name || "Sin conductor asignado"}
-                    </span>
-                    {selectedVehicle.driver?.phone && (
-                      <span className="text-slate-500 ml-1">({selectedVehicle.driver.phone})</span>
+              {form.vehicle_plate && selectedVehicle && !isVehiclePickerOpen ? (
+                /* Tarjeta del vehículo seleccionado */
+                <div className="bg-white p-4 rounded-2xl border-2 border-emerald-500 shadow-sm space-y-3 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl font-black tracking-wider text-slate-900 font-mono">
+                        {form.vehicle_plate}
+                      </span>
+                      {selectedVehicle.status === "leasing" ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-300">
+                          🚗 Leasing
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200">
+                          Renting
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsVehiclePickerOpen(true);
+                        setVehicleSearch("");
+                      }}
+                      className="text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl border border-emerald-200 transition"
+                    >
+                      Cambiar
+                    </button>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div>
+                      <span className="text-slate-400">Conductor: </span>
+                      <span className="font-bold text-slate-800">
+                        {selectedVehicle.driver?.full_name || "Sin conductor asignado"}
+                      </span>
+                      {selectedVehicle.driver?.phone && (
+                        <span className="text-slate-500 ml-1">({selectedVehicle.driver.phone})</span>
+                      )}
+                    </div>
+                    {selectedVehicle.current_mileage && (
+                      <div className="text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                        Último Km: {Number(selectedVehicle.current_mileage).toLocaleString("es-CO")} km
+                      </div>
                     )}
                   </div>
-                  {selectedVehicle.current_mileage && (
-                    <div className="text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
-                      Último Km: {Number(selectedVehicle.current_mileage).toLocaleString("es-CO")} km
+                </div>
+              ) : (
+                /* Buscador interactivo */
+                <div className="space-y-2">
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={vehicleSearch}
+                      onChange={(e) => {
+                        setVehicleSearch(e.target.value);
+                        setIsVehiclePickerOpen(true);
+                      }}
+                      onFocus={() => setIsVehiclePickerOpen(true)}
+                      placeholder="Buscar por placa (ej. 859, DBC) o conductor..."
+                      className="w-full pl-10 pr-10 py-3.5 rounded-xl border border-slate-300 font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-sm placeholder:text-slate-400 shadow-sm"
+                    />
+                    {vehicleSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setVehicleSearch("")}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                        title="Limpiar búsqueda"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Lista de resultados */}
+                  <div className="max-h-60 overflow-y-auto rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100 shadow-sm">
+                    {filteredVehicles.length === 0 ? (
+                      <div className="p-5 text-center text-xs text-slate-400 space-y-1">
+                        <p className="font-semibold text-slate-600">No se encontraron vehículos</p>
+                        <p>No hay coincidencias para "{vehicleSearch}"</p>
+                      </div>
+                    ) : (
+                      filteredVehicles.map((v) => {
+                        const isSelected = form.vehicle_plate === v.plate;
+                        return (
+                          <button
+                            key={v.plate}
+                            type="button"
+                            onClick={() => {
+                              handleVehicleChange(v.plate);
+                              setVehicleSearch("");
+                              setIsVehiclePickerOpen(false);
+                            }}
+                            className={`w-full p-3.5 text-left flex items-center justify-between gap-3 transition-colors ${
+                              isSelected
+                                ? "bg-emerald-50 hover:bg-emerald-100/70"
+                                : "hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-black text-base text-slate-900 tracking-wider">
+                                  {v.plate}
+                                </span>
+                                {v.status === "leasing" ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-300">
+                                    Leasing
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200">
+                                    Renting
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-600">
+                                {v.driver?.full_name ? (
+                                  <span className="font-medium text-slate-800">👤 {v.driver.full_name}</span>
+                                ) : (
+                                  <span className="text-slate-400 italic">Libre (Sin conductor)</span>
+                                )}
+                              </p>
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              {v.current_mileage ? (
+                                <span className="text-[11px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
+                                  {Number(v.current_mileage).toLocaleString("es-CO")} km
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-slate-400">-</span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {form.vehicle_plate && isVehiclePickerOpen && (
+                    <div className="text-right pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsVehiclePickerOpen(false)}
+                        className="text-xs text-slate-500 hover:text-slate-700 font-semibold underline"
+                      >
+                        Cancelar y mantener {form.vehicle_plate}
+                      </button>
                     </div>
                   )}
                 </div>
