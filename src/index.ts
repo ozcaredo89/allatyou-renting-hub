@@ -6,6 +6,7 @@ import { basicAuth } from "./middleware/basicAuth";
 
 import advancesRoutes from "./routes/advances";
 import companiesRoutes from "./routes/companies";
+import authRoutes from "./routes/auth";
 import drivers from "./routes/drivers";
 import emailTestRouter from "./routes/emailTest";
 import whatsappTestRouter from "./routes/whatsappTest";
@@ -101,6 +102,8 @@ app.get("/", (_req: Request, res: Response) => {
 app.get("/health", (_req: Request, res: Response) => res.json({ ok: true }));
 
 /** Rutas públicas */
+// Usuarios personales del panel admin (Issue #49)
+app.use("/auth", authRoutes);
 app.use("/drivers", drivers);
 app.use("/uploads", uploads);
 app.use("/payments", payments);

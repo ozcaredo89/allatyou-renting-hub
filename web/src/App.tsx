@@ -40,6 +40,10 @@ import AdminInventory from "./pages/AdminInventory";
 // Rutas Públicas de Cliente / Subasta
 import BidTrip from "./pages/BidTrip";
 
+// Ingreso al panel (Issue #49)
+import Login from "./pages/Login";
+import ResetPassword from "./pages/ResetPassword";
+
 function PostHogPageviewTracker() {
   const location = useLocation();
   useEffect(() => {
@@ -84,6 +88,10 @@ export default function App() {
               <Route path="/inspection/continue/:token" element={<NewInspection />} />
               <Route path="/inspections/view/:id" element={<PublicInspectionView />} />
             </Route>
+
+            {/* --- Ingreso (sin layout) --- */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
             {/* --- B. Rutas Administrativas (CON Sidebar) --- */}
             {/* Aquí vive toda la gestión. Sin prefijo /admin porque YA estamos en la app admin */}

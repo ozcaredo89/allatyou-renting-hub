@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { Menu, X, ChevronLeft, ChevronRight } from "lucide-react";
-import { clearBasicAuth } from "../lib/auth";
+import { getAuthMode, getSessionUser, loginRedirectUrl, logout, type SessionUser } from "../lib/auth";
+import { AccountFooter, LegacyBanner, OnboardingWizard } from "./AccountOnboarding";
 
 const SIDEBAR_STORAGE_KEY = "admin_sidebar_collapsed";
 
@@ -18,6 +19,17 @@ export default function AdminLayout() {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState<boolean>(getInitialCollapsed);
   const location = useLocation();
+
+  // Usuarios personales (Issue #49): modo de acceso actual y asistente guiado
+  const [authMode, setAuthMode] = useState(getAuthMode);
+  const [user, setUser] = useState<SessionUser | null>(getSessionUser);
+  const [wizard, setWizard] = useState<null | "self" | "invite">(() => {
+    if (getAuthMode() === "legacy" && sessionStorage.getItem("aay_onboarding_autoopen")) {
+      sessionStorage.removeItem("aay_onboarding_autoopen");
+      return "self";
+    }
+    return null;
+  });
 
   // Cerrar el menú automáticamente cuando cambiamos de página (UX móvil)
   useEffect(() => {
@@ -50,10 +62,10 @@ export default function AdminLayout() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (confirm("¿Cerrar sesión del panel administrativo?")) {
-      clearBasicAuth();
-      window.location.href = "/";
+      await logout();
+      window.location.href = "/login";
     }
   };
 
@@ -87,8 +99,17 @@ export default function AdminLayout() {
       ? <div className="mx-2 my-2 border-t border-slate-700/40" />
       : <p className={`px-4 text-[10px] font-bold ${colorClass} uppercase tracking-wider mb-1.5`}>{text}</p>;
 
+  if (!authMode) return <Navigate to={loginRedirectUrl()} replace />;
+
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
+      {wizard && (
+        <OnboardingWizard
+          kind={wizard}
+          onClose={() => setWizard(null)}
+          onSession={(u) => { setUser(u); setAuthMode("session"); }}
+        />
+      )}
 
       {/* 1. BACKDROP - Solo visible en móvil cuando el menú está abierto */}
       {isSidebarOpen && (
@@ -187,6 +208,12 @@ export default function AdminLayout() {
 
         {/* Footer */}
         <div className="p-2 border-t border-slate-800 shrink-0">
+          <AccountFooter
+            user={authMode === "session" ? user : null}
+            collapsed={isCollapsed}
+            onInvite={() => setWizard("invite")}
+            onCreate={() => setWizard("self")}
+          />
           <button
             onClick={handleLogout}
             aria-label="Cerrar Sesión"
@@ -202,6 +229,7 @@ export default function AdminLayout() {
 
       {/* 3. CONTENEDOR PRINCIPAL */}
       <div className="flex-1 flex flex-col h-full overflow-hidden w-full min-w-0">
+        {authMode === "legacy" && <LegacyBanner onStart={() => setWizard("self")} />}
 
         {/* HEADER MÓVIL */}
         <header className="md:hidden bg-slate-900 text-white p-4 flex items-center justify-between shadow-md shrink-0">
