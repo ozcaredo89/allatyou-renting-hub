@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
+import { getCurrentOdometers } from "../lib/odometer";
 
 const r = Router();
 
@@ -50,21 +51,9 @@ r.get("/", async (req: Request, res: Response) => {
     // Fetch dynamic metrics efficiently
     const plates = data.map((v: any) => v.plate);
 
-    // 1. Obtener el kilometraje más reciente para cada placa
-    const { data: mileages } = await supabase
-      .from("vehicle_mileage_logs")
-      .select("plate, mileage_km")
-      .in("plate", plates)
-      .order("recorded_at", { ascending: false });
-
-    const mileageMap = new Map();
-    if (mileages) {
-      for (const m of mileages) {
-        if (!mileageMap.has(m.plate)) {
-          mileageMap.set(m.plate, m.mileage_km);
-        }
-      }
-    }
+    // 1. Odómetro actual: última lectura manual + km GPS posteriores (Issue #51).
+    // Ojo: las filas protrack_api son recorrido diario, no odómetro.
+    const mileageMap = await getCurrentOdometers(plates);
 
     // 2. Obtener la última fecha de cambio de aceite para cada placa
     const { data: expenses } = await supabase
