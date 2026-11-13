@@ -123,6 +123,9 @@ Business rules live in `docs/specs/` (index: `docs/specs/README.md`). **Before c
 
 Never resolve a business ambiguity by inventing a rule: if the spec doesn't cover it, ask the user and record the answer in the spec.
 
+## Scope & Repository Guardrail (Obligatorio)
+Before starting any task, report, or code change, verify that the requested domain belongs to `allatyou-renting-hub` (see `docs/specs/arquitectura.md` §4). Workshop operations—mechanics, work orders, bitácoras, and mechanic hours—belong to the separate `allatyou-taller` (TallerPro) repository; this repo only reads vehicle stay dates via `src/lib/taller.ts` and receives synced repair expenses via `POST /expenses`. If a request belongs to another repository, **warn the user immediately** that it may be the wrong repo/context and do not execute or improvise work from another repository here.
+
 ## Conventions specific to this repo
 - **Trazabilidad 1 Requerimiento = 1 Ticket = 1 Rama**: Todo desarrollo debe iniciar creando un Issue en GitHub (`#ID`). La rama DEBE llamarse `<tipo>/<id>-<slug>` (ej. `feat/4-expense-soat-tecno-renewal`). Todo commit DEBE referenciar el ticket (ej. `feat(#4): ...`). Ver `docs/specs/flujo-git-tickets.md`.
 - Code comments, commit-adjacent inline notes, and route docstrings are written in **Spanish**; match that when editing existing files.
