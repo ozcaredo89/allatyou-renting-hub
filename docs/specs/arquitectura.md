@@ -85,3 +85,17 @@ allatyou-renting-hub/
 │   └── vite.config.ts        # Configuración de Build
 │
 └── package.json              # Dependencias Raíz (Backend)
+```
+
+---
+
+## 4. Frontera entre Repositorios y Regla de Alcance
+
+Este repositorio (`allatyou-renting-hub`) **no** contiene todos los productos del ecosistema AllAtYou. Antes de ejecutar una tarea, análisis o reporte, verifica que el dominio pertenezca realmente a este repositorio:
+
+- **`allatyou-renting-hub` (este repo):** Renting/Leasing, flota propia, conductores, pagos diarios, gastos, anticipos operativos, utilidades/ledger, cobranza, inspecciones, inventario de renting, marketplace, recordatorios y telemetría GPS (Oráculo).
+- **`allatyou-taller` / TallerPro (repositorio y servicio externo):** Órdenes de taller, mecánicos/operarios, tiempos/horas trabajadas, bitácora operativa de taller y facturación de taller. `allatyou-renting-hub` solo consulta estadías por placa en modo lectura (`src/lib/taller.ts` → `GET /v1/vehiculos/{placa}/historial`) y recibe gastos de reparación vía `POST /expenses`.
+
+### Regla obligatoria para Agentes IA
+1. **Validar alcance antes de actuar:** Si el usuario pide un reporte, consulta o cambio sobre datos/funcionalidades que viven en otro repositorio (ej. horas de mecánicos, órdenes de taller o módulos de `allatyou-taller`), **detenerse y advertir al usuario** que está pidiendo algo de otro repositorio y que puede ser un error de contexto.
+2. **No improvisar en el repo equivocado:** No crear tablas, endpoints, scripts ni workarounds en `allatyou-renting-hub` para simular o reemplazar funcionalidad que pertenece a otro repositorio, salvo que el usuario confirme explícitamente que desea construir una integración nueva aquí.
