@@ -43,9 +43,13 @@ export default function AdminLayout() {
     } catch { /* ignorar */ }
   }, [isCollapsed]);
 
-  // Atajo Ctrl+B / Cmd+B — ignorar si el foco está en un campo de texto
+  // Atajo Ctrl+B / Cmd+B (desktop) y Escape para cerrar el drawer móvil
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isSidebarOpen) {
+        setSidebarOpen(false);
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
         const target = e.target as HTMLElement;
         if (
@@ -60,7 +64,7 @@ export default function AdminLayout() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [isSidebarOpen]);
 
   const handleLogout = async () => {
     if (confirm("¿Cerrar sesión del panel administrativo?")) {
@@ -69,10 +73,10 @@ export default function AdminLayout() {
     }
   };
 
-  // Estilos para los items del menú
+  // Estilos para los items del menú (en móvil siempre expandido; el colapso aplica solo en md+)
   const navItemClass = ({ isActive }: { isActive: boolean }) =>
-    `flex items-center gap-3 py-2.5 text-sm font-medium transition-colors rounded-xl
-    ${isCollapsed ? "justify-center px-2" : "px-4"}
+    `flex items-center gap-3 py-2.5 px-4 text-sm font-medium transition-colors rounded-xl
+    ${isCollapsed ? "md:justify-center md:px-2" : ""}
     ${isActive
       ? "bg-emerald-600 text-white shadow-lg shadow-emerald-900/20"
       : "text-slate-400 hover:bg-slate-800 hover:text-white"
@@ -90,14 +94,18 @@ export default function AdminLayout() {
       className={navItemClass}
     >
       <span className="text-base shrink-0" aria-hidden="true">{icon}</span>
-      {!isCollapsed && <span className="truncate leading-tight">{label}</span>}
+      <span className={`truncate leading-tight ${isCollapsed ? "md:hidden" : ""}`}>{label}</span>
     </NavLink>
   );
 
-  const SectionLabel = ({ text, colorClass = "text-slate-500" }: { text: string; colorClass?: string }) =>
-    isCollapsed
-      ? <div className="mx-2 my-2 border-t border-slate-700/40" />
-      : <p className={`px-4 text-[10px] font-bold ${colorClass} uppercase tracking-wider mb-1.5`}>{text}</p>;
+  const SectionLabel = ({ text, colorClass = "text-slate-500" }: { text: string; colorClass?: string }) => (
+    <>
+      {isCollapsed && <div className="hidden md:block mx-2 my-2 border-t border-slate-700/40" />}
+      <p className={`px-4 text-[10px] font-bold ${colorClass} uppercase tracking-wider mb-1.5 ${isCollapsed ? "md:hidden" : ""}`}>
+        {text}
+      </p>
+    </>
+  );
 
   if (!authMode) return <Navigate to={loginRedirectUrl()} replace />;
 
@@ -122,24 +130,22 @@ export default function AdminLayout() {
       {/* 2. SIDEBAR */}
       <aside
         className={`
-          fixed inset-y-0 left-0 z-50 bg-slate-900 text-white flex flex-col shrink-0
+          fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white flex flex-col shrink-0
           transition-all duration-300 ease-in-out shadow-2xl
           md:relative md:shadow-none md:translate-x-0
           ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}
-          ${isCollapsed ? "w-[72px]" : "w-64"}
+          ${isCollapsed ? "md:w-[72px]" : "md:w-64"}
         `}
       >
         {/* Cabecera */}
-        <div className={`border-b border-slate-800 flex items-center shrink-0
-          ${isCollapsed ? "p-3 justify-center" : "p-4 justify-between"}`}>
-          {!isCollapsed && (
-            <div className="overflow-hidden">
-              <h2 className="text-xl font-bold tracking-tight text-white leading-tight">
-                AllAtYou <span className="text-emerald-500">Admin</span>
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">Panel de Control</p>
-            </div>
-          )}
+        <div className={`border-b border-slate-800 flex items-center shrink-0 p-4 justify-between
+          ${isCollapsed ? "md:p-3 md:justify-center" : ""}`}>
+          <div className={`overflow-hidden ${isCollapsed ? "md:hidden" : ""}`}>
+            <h2 className="text-xl font-bold tracking-tight text-white leading-tight">
+              AllAtYou <span className="text-emerald-500">Admin</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">Panel de Control</p>
+          </div>
           <div className="flex items-center gap-1">
             {/* Cerrar — solo móvil */}
             <button
@@ -218,11 +224,11 @@ export default function AdminLayout() {
             onClick={handleLogout}
             aria-label="Cerrar Sesión"
             title="Cerrar Sesión"
-            className={`flex w-full items-center gap-3 py-2.5 text-sm font-medium text-red-400 hover:bg-red-950/30 hover:text-red-300 rounded-xl transition-colors
-              ${isCollapsed ? "justify-center px-2" : "px-4"}`}
+            className={`flex w-full items-center gap-3 py-2.5 px-4 text-sm font-medium text-red-400 hover:bg-red-950/30 hover:text-red-300 rounded-xl transition-colors
+              ${isCollapsed ? "md:justify-center md:px-2" : ""}`}
           >
             <span aria-hidden="true">🚪</span>
-            {!isCollapsed && <span>Cerrar Sesión</span>}
+            <span className={isCollapsed ? "md:hidden" : ""}>Cerrar Sesión</span>
           </button>
         </div>
       </aside>
