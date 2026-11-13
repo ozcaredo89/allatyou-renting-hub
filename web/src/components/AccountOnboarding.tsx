@@ -295,28 +295,26 @@ export function AccountFooter({
   if (!user) {
     return (
       <button onClick={onCreate} title="Crear mi usuario"
-        className={`flex w-full items-center gap-3 py-2.5 text-sm font-medium text-amber-300 hover:bg-amber-900/20 rounded-xl ${collapsed ? "justify-center px-2" : "px-4"}`}>
-        <Sparkles size={16} className="shrink-0" />{!collapsed && <span>Crear mi usuario</span>}
+        className={`flex w-full items-center gap-3 py-2.5 px-4 text-sm font-medium text-amber-300 hover:bg-amber-900/20 rounded-xl ${collapsed ? "md:justify-center md:px-2" : ""}`}>
+        <Sparkles size={16} className="shrink-0" /><span className={collapsed ? "md:hidden" : ""}>Crear mi usuario</span>
       </button>
     );
   }
   const initials = user.full_name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   return (
     <div className="space-y-1">
-      <div className={`flex items-center gap-3 py-2 ${collapsed ? "justify-center px-2" : "px-4"}`} title={`${user.full_name} · ${user.email}`}>
+      <div className={`flex items-center gap-3 py-2 px-4 ${collapsed ? "md:justify-center md:px-2" : ""}`} title={`${user.full_name} · ${user.email}`}>
         {user.avatar_url
           ? <img src={user.avatar_url} alt="" referrerPolicy="no-referrer" className="h-7 w-7 rounded-full shrink-0" />
           : <span className="h-7 w-7 rounded-full bg-emerald-600 text-white text-xs font-bold flex items-center justify-center shrink-0">{initials}</span>}
-        {!collapsed && (
-          <span className="min-w-0">
-            <span className="block text-sm text-white truncate">{user.full_name}</span>
-            <span className="block text-[11px] text-slate-500 truncate">{user.email}</span>
-          </span>
-        )}
+        <span className={`min-w-0 ${collapsed ? "md:hidden" : ""}`}>
+          <span className="block text-sm text-white truncate">{user.full_name}</span>
+          <span className="block text-[11px] text-slate-500 truncate">{user.email}</span>
+        </span>
       </div>
       <button onClick={onInvite} title="Invitar usuario"
-        className={`flex w-full items-center gap-3 py-2 text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-white rounded-xl ${collapsed ? "justify-center px-2" : "px-4"}`}>
-        <UserPlus size={16} className="shrink-0" />{!collapsed && <span>Invitar usuario</span>}
+        className={`flex w-full items-center gap-3 py-2 px-4 text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-white rounded-xl ${collapsed ? "md:justify-center md:px-2" : ""}`}>
+        <UserPlus size={16} className="shrink-0" /><span className={collapsed ? "md:hidden" : ""}>Invitar usuario</span>
       </button>
     </div>
   );
