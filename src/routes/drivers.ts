@@ -26,10 +26,36 @@ r.get("/", basicAuth, async (req: Request, res: Response) => {
       query = query.eq("status", "active");
     }
 
-    const { data, error } = await query;
+    const [driversResult, vehiclesResult] = await Promise.all([
+      query,
+      supabase
+        .from("vehicles")
+        .select("plate, current_driver_id, status")
+        .not("current_driver_id", "is", null)
+        .order("plate", { ascending: true }),
+    ]);
 
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json(data);
+    if (driversResult.error) return res.status(500).json({ error: driversResult.error.message });
+
+    // Mapear la placa del vehículo actualmente asignado a cada conductor
+    const plateByDriverId = new Map<number, { plate: string; active: boolean }>();
+    if (!vehiclesResult.error && Array.isArray(vehiclesResult.data)) {
+      for (const v of vehiclesResult.data) {
+        if (v.current_driver_id == null || !v.plate) continue;
+        const isPreferred = v.status !== "sold" && v.status !== "inactive";
+        const existing = plateByDriverId.get(v.current_driver_id);
+        if (!existing || (!existing.active && isPreferred)) {
+          plateByDriverId.set(v.current_driver_id, { plate: v.plate, active: isPreferred });
+        }
+      }
+    }
+
+    const enriched = (driversResult.data || []).map((d: any) => ({
+      ...d,
+      assigned_plate: plateByDriverId.get(d.id)?.plate ?? null,
+    }));
+
+    return res.json(enriched);
   } catch (err: any) {
     return res.status(500).json({ error: err?.message });
   }

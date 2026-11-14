@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import {
   X,
@@ -15,6 +16,7 @@ import {
   Clock,
   ExternalLink,
   AlertTriangle,
+  Car,
 } from "lucide-react";
 import { useSortableData } from "../hooks/useSortableData";
 import { LiquidationModal } from "../components/LiquidationModal";
@@ -186,7 +188,8 @@ export default function AdminDrivers() {
       d.full_name.toLowerCase().includes(q) ||
       d.document_number.toLowerCase().includes(q) ||
       d.phone.toLowerCase().includes(q) ||
-      (d.email ?? "").toLowerCase().includes(q);
+      (d.email ?? "").toLowerCase().includes(q) ||
+      (d.assigned_plate ?? "").toLowerCase().includes(q);
     const matchesStatus = statusFilter === "all" || d.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -386,7 +389,7 @@ export default function AdminDrivers() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="Buscar por nombre, documento, celular o email…"
+                  placeholder="Buscar por nombre, placa, documento, celular o email…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 text-sm rounded-xl border border-slate-200 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent placeholder-slate-400"
@@ -453,6 +456,14 @@ export default function AdminDrivers() {
                       </th>
                       <th className="px-4 py-3">
                         <div
+                          onClick={() => requestSort("assigned_plate")}
+                          className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max"
+                        >
+                          Vehículo <SortIcon columnKey="assigned_plate" />
+                        </div>
+                      </th>
+                      <th className="px-4 py-3">
+                        <div
                           onClick={() => requestSort("document_number")}
                           className="flex items-center gap-1 cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-max"
                         >
@@ -490,13 +501,13 @@ export default function AdminDrivers() {
                   <tbody className="divide-y divide-slate-100">
                     {loading ? (
                       <tr>
-                        <td colSpan={7} className="p-10 text-center text-slate-400">
+                        <td colSpan={8} className="p-10 text-center text-slate-400">
                           Cargando...
                         </td>
                       </tr>
                     ) : filteredItems.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="p-10 text-center text-slate-400">
+                        <td colSpan={8} className="p-10 text-center text-slate-400">
                           {searchQuery || statusFilter !== "all"
                             ? "No se encontraron conductores con ese filtro."
                             : "No hay conductores registrados."}
@@ -520,6 +531,21 @@ export default function AdminDrivers() {
                               )}
                               <span className="font-bold text-slate-700">{d.full_name}</span>
                             </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            {d.assigned_plate ? (
+                              <Link
+                                to={`/vehicles?plate=${encodeURIComponent(d.assigned_plate)}`}
+                                title={`Ver detalle del vehículo ${d.assigned_plate} en Flota`}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 hover:bg-emerald-50 text-slate-800 hover:text-emerald-700 border border-slate-200 hover:border-emerald-300 font-mono font-bold text-xs transition-colors"
+                              >
+                                <Car className="w-3.5 h-3.5 text-slate-400" />
+                                {d.assigned_plate}
+                                <ExternalLink className="w-3 h-3 opacity-60" />
+                              </Link>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">Sin asignar</span>
+                            )}
                           </td>
                           <td className="px-4 py-3 font-mono text-slate-600">{d.document_number}</td>
                           <td className="px-4 py-3 text-slate-600">

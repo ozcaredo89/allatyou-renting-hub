@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ensureBasicAuth, clearBasicAuth } from "../lib/auth";
 import { requestCancelActiveLeasing } from "../lib/leasingCancel";
 import { Camera, Image as ImageIcon, X, UploadCloud, Wrench, Droplets, ArrowUp, ArrowDown, ChevronsUpDown, MapPin, List, Map, BarChart3, Activity, Search, FileText, ExternalLink, Settings2, Satellite, Rocket, MessageCircle } from "lucide-react";
@@ -238,9 +238,11 @@ function getInitialColumns(): Record<ColumnKey, boolean> {
 }
 
 export default function AdminVehicles() {
+  const [searchParams] = useSearchParams();
   const [items, setItems] = useState<Vehicle[]>([]);
   const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'leasing'>('active');
-  const [plateFilter, setPlateFilter] = useState('');
+  const [plateFilter, setPlateFilter] = useState(() => (searchParams.get("plate") || "").trim());
+  const autoOpenedPlateRef = useRef<string | null>(null);
   // Cancelación de leasing en curso (confirmación visual, sin montos)
   const [cancelLeasingTarget, setCancelLeasingTarget] = useState<{ contractId: number; plate: string } | null>(null);
   const [cancellingLeasing, setCancellingLeasing] = useState(false);
@@ -399,6 +401,18 @@ export default function AdminVehicles() {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Si se llega con ?plate=ABC123 (ej. desde Conductores), filtrar y abrir la ficha del vehículo una sola vez
+  useEffect(() => {
+    const paramPlate = (searchParams.get("plate") || "").trim().toUpperCase();
+    if (!paramPlate || items.length === 0 || autoOpenedPlateRef.current === paramPlate) return;
+    const match = items.find((v) => v.plate?.toUpperCase() === paramPlate);
+    if (match) {
+      autoOpenedPlateRef.current = paramPlate;
+      setPlateFilter(paramPlate);
+      handleEdit(match);
+    }
+  }, [searchParams, items]);
 
   async function loadData() {
     setLoading(true);
