@@ -48,6 +48,7 @@ Los siguientes campos almacenan URLs públicas a los archivos PDF/Imágenes en e
 * **Query Params:**
     * `?all=true`: Retorna todos los conductores (histórico).
     * *(Vacío)*: Retorna solo conductores con `status = 'active'`.
+* **Placa asignada (`assigned_plate`):** La respuesta incluye `assigned_plate` (`string | null`) con la placa del vehículo que tiene `current_driver_id` apuntando al conductor (priorizando vehículos activos/en operación sobre `sold`/`inactive`). En `/drivers` (`AdminDrivers.tsx`), la tabla muestra la placa como enlace directo a `/vehicles?plate=<PLACA>`, donde `/vehicles` filtra por esa placa y abre automáticamente la ficha del vehículo.
 
 ### 3.2 Crear / Editar Conductor
 * **Método:** `POST` (Crear) / `PUT /:id` (Actualizar)

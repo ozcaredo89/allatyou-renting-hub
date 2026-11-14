@@ -19,6 +19,7 @@ export type Driver = {
   contract_url: string | null;
   deposit_amount: number | null;
   deposit_receipt_url: string | null;
+  assigned_plate?: string | null;
 };
 
 export const EMPTY_DRIVER: Omit<Driver, "id" | "created_at"> = {
