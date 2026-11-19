@@ -804,10 +804,9 @@ export default function App() {
     const daysCount = result.days_count ?? (body.batch_mode ? body.days_count : 1);
     const payableDates: string[] = result.payable_dates ?? (body.payment_date ? [body.payment_date] : []);
     const totalAmount = result.total_amount ?? (body.amount * (body.days_count || 1));
-    // Leasing no lleva recargo. El lote responde late_fee; el pago individual, las columnas del pago.
-    const rawLateFee = result.leasing
-      ? null
-      : result.late_fee ?? { amount: result.late_fee_amount, paid: result.late_fee_paid, receipt_time: result.receipt_time };
+    // El lote responde late_fee; el pago individual, las columnas del pago. Aplica a renting y leasing.
+    const rawLateFee =
+      result.late_fee ?? { amount: result.late_fee_amount, paid: result.late_fee_paid, receipt_time: result.receipt_time };
     const lateFee = rawLateFee
       ? {
           amount: rawLateFee.amount == null ? null : Number(rawLateFee.amount),

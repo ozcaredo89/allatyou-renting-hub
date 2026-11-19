@@ -1267,12 +1267,12 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
 
   // Recargo por pago tardío por cada día del lote (pagos.md §3). El RPC no conoce estas
   // columnas, así que se actualizan después. Cada día paga su tarifa exacta, sin excedente:
-  // late_fee_paid queda en 0 y el recargo causado queda debiendo.
+  // late_fee_paid queda en 0 y el recargo causado queda debiendo. Aplica también a leasing.
   const batchReceiptTime: string | null = uploadData?.receipt_time ?? null;
-  const batchLateFees: (number | null)[] = isLeasing
-    ? payableDates.map(() => 0)
-    : payableDates.map((date) => computeLateFee(date, receipt_date, batchReceiptTime).amount);
-  if (!isLeasing && insertedIds.length === payableDates.length) {
+  const batchLateFees: (number | null)[] = payableDates.map(
+    (date) => computeLateFee(date, receipt_date, batchReceiptTime).amount
+  );
+  if (insertedIds.length === payableDates.length) {
     await Promise.all(payableDates.map((_date, idx) =>
       supabase
         .from("payments")
@@ -1829,12 +1829,11 @@ r.post("/", async (req: Request, res: Response) => {
   // ---------------- Recargo por pago tardío (pagos.md §3) ----------------
   // Deuda aparte del canon: se registra lo causado y se abona solo con el excedente
   // sobre canon + cuota de anticipo. late_fee_paid es la parte de delivery_amount que
-  // corresponde al recargo (delivery no cambia). No aplica a leasing ni a pagos en $0.
+  // corresponde al recargo (delivery no cambia). Aplica a renting y leasing; no a pagos en $0.
   const receipt_time: string | null = uploadData?.receipt_time ?? null;
   let lateFeeAmount: number | null = 0;
   let lateFeePaid = 0;
-  const isLeasingVehicle = !!(await getActiveLeasingContract(upperPlate));
-  if (!isLeasingVehicle && amt > 0) {
+  if (amt > 0) {
     lateFeeAmount = computeLateFee(payment_date, receipt_date, receipt_time).amount;
     if (!wantsOverride) {
       const { dailyRate } = await resolveDailyRentRate(upperPlate);

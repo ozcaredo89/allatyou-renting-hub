@@ -129,8 +129,8 @@ export function ResolveDaysModal({ isOpen, onClose, plate, ownerName, onResolved
   const total = selected.length * rate;
   const adv = info?.active_advance ?? null;
   const advCovers = !!adv && total <= Number(adv.amount);
-  // Descuento en liquidación: canon + recargo máximo; en leasing no hay recargo (pagos.md §3 y §6)
-  const perDayDebt = rate + (info?.is_leasing ? 0 : LATE_FEE_MAX);
+  // Descuento en liquidación: canon + recargo máximo (aplica a renting y leasing, pagos.md §3 y §6)
+  const perDayDebt = rate + LATE_FEE_MAX;
   const debtByDriver = moraDays.slice(0, selCount).reduce<Record<string, number>>((acc, d) => {
     const name = d.responsible?.driver_name || `#${d.responsible?.driver_id}`;
     acc[name] = (acc[name] || 0) + 1;
@@ -363,8 +363,7 @@ export function ResolveDaysModal({ isOpen, onClose, plate, ownerName, onResolved
                         </p>
                       ))}
                       <p className="text-gray-500">
-                        Por día: canon ${fmtCOP.format(rate)}
-                        {info?.is_leasing ? " (leasing, sin recargo)" : ` + recargo $${fmtCOP.format(LATE_FEE_MAX)}`}. Se descuenta en la
+                        Por día: canon ${fmtCOP.format(rate)} + recargo ${fmtCOP.format(LATE_FEE_MAX)}. Se descuenta en la
                         liquidación del conductor que tenía el carro.
                       </p>
                     </div>

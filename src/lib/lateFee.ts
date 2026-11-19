@@ -3,7 +3,7 @@
 // Se paga a día vencido: el canon del día D se paga hasta las 4:00 PM del día D+1,
 // según la fecha y hora de la transferencia (mismo plazo que la mora, pagos.md §1).
 // Desde D+1 4 PM: $5.000, +$5.000 por cada hora adicional, máximo $15.000 por día.
-// No aplica a leasing (lo decide quien llama).
+// Aplica tanto a renting como a leasing.
 
 export const LATE_FEE_START_HOUR = 16;
 export const LATE_FEE_STEP = 5000;
