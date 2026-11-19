@@ -733,7 +733,7 @@ export function PaymentApprovalModal({
                   </div>
 
                   {/* Recargo por pago tardío (pagos.md §3) */}
-                  {!isLeasing && data.late_fee && (
+                  {data.late_fee && (
                     <div className={`p-3 rounded-xl border shadow-2xs sm:col-span-2 ${
                       (data.late_fee.amount ?? 0) > 0
                         ? "bg-red-50/60 border-red-200"

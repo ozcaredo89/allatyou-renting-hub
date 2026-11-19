@@ -655,11 +655,22 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
         });
       }
 
+      const lfPaid = Number(payment.late_fee_paid || 0);
+      const lateFeeInfo = {
+        amount: payment.late_fee_amount == null ? null : Number(payment.late_fee_amount),
+        paid: lfPaid,
+        pending: Math.max(0, Number(payment.late_fee_amount || 0) - lfPaid),
+        receipt_date: payment.receipt_date ?? null,
+        receipt_time: payment.receipt_time ? String(payment.receipt_time).slice(0, 5) : null,
+      };
+
       const creditStored = Number(payment.credit_installment_amount || 0);
       const activeAdvLeasing = await activeAdvanceForDriver(payment.plate, payment.payment_date, "id, daily_installment, current_installment, installments");
 
       const leasingAmt = Math.max(0, amt - creditStored);
       const leasingExcess = Math.max(0, leasingAmt - qTotal);
+      // late_fee_paid forma parte del excedente sobre la cuota; se descuenta de excess para no sumarlo dos veces en la vista previa
+      const remainingExcess = Math.max(0, leasingExcess - lfPaid);
 
       // Micro-tolerancia de hasta $2.000 COP (decisión 2026-10-27)
       const shortfall = Math.max(0, qTotal - leasingAmt);
@@ -705,8 +716,10 @@ r.get("/payments/:id/approval-preview", async (req: Request, res: Response) => {
           admin_insurance: aExp,
           normal_quota: 0,
           advance: creditStored,
-          excess: leasingExcess,
+          late_fee: lfPaid,
+          excess: remainingExcess,
         },
+        late_fee: lateFeeInfo,
         quota_expected: {
           maintenance: mExp,
           admin: aExp,
@@ -1759,8 +1772,8 @@ r.post("/plates/:plate/resolve-days", async (req: Request, res: Response) => {
   // Descuento en liquidación: el día lo debe el conductor que tenía el carro (canon + recargo máximo).
   // Fila marcador de $0 que liquidations.ts suma como deuda del conductor mientras liquidation_id sea NULL.
   if (reason === "liquidation") {
-    const { dailyRate, isLeasing } = await resolveDailyRentRate(plate);
-    const lateFee = isLeasing ? 0 : LATE_FEE_MAX; // el recargo no aplica en leasing (§3)
+    const { dailyRate } = await resolveDailyRentRate(plate);
+    const lateFee = LATE_FEE_MAX; // aplica a renting y leasing (§3)
     const dayInfo = new Map(pending.days.map((d) => [d.date, d]));
     const rows = dates.map((date) => {
       const resp = dayInfo.get(date)!.responsible!;
