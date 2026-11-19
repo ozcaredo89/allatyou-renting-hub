@@ -958,12 +958,15 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "start_date must be YYYY-MM-DD" }); return;
   }
 
-  // Validar ventana de start_date: [hoy - 15 días, hoy + 7 días]
+  // Validar ventana de start_date: [hoy - 180 días, hoy + 7 días]
   const todayStr = new Date().toISOString().slice(0, 10);
-  const minDate = addDays(todayStr, -15);
+  const minDate = addDays(todayStr, -180);
   const maxDate = addDays(todayStr, 7);
   if (batchStartDate < minDate || batchStartDate > maxDate) {
-    res.status(400).json({ error: `start_date must be within 15 days in the past and 7 days in the future (${minDate} to ${maxDate})` }); return;
+    res.status(400).json({
+      error: `La fecha de inicio del lote debe estar entre ${minDate} y ${maxDate} (máximo 180 días atrás y 7 días adelante). Si necesitas registrar fechas más antiguas, usa pagos individuales de 1 día.`
+    });
+    return;
   }
 
   const amt = toIntMoney(amount);
