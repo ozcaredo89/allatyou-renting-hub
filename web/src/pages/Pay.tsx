@@ -591,7 +591,7 @@ export default function App() {
     : MODE_DAYS[paymentMode as "1d" | "week" | "month"];
 
   async function fetchBatchPreview() {
-    if (!plateValid || !plateExists || !f.plate || !f.payment_date || daysCount < 2) {
+    if (!plateValid || !plateExists || !f.plate || !f.payment_date || daysCount < 2 || daysCount > 31) {
       setBatchPreview(null);
       setPreviewError(null);
       return;
@@ -1106,27 +1106,39 @@ export default function App() {
                   <span className="text-xs text-gray-500">días (máx. 31)</span>
                 </div>
               )}
-              {paymentMode !== "1d" && (
+              {paymentMode !== "1d" && daysCount >= 2 && daysCount <= 31 && (
                 <div className="mt-1 text-xs text-blue-600">
-                  💡 El comprobante cubre {daysCount} días de pago. Solo se sube 1 imagen.
+                  💡 El comprobante cubre {daysCount} días de pago. Solo se sube 1 archivo (imagen o PDF).
                 </div>
               )}
             </div>
 
             {/* Banner de vista previa del lote */}
-            {paymentMode !== "1d" && daysCount >= 2 && (
+            {paymentMode !== "1d" && (
               <div className="md:col-span-3">
-                {loadingPreview && (
-                  <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-600 animate-pulse">
-                    📅 Calculando fechas pagables...
+                {daysCount > 31 ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                    ⚠️ El lote permite máximo <strong>31 días</strong>. Si necesitas cubrir más días, divídelo en varios lotes (por ejemplo, 31 días y luego los restantes).
                   </div>
-                )}
-                {previewError && !loadingPreview && (
-                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-600">
-                    ⚠️ {previewError}
+                ) : (!f.plate.trim() || !plateValid || !plateExists) ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    ℹ️ Ingresa primero una <strong>placa válida</strong> arriba para calcular las fechas pagables (Desde / Hasta) y el total del lote.
                   </div>
+                ) : (
+                  <>
+                    {loadingPreview && (
+                      <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-600 animate-pulse">
+                        📅 Calculando fechas pagables...
+                      </div>
+                    )}
+                    {previewError && !loadingPreview && (
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-600">
+                        ⚠️ {previewError}
+                      </div>
+                    )}
+                  </>
                 )}
-                {batchPreview && !loadingPreview && (
+                {batchPreview && !loadingPreview && daysCount >= 2 && daysCount <= 31 && plateValid && plateExists && (
                   <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 space-y-2">
                     <div className="flex items-center gap-2">
                       <span className="text-lg">📅</span>
