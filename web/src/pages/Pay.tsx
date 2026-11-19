@@ -370,7 +370,16 @@ export default function App() {
     const fd = new FormData();
     fd.append("file", file);
     const rs = await fetch(`${API}/uploads`, { method: "POST", body: fd });
-    if (!rs.ok) throw new Error("upload failed");
+    if (!rs.ok) {
+      let msg = "Error subiendo el comprobante. Intenta de nuevo.";
+      try {
+        const errBody = await rs.json();
+        if (errBody?.error) msg = String(errBody.error);
+      } catch {
+        // ignore JSON parse error
+      }
+      throw new Error(msg);
+    }
     const { url, upload_id, ocrData } = await rs.json();
     return { url, upload_id, ocrData: ocrData ?? null };
   }
@@ -1311,18 +1320,18 @@ export default function App() {
 
             {/* Comprobante */}
             <div className="md:col-span-3">
-              <label className="mb-1 block text-sm font-medium">Comprobante (imagen)</label>
+              <label className="mb-1 block text-sm font-medium">Comprobante (imagen o PDF)</label>
               <input
                 ref={fileInputRef}
                 className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-black/60"
                 type="file"
-                accept="image/*"
+                accept="image/*,application/pdf,.pdf"
                 onChange={async (e) => {
                   const selected = e.target.files?.[0] || null;
                   setFile(selected);
 
-                  // Capa 1: detección instantánea por hash SHA-256 (sin red, sin IA)
-                  if (selected && noDriverHashes.length > 0) {
+                  // Capa 1: detección instantánea por hash SHA-256 (sin red, sin IA; solo imágenes)
+                  if (selected && selected.type !== "application/pdf" && noDriverHashes.length > 0) {
                     const hash = await fileSHA256(selected);
                     if (noDriverHashes.includes(hash)) {
                       const hasDriver = f.payer_name && f.payer_name !== "SIN CONDUCTOR ASIGNADO";
@@ -1340,7 +1349,7 @@ export default function App() {
                 <div className="mt-1 text-xs text-gray-600">{file.name}</div>
               ) : (
                 <div className="mt-1 text-xs text-gray-500">
-                  Debes adjuntar una imagen (jpg/png) del comprobante para poder guardar.
+                  Debes adjuntar una imagen (jpg/png) o PDF del comprobante para poder guardar.
                 </div>
               )}
             </div>
