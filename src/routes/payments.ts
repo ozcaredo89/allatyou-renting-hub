@@ -529,13 +529,15 @@ r.get("/batch-preview", async (req: Request, res: Response) => {
   const days_count = parseInt(String(req.query.days_count || ""), 10);
 
   if (!PLATE_RE.test(plate)) {
-    return res.status(400).json({ error: "plate must be ABC123 format" });
+    return res.status(400).json({ error: "La placa debe tener formato ABC123." });
   }
   if (!isISODate(start_date)) {
-    return res.status(400).json({ error: "start_date must be YYYY-MM-DD" });
+    return res.status(400).json({ error: "La fecha de inicio debe tener formato YYYY-MM-DD." });
   }
   if (!Number.isInteger(days_count) || days_count < 1 || days_count > 31) {
-    return res.status(400).json({ error: "days_count must be an integer between 1 and 31" });
+    return res.status(400).json({
+      error: "El lote permite máximo 31 días (ingresa un número entre 1 y 31). Si necesitas cubrir más días, divídelo en varios lotes."
+    });
   }
 
   // Obtener tarifa diaria del vehículo (drivers_vw o vehicles)
@@ -946,16 +948,19 @@ async function handleBatchPayment(req: Request, res: Response): Promise<void> {
 
   // --- Validaciones básicas ---
   if (typeof payer_name !== "string" || !payer_name.trim()) {
-    res.status(400).json({ error: "payer_name required" }); return;
+    res.status(400).json({ error: "El nombre del conductor es obligatorio." }); return;
   }
   if (typeof plate !== "string" || !PLATE_RE.test(plate.toUpperCase())) {
-    res.status(400).json({ error: "plate must be ABC123 format" }); return;
+    res.status(400).json({ error: "La placa debe tener formato ABC123." }); return;
   }
   if (!Number.isInteger(days_count) || days_count < 1 || days_count > 31) {
-    res.status(400).json({ error: "days_count must be an integer between 1 and 31" }); return;
+    res.status(400).json({
+      error: "El lote permite máximo 31 días (ingresa un número entre 1 y 31). Si necesitas cubrir más días, divídelo en varios lotes."
+    });
+    return;
   }
   if (!isISODate(batchStartDate)) {
-    res.status(400).json({ error: "start_date must be YYYY-MM-DD" }); return;
+    res.status(400).json({ error: "La fecha de inicio debe tener formato YYYY-MM-DD." }); return;
   }
 
   // Validar ventana de start_date: [hoy - 180 días, hoy + 7 días]
