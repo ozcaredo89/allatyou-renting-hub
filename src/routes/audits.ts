@@ -59,12 +59,29 @@ r.put("/rules/:id", async (req: Request, res: Response) => {
     }
 });
 
+// Helper compartido para rango de fechas según ?year=YYYY o últimos 12 meses
+function getAuditDateBounds(yearQuery: string | null): { fromDate: string; toDate: string | null } {
+    if (yearQuery && /^\d{4}$/.test(yearQuery)) {
+        return {
+            fromDate: `${yearQuery}-01-01`,
+            toDate: `${yearQuery}-12-31`
+        };
+    }
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    return {
+        fromDate: oneYearAgo.toISOString().split("T")[0]!,
+        toDate: null
+    };
+}
+
 // ==========================================
 // 3. OBTENER DATOS DEL DASHBOARD DE AUDITORÍA
 // ==========================================
 r.get("/dashboard", async (req: Request, res: Response) => {
     try {
         const yearQuery = req.query.year ? String(req.query.year).trim() : null;
+        const { fromDate, toDate } = getAuditDateBounds(yearQuery);
         const PAGE_SIZE = 1000;
 
         // A. Paginación en paralelo de gastos para garantizar 100% de registros en una sola ronda
@@ -72,17 +89,10 @@ r.get("/dashboard", async (req: Request, res: Response) => {
             let baseQ = supabase
                 .from("expenses")
                 .select("item, total_amount, category, date", { count: "exact" })
+                .gte("date", fromDate)
                 .order("id", { ascending: true });
 
-            const oneYearAgo = new Date();
-            oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-            const oneYearAgoStr = oneYearAgo.toISOString().split('T')[0];
-
-            if (yearQuery && /^\d{4}$/.test(yearQuery)) {
-                baseQ = baseQ.gte("date", `${yearQuery}-01-01`).lte("date", `${yearQuery}-12-31`);
-            } else {
-                baseQ = baseQ.gte("date", oneYearAgoStr);
-            }
+            if (toDate) baseQ = baseQ.lte("date", toDate);
 
             const { data: firstPage, count, error } = await baseQ.range(0, PAGE_SIZE - 1);
             if (error) throw error;
@@ -96,14 +106,11 @@ r.get("/dashboard", async (req: Request, res: Response) => {
                     let q = supabase
                         .from("expenses")
                         .select("item, total_amount, category, date")
+                        .gte("date", fromDate)
                         .order("id", { ascending: true })
                         .range(from, from + PAGE_SIZE - 1);
 
-                    if (yearQuery && /^\d{4}$/.test(yearQuery)) {
-                        q = q.gte("date", `${yearQuery}-01-01`).lte("date", `${yearQuery}-12-31`);
-                    } else {
-                        q = q.gte("date", oneYearAgoStr);
-                    }
+                    if (toDate) q = q.lte("date", toDate);
                     remainingPromises.push(q);
                 }
 
@@ -158,16 +165,33 @@ r.get("/dashboard", async (req: Request, res: Response) => {
             .order("created_at", { ascending: false })
             .limit(50);
 
+        // D. Placas registradas en la flota para el filtro del heatmap
+        const fetchVehiclesPromise = supabase
+            .from("vehicles")
+            .select("plate")
+            .order("plate", { ascending: true });
+
         // Disparo concurrente con Promise.all
-        const [expenses, evData, alertsRes] = await Promise.all([
+        const [expenses, evData, alertsRes, vehiclesRes] = await Promise.all([
             fetchExpensesPromise,
             fetchEVPromise,
-            fetchAlertsPromise
+            fetchAlertsPromise,
+            fetchVehiclesPromise
         ]);
 
         if (alertsRes.error) throw alertsRes.error;
+        if (vehiclesRes.error) throw vehiclesRes.error;
         const alerts = alertsRes.data || [];
         const activeAlertsCount = alertsRes.count ?? alerts.length;
+
+        const plateSet = new Set<string>();
+        (vehiclesRes.data || []).forEach((v: any) => {
+            if (v.plate) plateSet.add(String(v.plate).toUpperCase().trim());
+        });
+        (evData || []).forEach((ev: any) => {
+            if (ev.plate) plateSet.add(String(ev.plate).toUpperCase().trim());
+        });
+        const availablePlates = Array.from(plateSet).sort();
 
         // --- A. TOP INSUMOS ---
         const costMap: Record<string, number> = {};
@@ -278,9 +302,136 @@ r.get("/dashboard", async (req: Request, res: Response) => {
             worst_roi_vehicles: worstVehicles,
             active_alerts: alerts || [],
             expenses_history: expensesHistory,
-            daily_expenses: dailyExpenses
+            daily_expenses: dailyExpenses,
+            available_plates: availablePlates
         });
 
+    } catch (err: any) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// ==========================================
+// 3b. HEATMAP DIARIO FILTRADO POR PLACA(S)
+// ==========================================
+r.get("/heatmap", async (req: Request, res: Response) => {
+    try {
+        const yearQuery = req.query.year ? String(req.query.year).trim() : null;
+        const platesRaw = req.query.plates ? String(req.query.plates) : "";
+        const platesList = Array.from(
+            new Set(
+                platesRaw
+                    .split(",")
+                    .map((p) => p.toUpperCase().trim())
+                    .filter((p) => /^[A-Z0-9]{4,10}$/.test(p))
+            )
+        );
+
+        const { fromDate, toDate } = getAuditDateBounds(yearQuery);
+        const PAGE_SIZE = 1000;
+        const dailyExpensesMap: Record<string, { total: number; count: number }> = {};
+
+        if (platesList.length > 0) {
+            let baseQ = supabase
+                .from("expenses")
+                .select("id, date, expense_vehicles!inner(plate, share_amount)", { count: "exact" })
+                .in("expense_vehicles.plate", platesList)
+                .gte("date", fromDate)
+                .order("id", { ascending: true });
+
+            if (toDate) baseQ = baseQ.lte("date", toDate);
+
+            const { data: firstPage, count, error } = await baseQ.range(0, PAGE_SIZE - 1);
+            if (error) throw error;
+
+            const all = [...(firstPage || [])];
+            const totalCount = count ?? all.length;
+
+            if (totalCount > PAGE_SIZE) {
+                const remainingPromises = [];
+                for (let from = PAGE_SIZE; from < totalCount; from += PAGE_SIZE) {
+                    let q = supabase
+                        .from("expenses")
+                        .select("id, date, expense_vehicles!inner(plate, share_amount)")
+                        .in("expense_vehicles.plate", platesList)
+                        .gte("date", fromDate)
+                        .order("id", { ascending: true })
+                        .range(from, from + PAGE_SIZE - 1);
+                    if (toDate) q = q.lte("date", toDate);
+                    remainingPromises.push(q);
+                }
+                const results = await Promise.all(remainingPromises);
+                for (const resPage of results) {
+                    if (resPage.error) throw resPage.error;
+                    if (resPage.data) all.push(...resPage.data);
+                }
+            }
+
+            all.forEach((e: any) => {
+                if (!e.date) return;
+                const dayKey = String(e.date).substring(0, 10);
+                const shareSum = (e.expense_vehicles || []).reduce(
+                    (acc: number, ev: any) => acc + (Number(ev.share_amount) || 0),
+                    0
+                );
+                if (!dailyExpensesMap[dayKey]) {
+                    dailyExpensesMap[dayKey] = { total: 0, count: 0 };
+                }
+                dailyExpensesMap[dayKey].total += shareSum;
+                dailyExpensesMap[dayKey].count += 1;
+            });
+        } else {
+            let baseQ = supabase
+                .from("expenses")
+                .select("id, date, total_amount", { count: "exact" })
+                .gte("date", fromDate)
+                .order("id", { ascending: true });
+
+            if (toDate) baseQ = baseQ.lte("date", toDate);
+
+            const { data: firstPage, count, error } = await baseQ.range(0, PAGE_SIZE - 1);
+            if (error) throw error;
+
+            const all = [...(firstPage || [])];
+            const totalCount = count ?? all.length;
+
+            if (totalCount > PAGE_SIZE) {
+                const remainingPromises = [];
+                for (let from = PAGE_SIZE; from < totalCount; from += PAGE_SIZE) {
+                    let q = supabase
+                        .from("expenses")
+                        .select("id, date, total_amount")
+                        .gte("date", fromDate)
+                        .order("id", { ascending: true })
+                        .range(from, from + PAGE_SIZE - 1);
+                    if (toDate) q = q.lte("date", toDate);
+                    remainingPromises.push(q);
+                }
+                const results = await Promise.all(remainingPromises);
+                for (const resPage of results) {
+                    if (resPage.error) throw resPage.error;
+                    if (resPage.data) all.push(...resPage.data);
+                }
+            }
+
+            all.forEach((e: any) => {
+                if (!e.date) return;
+                const dayKey = String(e.date).substring(0, 10);
+                if (!dailyExpensesMap[dayKey]) {
+                    dailyExpensesMap[dayKey] = { total: 0, count: 0 };
+                }
+                dailyExpensesMap[dayKey].total += Number(e.total_amount) || 0;
+                dailyExpensesMap[dayKey].count += 1;
+            });
+        }
+
+        const dailyExpenses = Object.entries(dailyExpensesMap).map(([date, val]) => ({
+            date,
+            total: val.total,
+            count: val.count
+        }));
+
+        return res.json({ daily_expenses: dailyExpenses });
     } catch (err: any) {
         return res.status(500).json({ error: err.message });
     }

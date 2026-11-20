@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { Calendar, DollarSign, TrendingUp, Flame, X, ExternalLink, FileText } from "lucide-react";
+import { Calendar, DollarSign, TrendingUp, Flame, X, ExternalLink, FileText, Car, ChevronDown, Check, Search } from "lucide-react";
 import { requestWithBasicAuth } from "../lib/auth";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
@@ -27,6 +27,9 @@ interface ExpenseHeatmapProps {
   selectedYear: string;
   onSelectYear: (year: string) => void;
   availableYears?: string[];
+  availablePlates?: string[];
+  selectedPlates?: string[];
+  onSelectPlates?: (plates: string[]) => void;
   isLoading?: boolean;
 }
 
@@ -57,8 +60,41 @@ export default function ExpenseHeatmap({
   selectedYear,
   onSelectYear,
   availableYears,
+  availablePlates = [],
+  selectedPlates = [],
+  onSelectPlates,
   isLoading = false
 }: ExpenseHeatmapProps) {
+  // Estado del selector multi-placa
+  const [plateMenuOpen, setPlateMenuOpen] = useState(false);
+  const [plateSearch, setPlateSearch] = useState("");
+  const plateMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!plateMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (plateMenuRef.current && !plateMenuRef.current.contains(e.target as Node)) {
+        setPlateMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [plateMenuOpen]);
+
+  const filteredPlateOptions = useMemo(() => {
+    const q = plateSearch.trim().toUpperCase();
+    if (!q) return availablePlates;
+    return availablePlates.filter((p) => p.includes(q));
+  }, [availablePlates, plateSearch]);
+
+  const togglePlate = (plate: string) => {
+    if (!onSelectPlates) return;
+    if (selectedPlates.includes(plate)) {
+      onSelectPlates(selectedPlates.filter((p) => p !== plate));
+    } else {
+      onSelectPlates([...selectedPlates, plate]);
+    }
+  };
   // Generación dinámica de años disponibles a partir del año en curso
   const effectiveAvailableYears = useMemo(() => {
     if (availableYears && availableYears.length > 0) return availableYears;
@@ -260,7 +296,15 @@ export default function ExpenseHeatmap({
     setModalDayTotal(total);
     setLoadingModal(true);
     try {
-      const res = await requestWithBasicAuth(`${API}/expenses?from=${dateStr}&to=${dateStr}&limit=50`);
+      const params = new URLSearchParams({
+        from: dateStr,
+        to: dateStr,
+        limit: "50"
+      });
+      if (selectedPlates.length > 0) {
+        params.set("plates", selectedPlates.join(","));
+      }
+      const res = await requestWithBasicAuth(`${API}/expenses?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
         // El endpoint /expenses responde con { items, total, limit, offset }
@@ -319,14 +363,124 @@ export default function ExpenseHeatmap({
                 )}
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Cuadros más oscuros indican mayor concentración de gasto en ese día ({periodLabel}). Haz clic en un día para ver sus recibos.
+                Cuadros más oscuros indican mayor concentración de gasto en ese día ({periodLabel}
+                {selectedPlates.length > 0 ? ` · ${selectedPlates.join(", ")}` : ""}). Haz clic en un día para ver sus recibos.
               </p>
             </div>
           </div>
         </div>
 
-        {/* SELECTOR DE AÑO / ÚLTIMOS 12 MESES */}
-        <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl self-start sm:self-auto border border-slate-200/60 dark:border-slate-700">
+        {/* CONTROLES: FILTRO POR CARRO(S) Y SELECTOR DE AÑO */}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {onSelectPlates && availablePlates.length > 0 && (
+            <div className="relative" ref={plateMenuRef}>
+              <button
+                type="button"
+                onClick={() => setPlateMenuOpen((v) => !v)}
+                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl border transition-all ${
+                  selectedPlates.length > 0
+                    ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700"
+                    : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200/60 dark:border-slate-700 hover:bg-slate-200/70"
+                }`}
+              >
+                <Car className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  {selectedPlates.length === 0
+                    ? "Todos los carros"
+                    : selectedPlates.length === 1
+                    ? selectedPlates[0]
+                    : `${selectedPlates.length} carros`}
+                </span>
+                {selectedPlates.length > 0 ? (
+                  <span
+                    role="button"
+                    aria-label="Limpiar filtro de carros"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectPlates([]);
+                    }}
+                    className="ml-0.5 p-0.5 rounded-full hover:bg-emerald-200/70 dark:hover:bg-emerald-800"
+                  >
+                    <X className="w-3 h-3" />
+                  </span>
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+                )}
+              </button>
+
+              {plateMenuOpen && (
+                <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                  <div className="p-2.5 border-b border-slate-100 dark:border-slate-800">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={plateSearch}
+                        onChange={(e) => setPlateSearch(e.target.value)}
+                        placeholder="Buscar placa..."
+                        autoFocus
+                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 uppercase font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="max-h-56 overflow-y-auto p-1.5 space-y-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectPlates([]);
+                        setPlateMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors ${
+                        selectedPlates.length === 0
+                          ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-bold"
+                          : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                      }`}
+                    >
+                      <span>Todos los carros (Flota)</span>
+                      {selectedPlates.length === 0 && <Check className="w-3.5 h-3.5" />}
+                    </button>
+
+                    <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+                    {filteredPlateOptions.length === 0 ? (
+                      <p className="text-center text-[11px] text-slate-400 py-3">Sin placas coincidentes</p>
+                    ) : (
+                      filteredPlateOptions.map((plate) => {
+                        const checked = selectedPlates.includes(plate);
+                        return (
+                          <button
+                            key={plate}
+                            type="button"
+                            onClick={() => togglePlate(plate)}
+                            className={`w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors font-mono ${
+                              checked
+                                ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-bold"
+                                : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                            }`}
+                          >
+                            <span>{plate}</span>
+                            <span
+                              className={`w-4 h-4 rounded flex items-center justify-center border ${
+                                checked
+                                  ? "bg-emerald-600 border-emerald-600 text-white"
+                                  : "border-slate-300 dark:border-slate-600"
+                              }`}
+                            >
+                              {checked && <Check className="w-3 h-3" />}
+                            </span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SELECTOR DE AÑO / ÚLTIMOS 12 MESES */}
+          <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200/60 dark:border-slate-700">
           <button
             onClick={() => onSelectYear("last12")}
             className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
@@ -352,8 +506,39 @@ export default function ExpenseHeatmap({
                 {yr}
               </button>
             ))}
+          </div>
         </div>
       </div>
+
+      {/* CHIPS DE PLACAS ACTIVAS */}
+      {selectedPlates.length > 0 && onSelectPlates && (
+        <div className="flex flex-wrap items-center gap-1.5 -mt-3 mb-5">
+          <span className="text-[11px] font-semibold text-slate-400 mr-1">Filtrando por:</span>
+          {selectedPlates.map((plate) => (
+            <span
+              key={plate}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-[11px] font-mono font-bold"
+            >
+              {plate}
+              <button
+                type="button"
+                onClick={() => togglePlate(plate)}
+                className="hover:text-emerald-900 dark:hover:text-white"
+                aria-label={`Quitar ${plate}`}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            onClick={() => onSelectPlates([])}
+            className="text-[11px] font-semibold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 ml-1 underline"
+          >
+            Ver todos
+          </button>
+        </div>
+      )}
 
       {/* METRICAS RÁPIDAS DEL PERÍODO */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -621,9 +806,25 @@ export default function ExpenseHeatmap({
                     </div>
 
                     <div className="sm:text-right shrink-0 flex sm:flex-col items-center sm:items-end justify-between gap-2 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-200 dark:border-slate-700">
-                      <p className="text-base font-black text-slate-800 dark:text-white">
-                        {formatCOP(exp.total_amount)}
-                      </p>
+                      {(() => {
+                        const filteredShare =
+                          selectedPlates.length > 0 && exp.expense_vehicles && exp.expense_vehicles.length > 0
+                            ? exp.expense_vehicles.reduce((acc, v) => acc + (Number(v.share_amount) || 0), 0)
+                            : exp.total_amount;
+                        const isProrated = selectedPlates.length > 0 && Math.abs(filteredShare - exp.total_amount) > 1;
+                        return (
+                          <div>
+                            <p className="text-base font-black text-slate-800 dark:text-white">
+                              {formatCOP(filteredShare)}
+                            </p>
+                            {isProrated && (
+                              <p className="text-[10px] text-slate-400">
+                                Total factura: {formatCOP(exp.total_amount)}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* Adjunto si existe */}
                       {exp.attachment_url || (exp.expense_attachments && exp.expense_attachments.length > 0) ? (
