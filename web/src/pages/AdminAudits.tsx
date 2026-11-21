@@ -36,6 +36,7 @@ type AuditsDashboard = {
     active_alerts: AuditAlert[];
     expenses_history: { month: string; total: number }[];
     daily_expenses?: DailyExpense[];
+    available_plates?: string[];
 };
 
 function formatCurrencyStr(val: number) {
@@ -242,6 +243,9 @@ export default function AdminAudits() {
     const [isChangingYear, setIsChangingYear] = useState(false);
     const [isRulesModalOpen, setRulesModalOpen] = useState(false);
     const [selectedYear, setSelectedYear] = useState<string>("last12");
+    const [selectedPlates, setSelectedPlates] = useState<string[]>([]);
+    const [filteredDailyExpenses, setFilteredDailyExpenses] = useState<DailyExpense[] | null>(null);
+    const [isLoadingHeatmap, setIsLoadingHeatmap] = useState(false);
     const [showAlerts, setShowAlerts] = useState<boolean>(() => {
         try {
             const s = localStorage.getItem("audits_show_alerts");
@@ -251,13 +255,46 @@ export default function AdminAudits() {
         }
     });
 
-    // Evitar race conditions cuando el usuario cambia rápidamente de año
+    // Evitar race conditions cuando el usuario cambia rápidamente de año o placas
     const activeRequestId = useRef(0);
+    const activeHeatmapRequestId = useRef(0);
 
     useEffect(() => {
         ensureBasicAuth();
         fetchDashboard(selectedYear);
     }, [selectedYear]);
+
+    useEffect(() => {
+        if (selectedPlates.length === 0) {
+            activeHeatmapRequestId.current++;
+            setFilteredDailyExpenses(null);
+            setIsLoadingHeatmap(false);
+            return;
+        }
+        const reqId = ++activeHeatmapRequestId.current;
+        setIsLoadingHeatmap(true);
+        const params = new URLSearchParams({
+            year: selectedYear,
+            plates: selectedPlates.join(",")
+        });
+        requestWithBasicAuth(`${API}/audits/heatmap?${params.toString()}`)
+            .then(async (res) => {
+                if (!res.ok) throw new Error("Error cargando heatmap filtrado");
+                return res.json();
+            })
+            .then((data) => {
+                if (reqId !== activeHeatmapRequestId.current) return;
+                setFilteredDailyExpenses(data.daily_expenses || []);
+            })
+            .catch((err) => {
+                console.error(err);
+            })
+            .finally(() => {
+                if (reqId === activeHeatmapRequestId.current) {
+                    setIsLoadingHeatmap(false);
+                }
+            });
+    }, [selectedPlates, selectedYear]);
 
     const fetchDashboard = async (year = selectedYear) => {
         const reqId = ++activeRequestId.current;
@@ -384,10 +421,17 @@ export default function AdminAudits() {
 
             {/* MATRIZ DE GASTOS DIARIOS (GITHUB HEATMAP) */}
             <ExpenseHeatmap
-                dailyExpenses={dashboard.daily_expenses || []}
+                dailyExpenses={
+                    selectedPlates.length > 0 && filteredDailyExpenses !== null
+                        ? filteredDailyExpenses
+                        : (dashboard.daily_expenses || [])
+                }
                 selectedYear={selectedYear}
                 onSelectYear={(yr) => setSelectedYear(yr)}
-                isLoading={isChangingYear}
+                availablePlates={dashboard.available_plates || []}
+                selectedPlates={selectedPlates}
+                onSelectPlates={setSelectedPlates}
+                isLoading={isChangingYear || isLoadingHeatmap}
             />
 
             {/* SECCIÓN 1: KPI GLOBAL Y ALERTAS */}

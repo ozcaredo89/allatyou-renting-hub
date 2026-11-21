@@ -446,13 +446,23 @@ r.get("/", async (req: Request, res: Response) => {
   const from = String(req.query.from || "");
   const to = String(req.query.to || "");
   const plate = String(req.query.plate || "").toUpperCase().trim();
+  const platesRaw = String(req.query.plates || "");
+  const platesList = Array.from(
+    new Set(
+      platesRaw
+        .split(",")
+        .map((p) => p.toUpperCase().trim())
+        .filter((p) => /^[A-Z0-9]{4,10}$/.test(p))
+    )
+  );
   const search = String(req.query.search || req.query.q || "").trim();
 
   // NUEVO: Agregamos "category" al select
+  const useInnerVehicleJoin = Boolean(plate || platesList.length > 0);
   const selectStr = `
     id, date, item, category, description, total_amount, attachment_url, created_at, updated_at,
     expense_attachments(kind, url),
-    ${plate
+    ${useInnerVehicleJoin
       ? "expense_vehicles!inner(plate, share_amount)"
       : "expense_vehicles(plate, share_amount)"
     }
@@ -468,7 +478,9 @@ r.get("/", async (req: Request, res: Response) => {
   if (from) q = q.gte("date", from);
   if (to) q = q.lte("date", to);
 
-  if (plate) {
+  if (platesList.length > 0) {
+    q = q.in("expense_vehicles.plate", platesList);
+  } else if (plate) {
     const safePlate = sanitizePostgrestIlike(plate);
     q = q.ilike("expense_vehicles.plate", `%${safePlate}%`);
   }
