@@ -572,11 +572,15 @@ export default function AdminVehicles() {
       const prevText = data.previous_mileage_km
         ? `\n🛣️ *Último km registrado:* ${Number(data.previous_mileage_km).toLocaleString("es-CO")} km`
         : "";
-      const text = `👋 Hola${data.driver_name ? ` ${data.driver_name.split(" ")[0]}` : ""}, necesitamos el reporte de *kilometraje y gasolina* del vehículo *${data.plate}*.${prevText}\n\n📸 Entra al link, digita el kilometraje, elige el nivel de gasolina y sube una foto del tablero:\n👉 ${link}`;
+      // Primer nombre en formato "Jorge" (los nombres vienen en mayúsculas)
+      const rawFirst = String(data.driver_name || "").trim().split(/\s+/)[0] || "";
+      const firstName = rawFirst ? rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1).toLowerCase() : "";
+      const text = `👋 Hola${firstName ? ` ${firstName}` : ""}, necesitamos el reporte de *kilometraje y gasolina* del vehículo *${data.plate}*.${prevText}\n\n📸 Entra al link, digita el kilometraje, elige el nivel de gasolina y sube una foto del tablero:\n👉 ${link}`;
       const phone = String(data.driver_phone || "").replace(/\D/g, "");
+      // api.whatsapp.com directo: wa.me redirige y daña los emojis de 4 bytes (salen como �)
       const waUrl = phone
-        ? `https://wa.me/57${phone.startsWith("57") ? phone.slice(2) : phone}?text=${encodeURIComponent(text)}`
-        : `https://wa.me/?text=${encodeURIComponent(text)}`;
+        ? `https://api.whatsapp.com/send?phone=57${phone.startsWith("57") ? phone.slice(2) : phone}&text=${encodeURIComponent(text)}`
+        : `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
       if (win) win.location.href = waUrl; else window.open(waUrl, "_blank");
       await loadVehicleMileage(viewingHistory.plate);
     } catch (err: any) {

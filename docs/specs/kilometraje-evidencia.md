@@ -6,8 +6,8 @@ Pedirle al conductor, mediante un link enviado por WhatsApp, el kilometraje actu
 ## Flujo
 1. En `/vehicles` → ícono de Kilometraje → pestaña **Odómetro Manual**, el admin pulsa **"Pedir km y gasolina al conductor (WhatsApp)"**.
 2. El backend (`POST /mileage-evidence/:plate`, con `basicAuth`) crea una fila en `mileage_evidence_requests` con un token aleatorio y guarda el conductor actual (`vehicles.current_driver_id`) y el odómetro de referencia.
-3. El frontend abre `wa.me` al teléfono del conductor (o WhatsApp sin destinatario si no tiene teléfono) con el link `/km/:token`.
-4. El conductor abre el link (público, sin login), digita el km, elige el nivel de gasolina y sube **1 foto del tablero** donde se vean el km y la aguja de gasolina.
+3. El frontend abre WhatsApp (`api.whatsapp.com/send`, no `wa.me`: su redirección daña los emojis) al teléfono del conductor (o sin destinatario si no tiene teléfono) con el link `/km/:token`. El saludo usa el primer nombre en formato "Jorge".
+4. El conductor abre el link (público, sin login), digita el km, elige el nivel de gasolina y toma **1 foto del tablero** con la cámara trasera del celular donde se vean el km y la aguja de gasolina. Ve la foto antes de enviar y puede **retomarla** ("Tomar otra foto") las veces que quiera; solo se sube la última.
 5. Al enviar (`POST /public/mileage-evidence/:token`, multipart) se sube la foto a R2 (`mileage-evidence/`), se inserta la lectura en `vehicle_mileage_logs` con `source = 'manual'` (lectura absoluta) y la solicitud queda `completed`.
 6. En el historial manual, las lecturas que vienen del conductor se muestran con la etiqueta **Conductor**, el nivel de gasolina y la miniatura de la foto. Las solicitudes pendientes se ven arriba con opción de copiar el link.
 
