@@ -35,6 +35,7 @@ import chatRoutes from "./routes/chat";
 
 // --- MÓDULO INSPECCIONES ---
 import inspectionsRoutes, { publicInspectionsRoutes } from "./routes/inspections";
+import mileageEvidenceRoutes, { publicMileageEvidenceRoutes } from "./routes/mileageEvidence";
 
 // --- MÓDULO MARKETPLACE (TURO CRIOLLO) ---
 import marketplaceRoutes from "./routes/marketplace";
@@ -138,6 +139,7 @@ import vehicleApplicationsRoutes from "./routes/vehicleApplications";
 app.use("/driver-applications", driverApplicationsRoutes);
 app.use("/vehicle-applications", vehicleApplicationsRoutes);
 app.use("/public/inspections", publicInspectionsRoutes);
+app.use("/public/mileage-evidence", publicMileageEvidenceRoutes);
 
 /** Rutas protegidas con Basic Auth (monta el middleware en la misma línea) */
 app.use("/companies", basicAuth, companiesRoutes);
@@ -148,6 +150,7 @@ app.use("/ledger", basicAuth, ledgerRoutes);
 app.use("/advances", basicAuth, advancesRoutes);
 app.use("/leasing", basicAuth, leasingRoutes);
 app.use("/vehicles", basicAuth, vehiclesRoutes);
+app.use("/mileage-evidence", basicAuth, mileageEvidenceRoutes);
 app.use("/collections", basicAuth, collectionsRoutes);
 app.use("/app-users", basicAuth, appUsersRoutes);
 app.use("/deposits", basicAuth, depositsRoutes);

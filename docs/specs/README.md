@@ -23,6 +23,7 @@ Fuente de verdad de las **reglas de negocio** de cada módulo. Las leen tanto pe
 | Usuarios y autenticación | [usuarios-auth.md](usuarios-auth.md) | `lib/adminAuth.ts`, `middleware/basicAuth.ts`, `routes/auth.ts`, `web/src/lib/auth.ts`, `Login.tsx` |
 | Variables de entorno | [variables-entorno.md](variables-entorno.md) | `lib/env.ts`, `web/src/vite-env-required.ts`, cualquier `process.env` / `import.meta.env` nuevo |
 | Flujo Git & Tickets | [flujo-git-tickets.md](flujo-git-tickets.md) | Política obligatoria: GitHub Issue -> Rama con #ID -> Commits con #ID |
+| Evidencia km y gasolina (WhatsApp) | [kilometraje-evidencia.md](kilometraje-evidencia.md) | `routes/mileageEvidence.ts`, `MileageEvidence.tsx`, `AdminVehicles.tsx` (modal Kilometraje) |
 | UX: Modales y Diálogos | [ux-modales-confirmaciones.md](ux-modales-confirmaciones.md) | Estándar de modales, confirmaciones y prohibición de `alert()` / `confirm()` |
 
 > Los specs de conductores, cobranza, inspecciones, marketplace, landing y arquitectura son de feb-2026 y están orientados a lo técnico; revisarlos contra el código antes de confiar en ellos.
