@@ -30,6 +30,7 @@ import RemindersLog from "./pages/RemindersLog";
 import NewInspection from "./pages/NewInspection";
 import AdminInspections from "./pages/AdminInspections";
 import PublicInspectionView from "./pages/PublicInspectionView";
+import MileageEvidence from "./pages/MileageEvidence";
 
 // Auditorías & Oráculo
 import AdminTrips from "./pages/AdminTrips";
@@ -91,6 +92,8 @@ export default function App() {
 
             {/* --- Ingreso (sin layout) --- */}
             <Route path="/login" element={<Login />} />
+            {/* Evidencia de km/gasolina del conductor (link de WhatsApp, Issue #75) */}
+            <Route path="/km/:token" element={<MileageEvidence />} />
             <Route path="/reset-password" element={<ResetPassword />} />
 
             {/* --- B. Rutas Administrativas (CON Sidebar) --- */}
@@ -144,6 +147,7 @@ export default function App() {
             <Route path="/inspection/:id" element={<PublicInspectionView />} />
               <Route path="/inspection/continue/:token" element={<NewInspection />} />
             <Route path="/inspections/view/:id" element={<PublicInspectionView />} />
+            <Route path="/km/:token" element={<MileageEvidence />} />
             {/* Cualquier otra cosa en la landing va al home */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

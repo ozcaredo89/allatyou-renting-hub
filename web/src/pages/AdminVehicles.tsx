@@ -384,6 +384,10 @@ export default function AdminVehicles() {
   // Estado para Reporte Manual Odómetro
   const [newMileage, setNewMileage] = useState<{ mileage_km: string; date: string }>({ mileage_km: "", date: new Date().toISOString().slice(0, 10) });
   const [savingMileage, setSavingMileage] = useState(false);
+  // Evidencia de km/gasolina pedida al conductor por link de WhatsApp (Issue #75)
+  const [evidenceRequests, setEvidenceRequests] = useState<any[]>([]);
+  const [requestingEvidence, setRequestingEvidence] = useState(false);
+  const [evidenceMsg, setEvidenceMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
   const [mileageTab, setMileageTab] = useState<'manual' | 'auto'>('manual'); // NUEVO ESTADO DE TABS
   const [autoFilterTab, setAutoFilterTab] = useState<'7d' | '30d' | 'custom' | 'all'>('7d');
   const [customRange, setCustomRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
@@ -515,6 +519,8 @@ export default function AdminVehicles() {
   }
 
   function openHistory(plate: string, category: 'Mantenimiento' | 'Cambio de aceite' | 'Kilometraje' | 'Hotspots') {
+    setEvidenceMsg(null);
+    setEvidenceRequests([]);
     setVehicleExpenses([]);
     setVehicleMileage([]);
     setViewingHistory({ plate, category });
@@ -530,15 +536,54 @@ export default function AdminVehicles() {
     try {
       const auth = ensureBasicAuth();
       const headers = { Authorization: auth };
-      const res = await fetch(`${API}/vehicles/${plate}/mileage`, { headers });
+      const [res, evRes] = await Promise.all([
+        fetch(`${API}/vehicles/${plate}/mileage`, { headers }),
+        fetch(`${API}/mileage-evidence/${plate}`, { headers }),
+      ]);
       if (res.ok) {
         const data = await res.json();
         setVehicleMileage(data || []);
       }
+      setEvidenceRequests(evRes.ok ? (await evRes.json()) || [] : []);
     } catch (e) {
       console.error("Error loading mileage", e);
     } finally {
       setLoadingExpenses(false);
+    }
+  }
+
+  // Genera un link único y abre WhatsApp al conductor para que reporte km + gasolina + foto
+  async function handleRequestEvidence() {
+    if (!viewingHistory) return;
+    // Abrir la ventana antes del await para que el navegador no la bloquee como popup
+    const win = window.open("", "_blank");
+    setEvidenceMsg(null);
+    setRequestingEvidence(true);
+    try {
+      const auth = ensureBasicAuth();
+      const res = await fetch(`${API}/mileage-evidence/${viewingHistory.plate}`, {
+        method: "POST",
+        headers: { Authorization: auth },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "No se pudo generar el link");
+
+      const link = `${window.location.origin}/km/${data.token}`;
+      const prevText = data.previous_mileage_km
+        ? `\n🛣️ *Último km registrado:* ${Number(data.previous_mileage_km).toLocaleString("es-CO")} km`
+        : "";
+      const text = `👋 Hola${data.driver_name ? ` ${data.driver_name.split(" ")[0]}` : ""}, necesitamos el reporte de *kilometraje y gasolina* del vehículo *${data.plate}*.${prevText}\n\n📸 Entra al link, digita el kilometraje, elige el nivel de gasolina y sube una foto del tablero:\n👉 ${link}`;
+      const phone = String(data.driver_phone || "").replace(/\D/g, "");
+      const waUrl = phone
+        ? `https://wa.me/57${phone.startsWith("57") ? phone.slice(2) : phone}?text=${encodeURIComponent(text)}`
+        : `https://wa.me/?text=${encodeURIComponent(text)}`;
+      if (win) win.location.href = waUrl; else window.open(waUrl, "_blank");
+      await loadVehicleMileage(viewingHistory.plate);
+    } catch (err: any) {
+      win?.close();
+      setEvidenceMsg({ type: "error", text: err.message || "No se pudo generar el link" });
+    } finally {
+      setRequestingEvidence(false);
     }
   }
 
@@ -1751,6 +1796,23 @@ export default function AdminVehicles() {
                   </div>
 
                   {mileageTab === 'manual' && (
+                    <button
+                      type="button"
+                      onClick={handleRequestEvidence}
+                      disabled={requestingEvidence}
+                      className="w-full mb-3 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white font-bold text-xs py-2.5 rounded-lg shadow-sm"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      {requestingEvidence ? "Generando link..." : "Pedir km y gasolina al conductor (WhatsApp)"}
+                    </button>
+                  )}
+                  {mileageTab === 'manual' && evidenceMsg && (
+                    <div className={`mb-3 px-3 py-2 rounded-lg border text-xs font-medium ${evidenceMsg.type === 'error' ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+                      {evidenceMsg.text}
+                    </div>
+                  )}
+
+                  {mileageTab === 'manual' && (
                     <form onSubmit={handleAddMileage} className="flex gap-2 items-end">
                       <div className="flex-1">
                         <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Kilometraje Absoluto</label>
@@ -1804,6 +1866,28 @@ export default function AdminVehicles() {
                 ) : viewingHistory.category === 'Kilometraje' ? (
                   // UI KILOMETRAJE DIVIDIDO EN TABS
                   <div className="space-y-3">
+                    {mileageTab === 'manual' && evidenceRequests
+                      .filter((er: any) => er.status === 'pending')
+                      .map((er: any) => {
+                        const expired = new Date(er.expires_at).getTime() < Date.now();
+                        return (
+                          <div key={er.id} className={`flex items-center justify-between p-3 rounded-xl border text-xs ${expired ? 'bg-slate-50 border-slate-200 text-slate-400' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                            <span>
+                              <b>{expired ? 'Link vencido' : 'Esperando al conductor'}</b>
+                              {er.driver_name ? ` · ${er.driver_name}` : ''} · enviado {new Date(er.created_at).toLocaleDateString()}
+                            </span>
+                            {!expired && (
+                              <button
+                                type="button"
+                                className="font-bold underline"
+                                onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/km/${er.token}`); setEvidenceMsg({ type: "ok", text: "Link copiado al portapapeles" }); }}
+                              >
+                                Copiar link
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
                     {mileageTab === 'manual' ? (
                       vehicleMileage.filter((log: any) => log.source === 'manual').length === 0 ? (
                         <div className="text-center py-10">
@@ -1812,20 +1896,41 @@ export default function AdminVehicles() {
                       ) : (
                         vehicleMileage
                           .filter((log: any) => log.source === 'manual')
-                          .map((log: any) => (
+                          .map((log: any) => {
+                            const ev = evidenceRequests.find((er: any) => er.mileage_log_id === log.id);
+                            return (
                             <div key={log.id} className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200 shadow-sm hover:border-slate-300 transition-colors">
                               <div>
                                 <div className="flex items-center gap-2 mb-1">
-                                  <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase">Manual</span>
+                                  {ev ? (
+                                    <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase">Conductor</span>
+                                  ) : (
+                                    <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase">Manual</span>
+                                  )}
                                   <span className="text-xs text-slate-500 font-medium">{new Date(log.recorded_at).toLocaleDateString()}</span>
+                                  {ev?.fuel_level && (
+                                    <span className="bg-amber-50 text-amber-700 px-2 py-0.5 rounded text-[10px] font-bold">⛽ {ev.fuel_level === 'empty' ? 'Vacío' : ev.fuel_level === 'full' ? 'Lleno' : ev.fuel_level}</span>
+                                  )}
                                 </div>
                                 <p className="font-black text-slate-800 text-xl">
                                   {new Intl.NumberFormat("es-CO").format(Number(log.mileage_km))}
                                   <span className="text-xs text-slate-400 font-bold ml-1">km</span>
                                 </p>
+                                {ev?.driver_name && <p className="text-[11px] text-slate-400">{ev.driver_name}</p>}
                               </div>
+                              {ev?.photo_url && (
+                                <button
+                                  type="button"
+                                  onClick={() => openDocument(ev.photo_url, `Tablero ${log.plate} · ${new Date(log.recorded_at).toLocaleDateString()}`)}
+                                  className="shrink-0"
+                                  title="Ver foto del tablero"
+                                >
+                                  <img src={ev.photo_url} alt="Evidencia" className="w-14 h-14 object-cover rounded-lg border border-slate-200" />
+                                </button>
+                              )}
                             </div>
-                          ))
+                            );
+                          })
                       )
                     ) : (
                       autoMileageData.list.length === 0 ? (
