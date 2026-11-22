@@ -22,16 +22,77 @@ function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): 
     return R * c;
 }
 
+// Colombia no tiene horario de verano: el día local empieza siempre a las 05:00 UTC
+const BOGOTA_OFFSET_MS = 5 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Velocidad implícita por encima de la cual un tramo se considera salto del GPS (Issue #79)
+const MAX_PLAUSIBLE_KMH = 160;
+const PAGE_SIZE = 1000;
+
+type Ping = { imei: string; lat: number; lng: number; speed: number; accstatus: number; report_time: string };
+
+/** Inicio (UTC) del día de Bogotá que contiene `at`. */
+function bogotaDayStart(at: number): number {
+    const local = at - BOGOTA_OFFSET_MS;
+    return local - (local % DAY_MS) + BOGOTA_OFFSET_MS;
+}
+
+/** Pings de los IMEIs de la flota en [from, to), paginados (límite de 1000 filas). */
+async function fetchPings(imeis: string[], from: string, to: string): Promise<Ping[]> {
+    const out: Ping[] = [];
+    for (let page = 0; ; page++) {
+        const { data, error } = await supabase
+            .from('raw_telemetry')
+            .select('imei, lat, lng, speed, accstatus, report_time')
+            .in('imei', imeis)
+            .gte('report_time', from)
+            .lt('report_time', to)
+            .order('report_time', { ascending: true })
+            .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+        if (error) throw error;
+        out.push(...((data || []) as Ping[]));
+        if (!data || data.length < PAGE_SIZE) break;
+    }
+    return out;
+}
+
 /**
- * Motor Sintético de Kilometraje
- * Calcula el kilometraje sumando la distancia entre los puntos GPS de la tabla `raw_telemetry`.
- * Requiere que el vehículo tenga al menos 1 reporte manual previo (baseline) para sumar sobre él.
+ * Distancia de un tramo entre dos pings consecutivos, o 0 si el tramo es ruido:
+ *  - motor apagado y velocidad 0 en ambos pings → carro estacionado (jitter del GPS).
+ *    Se exigen las dos señales por si algún equipo no reporta bien el ACC.
+ *  - velocidad implícita imposible → salto del GPS
+ * Un hueco largo entre pings (p. ej. caída de la ingesta) SÍ cuenta si la velocidad
+ * implícita es plausible: antes se descartaba todo tramo > 10 km.
  */
-export async function syncProtrackMileage() {
-    console.log("[MILEAGE-DAEMON] ⚙️ Iniciando Cálculo Sintético de Kilometraje...");
+function segmentKm(prev: Ping, curr: Ping): number {
+    const parked = (p: Ping) => Number(p.accstatus) === 0 && Number(p.speed) === 0;
+    if (parked(prev) && parked(curr)) return 0;
+    const dist = getDistanceKm(prev.lat, prev.lng, curr.lat, curr.lng);
+    const hours = (new Date(curr.report_time).getTime() - new Date(prev.report_time).getTime()) / 3600000;
+    if (hours <= 0) return 0;
+    if (dist / hours > MAX_PLAUSIBLE_KMH) return 0;
+    return dist;
+}
+
+/**
+ * Motor Sintético de Kilometraje (Issue #79)
+ * Calcula el RECORRIDO DIARIO de cada vehículo con GPS sumando la distancia entre los
+ * pings de `raw_telemetry` del día calendario COMPLETO en hora de Colombia.
+ *
+ * Es idempotente: en cada pasada recalcula los últimos `daysBack` días + hoy (por
+ * defecto ayer y hoy) y reemplaza las filas `protrack_api` de esos días. Así un reinicio
+ * del servidor (deploy) no pisa el día con una ventana parcial, y el final del día
+ * se completa en la pasada del día siguiente.
+ *
+ * Fila por día: recorded_at = inicio del día de Bogotá (05:00 UTC). Si ese día hay una
+ * lectura manual del odómetro, el día se parte en dos filas: lo recorrido antes de la
+ * lectura (al inicio del día) y lo recorrido después (lectura + 1 s), para que el
+ * odómetro (`lib/odometer.ts`: última manual + GPS posterior) sume solo lo de después.
+ */
+export async function syncProtrackMileage(daysBack = 1) {
+    console.log(`[MILEAGE-DAEMON] ⚙️ Recalculando recorrido diario GPS (últimos ${daysBack} día(s) + hoy)...`);
 
     try {
-        // 1. Obtener vehículos con IMEI configurado
         const { data: vehicles } = await supabase
             .from('vehicles')
             .select('plate, gps_imei')
@@ -42,99 +103,101 @@ export async function syncProtrackMileage() {
             return;
         }
 
-        // 2. Definir ventana de tiempo a analizar (Ejemplo: últimas 24 horas)
-        const now = new Date();
-        // Restamos 12 o 24 horas dependiendo del cron, asumimos que este ciclo corre de forma segura cubriendo baches
-        const windowStart = new Date(now.getTime() - (12 * 60 * 60 * 1000)).toISOString();
+        const imeis = Array.from(new Set(vehicles.map(v => String(v.gps_imei))));
+        const plates = vehicles.map(v => v.plate);
+        const todayStart = bogotaDayStart(Date.now());
+        let rowsWritten = 0;
 
-        // Obtener los puntos de telemetría recientes (Paginado para evitar límite de 1000 de Supabase)
-        const rawTelemetry: any[] = [];
-        let hasMore = true;
-        let page = 0;
-        const PAGE_SIZE = 1000;
+        for (let d = daysBack; d >= 0; d--) {
+            const dayStart = todayStart - d * DAY_MS;
+            const dayEnd = dayStart + DAY_MS;
+            const fromIso = new Date(dayStart).toISOString();
+            const toIso = new Date(dayEnd).toISOString();
 
-        while (hasMore) {
-            const { data, error } = await supabase
-                .from('raw_telemetry')
-                .select('imei, lat, lng, report_time')
-                .gte('report_time', windowStart)
-                .order('report_time', { ascending: true })
-                .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+            const pings = await fetchPings(imeis, fromIso, toIso);
+            if (pings.length === 0) continue;
 
-            if (error) {
-                throw error;
-            }
-
-            if (data && data.length > 0) {
-                rawTelemetry.push(...data);
-                if (data.length < PAGE_SIZE) {
-                    hasMore = false;
-                } else {
-                    page++;
-                }
-            } else {
-                hasMore = false;
-            }
-        }
-
-        if (rawTelemetry.length === 0) {
-            console.log("[MILEAGE-DAEMON] No hay pings de telemetría recientes en la BD para analizar.");
-            return;
-        }
-
-        let insertedCount = 0;
-
-        // 3. Procesar cálculo de distancia por cada vehículo
-        for (const v of vehicles) {
-            if (!v.gps_imei) continue;
-
-            // a. Filtrar los pings GPS de este IMEI en la ventana especificada
-            const pings = rawTelemetry.filter(t => t.imei === v.gps_imei);
-
-            if (pings.length < 2) continue; // Necesitamos al menos 2 puntos para que haya distancia
-
-            // b. Sumar la distancia entre pings consecutivos
-            let distanceAccumulatedKm = 0;
-            for (let i = 1; i < pings.length; i++) {
-                const prev = pings[i - 1]!;
-                const curr = pings[i]!;
-
-                const distSegment = getDistanceKm(prev.lat, prev.lng, curr.lat, curr.lng);
-
-                // Filtro Anti-Ruido: Si el GPS brinca locamente (> 10 km en 3 mins), ignorar ese salto
-                if (distSegment < 10) {
-                    distanceAccumulatedKm += distSegment;
-                }
-            }
-
-            // Si se movió menos de 100 metros en total en el período, ni lo registramos
-            if (distanceAccumulatedKm < 0.1) continue;
-
-            // c. Insertar / Actualizar la métrica DIARIA
-            const todayStringForUnique = new Date().toISOString().split("T")[0] + "T00:00:00Z";
-
-            const { error } = await supabase
+            // Última lectura manual de cada placa dentro del día (para partir el recorrido)
+            const { data: manuals, error: manErr } = await supabase
                 .from('vehicle_mileage_logs')
-                .upsert({
-                    plate: v.plate,
-                    imei: v.gps_imei,
-                    mileage_km: Number(distanceAccumulatedKm.toFixed(2)),
-                    recorded_at: todayStringForUnique,
-                    source: 'protrack_api',
-                    notes: 'Recorrido Diario GPS'
-                }, { onConflict: 'plate, source, recorded_at' });
+                .select('plate, recorded_at')
+                .eq('source', 'manual')
+                .in('plate', plates)
+                .gte('recorded_at', fromIso)
+                .lt('recorded_at', toIso);
+            if (manErr) throw manErr;
+            const manualAt = new Map<string, number>();
+            for (const m of manuals || []) {
+                const at = new Date(m.recorded_at).getTime();
+                if (!manualAt.has(m.plate) || at > manualAt.get(m.plate)!) manualAt.set(m.plate, at);
+            }
 
-            if (!error || error.code === '23505') insertedCount++;
-            if (error && error.code !== '23505') console.error(`[MILEAGE-DAEMON] Error BD:`, error.message);
+            for (const v of vehicles) {
+                const own = pings.filter(p => p.imei === v.gps_imei);
+                // Sin pings ese día: no tocamos lo que haya (no hay datos para recalcular)
+                if (own.length === 0) continue;
+
+                const split = manualAt.get(v.plate);
+                let before = 0;
+                let after = 0;
+                for (let i = 1; i < own.length; i++) {
+                    const km = segmentKm(own[i - 1]!, own[i]!);
+                    // Tramo que termina antes (o en) la lectura manual → "antes"; el resto → "después"
+                    if (split !== undefined && new Date(own[i]!.report_time).getTime() <= split) before += km;
+                    else after += km;
+                }
+
+                const rows: { recorded_at: string; km: number }[] = [];
+                if (split === undefined) {
+                    rows.push({ recorded_at: fromIso, km: before + after });
+                } else {
+                    rows.push({ recorded_at: fromIso, km: before });
+                    rows.push({ recorded_at: new Date(split + 1000).toISOString(), km: after });
+                }
+
+                // Reemplazar las filas GPS del día. Para el primer día del rango también se
+                // borra la fila del formato anterior (medianoche UTC = 19:00 del día previo en
+                // Bogotá), que cubría parte de este mismo día.
+                const deleteFrom = d === daysBack ? new Date(dayStart - BOGOTA_OFFSET_MS).toISOString() : fromIso;
+                const { error: delErr } = await supabase
+                    .from('vehicle_mileage_logs')
+                    .delete()
+                    .eq('plate', v.plate)
+                    .eq('source', 'protrack_api')
+                    .gte('recorded_at', deleteFrom)
+                    .lt('recorded_at', toIso);
+                if (delErr) {
+                    console.error(`[MILEAGE-DAEMON] Error borrando ${v.plate}:`, delErr.message);
+                    continue;
+                }
+
+                const inserts = rows
+                    .filter(r => r.km >= 0.01)
+                    .map(r => ({
+                        plate: v.plate,
+                        imei: v.gps_imei,
+                        mileage_km: Number(r.km.toFixed(2)),
+                        recorded_at: r.recorded_at,
+                        source: 'protrack_api',
+                        notes: 'Recorrido Diario GPS',
+                    }));
+                if (inserts.length === 0) continue;
+
+                const { error } = await supabase.from('vehicle_mileage_logs').insert(inserts);
+                if (error) console.error(`[MILEAGE-DAEMON] Error BD ${v.plate}:`, error.message);
+                else rowsWritten += inserts.length;
+            }
         }
 
-        console.log(`[MILEAGE-DAEMON] ✅ Ciclo Terminado. Se calcularon distancias diarias para ${insertedCount} vehículos.`);
+        console.log(`[MILEAGE-DAEMON] ✅ Ciclo terminado. ${rowsWritten} fila(s) de recorrido diario escritas.`);
     } catch (error: any) {
         console.error("CRITICAL GPS SYNC ERROR:", error);
     }
 }
 
-// Ejecución manual
+// Ejecución manual para recalcular días pasados:
+//   npx ts-node src/oraculo/mileage-daemon.ts 30   → últimos 30 días + hoy
 if (require.main === module) {
-    syncProtrackMileage().then(() => process.exit(0));
+    const days = Math.max(0, Math.min(365, Number(process.argv[2] ?? 1) || 1));
+    syncProtrackMileage(days).then(() => process.exit(0));
 }

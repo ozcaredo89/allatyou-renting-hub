@@ -17,3 +17,12 @@ Pedirle al conductor, mediante un link enviado por WhatsApp, el kilometraje actu
 - **Un solo uso**: un link completado no se puede volver a enviar (409).
 - **Vigencia**: el link vence a los **7 días** de creado (410). Para reintentar se genera uno nuevo.
 - Generar un link nuevo no invalida los anteriores pendientes.
+
+## Odómetro y recorrido diario GPS (Issue #79)
+- **Odómetro actual** = última lectura manual (inspección, registro manual o evidencia del conductor) + recorrido GPS registrado **después** de ella (`lib/odometer.ts`, RPC `get_global_mileage_stats`).
+- **Recorrido diario GPS** (`oraculo/mileage-daemon.ts`, filas `source = 'protrack_api'`): suma de la distancia entre pings de `raw_telemetry` del **día calendario completo en hora de Colombia**. Una fila por día con `recorded_at` = 00:00 de Bogotá (05:00 UTC).
+- **Idempotente**: corre al arrancar el API y cada 12 h, y en cada pasada **recalcula ayer y hoy** reemplazando sus filas. Un deploy/reinicio ya no deja el día con una ventana parcial.
+- Si el día tiene una lectura manual, el recorrido se parte en dos filas: antes de la lectura (00:00) y después (hora de la lectura + 1 s), para que el odómetro solo sume lo posterior.
+- **Ruido descartado**: tramos con motor apagado y velocidad 0 en ambos pings (carro estacionado) y tramos con velocidad implícita > 160 km/h (saltos del GPS). Un hueco largo entre pings sí cuenta si la velocidad implícita es plausible.
+- Limitación conocida: es distancia en línea recta entre pings cada ~3 min, así que en calles con curvas queda algo por debajo del real; las lecturas manuales/evidencia del conductor corrigen la base.
+- **Recalcular días pasados** (solo si hay `raw_telemetry` de esos días; días sin pings no se tocan): `npx ts-node src/oraculo/mileage-daemon.ts 30` con el `.env` de producción.
