@@ -1,8 +1,8 @@
 // Página pública para el conductor: evidencia de kilometraje y gasolina (Issue #75).
 // Se abre desde el link de WhatsApp /km/:token. El km debe ser mayor al anterior.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
-import { Gauge, Fuel, Camera, CheckCircle2, AlertTriangle, Car } from "lucide-react";
+import { Gauge, Fuel, Camera, CheckCircle2, AlertTriangle, Car, RotateCcw } from "lucide-react";
 import { compressImage } from "../utils/compressImage";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
@@ -43,6 +43,7 @@ export default function MileageEvidence() {
   const [mileage, setMileage] = useState("");
   const [fuel, setFuel] = useState<string>("");
   const [photo, setPhoto] = useState<File | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +77,7 @@ export default function MileageEvidence() {
     if (!km) return setError("Digita el kilometraje que marca el tablero.");
     if (kmTooLow) return setError(`El kilometraje debe ser mayor al anterior (${fmt(prev!)} km).`);
     if (!fuel) return setError("Selecciona el nivel de gasolina.");
-    if (!photo) return setError("Toma la foto del tablero como evidencia.");
+    if (!photo) return setError("Toma la foto del tablero con la cámara.");
 
     setSending(true);
     try {
@@ -196,14 +197,36 @@ export default function MileageEvidence() {
           <label className="flex items-center gap-2 text-sm font-bold text-slate-700 mb-2">
             <Camera className="w-4 h-4 text-slate-600" /> Foto del tablero (km y gasolina)
           </label>
-          <label className="block border-2 border-dashed border-slate-300 rounded-xl p-4 text-center cursor-pointer hover:bg-slate-50">
-            {preview ? (
-              <img src={preview} alt="Evidencia" className="max-h-64 mx-auto rounded-lg" />
-            ) : (
-              <span className="text-sm text-slate-500">Toca para tomar la foto</span>
-            )}
-            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onPhoto(e.target.files?.[0])} />
-          </label>
+          {/* Cámara trasera del celular; se puede retomar las veces que haga falta */}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(e) => { onPhoto(e.target.files?.[0]); e.target.value = ""; }}
+          />
+          {preview ? (
+            <div className="space-y-2">
+              <img src={preview} alt="Evidencia" className="max-h-72 w-full object-contain rounded-xl border border-slate-200 bg-slate-50" />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="w-full flex items-center justify-center gap-2 border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold rounded-xl py-3 text-sm"
+              >
+                <RotateCcw className="w-4 h-4" /> Tomar otra foto
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="w-full flex flex-col items-center justify-center gap-2 border-2 border-dashed border-slate-300 rounded-xl py-8 text-slate-500 hover:bg-slate-50"
+            >
+              <Camera className="w-8 h-8" />
+              <span className="text-sm font-bold">Toca para abrir la cámara</span>
+            </button>
+          )}
           <p className="text-[11px] text-slate-400 mt-1">Que se vean claramente el kilometraje y la aguja de gasolina.</p>
         </div>
 
