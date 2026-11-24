@@ -14,6 +14,7 @@ export const ENV_VARS: EnvVar[] = [
   { name: "ADMIN_BASIC_USER", required: true, description: "Usuario Basic Auth del admin" },
   { name: "ADMIN_BASIC_PASS", required: true, description: "Clave Basic Auth del admin" },
   { name: "LEGACY_BASIC_AUTH_UNTIL", required: false, description: "Último día (YYYY-MM-DD) del acceso genérico (default 2026-11-22)" },
+  { name: "TALLER_SERVICE_TOKEN", required: false, description: "Token (>=32 chars) del header X-Service-Token para AllAtYou Taller: GET /leasing/summary y POST /expenses (sin él se rechaza)" },
   { name: "GOOGLE_CLIENT_ID", required: false, description: "OAuth Client ID de Google (login con Google; sin él se oculta)" },
   { name: "ADMIN_SIGNUP_NOTIFY_EMAIL", required: false, description: "Correo que recibe el aviso de usuarios nuevos" },
   { name: "ADMIN_WEB_URL", required: false, description: "URL del panel para enlaces de recuperación (default https://web.allatyou.com)" },

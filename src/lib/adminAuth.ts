@@ -60,6 +60,26 @@ export function checkLegacyBasic(header: string): boolean {
 }
 
 // ------------------------------------------------------------------
+// Token de servicio (integración AllAtYou Taller, Issue #81)
+// ------------------------------------------------------------------
+
+/** Rutas (MÉTODO + path) que el token de servicio del taller puede usar. */
+const SERVICE_ROUTES = new Set(["GET /leasing/summary", "POST /expenses"]);
+
+/** true si el header X-Service-Token coincide con TALLER_SERVICE_TOKEN (mínimo 32 caracteres). */
+export function checkServiceToken(token: string): boolean {
+  const expected = String(process.env.TALLER_SERVICE_TOKEN || "").trim();
+  if (expected.length < 32 || !token) return false;
+  return safeEqual(token.trim(), expected);
+}
+
+/** true si la ruta está permitida para el token de servicio. */
+export function isServiceRouteAllowed(method: string, originalUrl: string): boolean {
+  const path = (originalUrl.split("?")[0] ?? "").replace(/\/+$/, "");
+  return SERVICE_ROUTES.has(`${method.toUpperCase()} ${path}`);
+}
+
+// ------------------------------------------------------------------
 // Contraseñas y tokens
 // ------------------------------------------------------------------
 

@@ -30,7 +30,7 @@ Reemplazar el usuario/clave genérico compartido (`ADMIN_BASIC_USER`/`ADMIN_BASI
 
 ## 4. Configuración
 
-- **API (Railway):** `GOOGLE_CLIENT_ID` (sin ella se oculta el botón de Google), `LEGACY_BASIC_AUTH_UNTIL`, `ADMIN_SIGNUP_NOTIFY_EMAIL`, `ADMIN_WEB_URL` (base de los enlaces de correo). Todas opcionales.
+- **API (Railway):** `GOOGLE_CLIENT_ID` (sin ella se oculta el botón de Google), `LEGACY_BASIC_AUTH_UNTIL`, `TALLER_SERVICE_TOKEN` (token del taller, header `X-Service-Token`, solo `GET /leasing/summary` y `POST /expenses`), `ADMIN_SIGNUP_NOTIFY_EMAIL`, `ADMIN_WEB_URL` (base de los enlaces de correo). Todas opcionales.
 - **Google Cloud Console:** OAuth Client ID tipo *Web*, con orígenes autorizados `https://web.allatyou.com` y `http://localhost:5174`. El frontend obtiene el Client ID de `GET /auth/config` (no hay variable `VITE_`).
 
 ## 5. Preguntas abiertas
