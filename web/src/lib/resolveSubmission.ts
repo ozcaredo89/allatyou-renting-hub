@@ -30,6 +30,7 @@ export type FleetVehicle = {
   soat_expires_at?: string | null;
   soat_url?: string | null;
   tecno_expires_at?: string | null;
+  current_mileage?: number | null; // odómetro actual (GET /vehicles), referencia para el km del cambio de aceite
 };
 
 export type ResolveSubmissionInput = {
