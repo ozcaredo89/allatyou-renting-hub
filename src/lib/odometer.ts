@@ -56,6 +56,19 @@ export function odometerFromRows(rows: MileageRow[], plate: string, asOf = Infin
   return Math.round(base.km + gps);
 }
 
+/** Última lectura MANUAL (absoluta) de una placa: inspección, registro manual, evidencia del conductor o cambio de aceite. */
+export function lastManualReading(rows: MileageRow[], plate: string): { km: number; at: string } | null {
+  let best: { km: number; at: string; t: number } | null = null;
+  for (const r of rows) {
+    if (r.plate !== plate || r.source !== "manual") continue;
+    const km = Number(r.mileage_km);
+    const t = new Date(r.recorded_at).getTime();
+    if (!isFinite(km) || km <= 0 || isNaN(t)) continue;
+    if (!best || t > best.t) best = { km, at: r.recorded_at, t };
+  }
+  return best ? { km: best.km, at: best.at } : null;
+}
+
 export async function getCurrentOdometers(plates: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   const rows = await fetchMileageRows(plates);

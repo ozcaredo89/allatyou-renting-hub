@@ -245,6 +245,23 @@ export async function getFleetVehicleAlerts(todayStr: string): Promise<VehicleAl
       });
     }
 
+    // Lectura de km semanal (Issue #87): sin km reciente no hay odómetro ni aviso de aceite por km
+    if (oil && oil.km_reading_level !== "green") {
+      alerts.push({
+        severity: oil.km_reading_level,
+        text:
+          oil.km_reading_days == null
+            ? "Kilometraje: SIN LECTURAS de km — pedir km al conductor (link de WhatsApp en /vehicles)"
+            : `Kilometraje: última lectura hace ${oil.km_reading_days} día(s) (${oil.last_km_reading_km?.toLocaleString("es-CO")} km) — pedir km al conductor`,
+      });
+    }
+    if (oil?.last_oil_change_date && oil.last_oil_km == null) {
+      alerts.push({
+        severity: "yellow",
+        text: `Cambio de aceite: km desconocido del último cambio (${oil.last_oil_change_date}) — registrar el km de ese día en /vehicles → Kilometraje`,
+      });
+    }
+
     const insp = lastInspection.get(v.plate);
     if (!insp) {
       alerts.push({ severity: "red", text: "Inspección: SIN REVISIONES registradas" });

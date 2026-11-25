@@ -98,6 +98,11 @@ type OilStatus = {
   km_remaining: number | null;
   days_since: number | null;
   level: 'green' | 'yellow' | 'red' | 'none';
+  // Lectura de km semanal (Issue #87)
+  last_km_reading_at?: string | null;
+  last_km_reading_km?: number | null;
+  km_reading_days?: number | null;
+  km_reading_level?: 'green' | 'yellow' | 'red';
 };
 
 const OIL_INTERVAL_KM = 10000;
@@ -117,7 +122,7 @@ function getOilChangeStatus(oil?: OilStatus | null) {
     sub = oil.km_remaining <= 0 ? `Pasado ${fmtKm(-oil.km_remaining)} km` : `Faltan ${fmtKm(oil.km_remaining)} km`;
     pct = Math.max(0, Math.min(100, ((OIL_INTERVAL_KM - oil.km_remaining) / OIL_INTERVAL_KM) * 100));
   } else {
-    sub = "km desconocido";
+    sub = "⚠ km desconocido";
   }
   const tooltip = [
     `Último: ${oil.last_oil_change_date}${oil.last_oil_km != null ? ` · ${fmtKm(oil.last_oil_km)} km` : ""} (hace ${oil.days_since} días)`,
@@ -1303,7 +1308,27 @@ export default function AdminVehicles() {
                       {/* ODÓMETRO */}
                       {visibleColumns.odometro && (
                         <td className="px-4 py-3 text-center font-mono text-[11px] font-bold text-slate-700">
-                          {v.current_mileage != null ? `${new Intl.NumberFormat("es-CO").format(v.current_mileage)} km` : "—"}
+                          <div className="inline-flex flex-col items-center gap-0.5">
+                            <span>{v.current_mileage != null ? `${new Intl.NumberFormat("es-CO").format(v.current_mileage)} km` : "—"}</span>
+                            {/* Lectura de km semanal (Issue #87): amarillo > 7 días, rojo > 14 días o nunca */}
+                            {v.oil_status && v.oil_status.km_reading_level && (
+                              <button
+                                type="button"
+                                onClick={() => openHistory(v.plate, 'Kilometraje')}
+                                title={v.oil_status.last_km_reading_at
+                                  ? `Última lectura de km: ${new Date(v.oil_status.last_km_reading_at).toLocaleDateString()} (${fmtKm(v.oil_status.last_km_reading_km || 0)} km). Se pide al menos una por semana.`
+                                  : "Sin lecturas de km. Se pide al menos una por semana."}
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-sans font-bold whitespace-nowrap ${
+                                  v.oil_status.km_reading_level === 'red' ? 'bg-red-100 text-red-700'
+                                  : v.oil_status.km_reading_level === 'yellow' ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-emerald-50 text-emerald-700'}`}
+                              >
+                                {v.oil_status.km_reading_days == null
+                                  ? 'Pedir km'
+                                  : v.oil_status.km_reading_days === 0 ? 'Leído hoy' : `Leído hace ${v.oil_status.km_reading_days} d`}
+                              </button>
+                            )}
+                          </div>
                         </td>
                       )}
                       {/* ACEITE */}
@@ -1314,7 +1339,7 @@ export default function AdminVehicles() {
                             return (
                               <div className="inline-flex flex-col items-center gap-0.5" title={oil.tooltip}>
                                 <span className={`inline-block px-2 py-0.5 rounded text-[11px] ${oil.color}`}>{oil.label}</span>
-                                {oil.sub && <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap">{oil.sub}</span>}
+                                {oil.sub && <span className={`text-[10px] font-semibold whitespace-nowrap ${v.oil_status?.last_oil_km == null ? "px-1.5 rounded bg-amber-100 text-amber-700" : "text-slate-500"}`}>{oil.sub}</span>}
                                 {oil.pct != null && (
                                   <span className="block w-16 h-1 rounded-full bg-slate-200 overflow-hidden">
                                     <span
