@@ -206,6 +206,26 @@ r.post("/", async (req: Request, res: Response) => {
       if (normPlates.length === 1 && expensesList.some((e) => e.category === "Cambio de aceite")) oilOdometerKm = n;
     }
 
+    // El km del cambio de aceite debe ser mayor que la última lectura manual anterior a esa fecha (Issue #85).
+    // Si no viene km (p. ej. gastos sincronizados desde el taller) no se exige: se estima con el odómetro.
+    if (oilOdometerKm) {
+      const { data: prevRows, error: prevErr } = await supabase
+        .from("vehicle_mileage_logs")
+        .select("mileage_km, recorded_at")
+        .eq("plate", normPlates[0])
+        .eq("source", "manual")
+        .lt("recorded_at", `${date}T17:00:00Z`)
+        .order("recorded_at", { ascending: false })
+        .limit(1);
+      if (prevErr) return res.status(500).json({ error: prevErr.message });
+      const prev = prevRows?.[0];
+      if (prev && oilOdometerKm <= Number(prev.mileage_km)) {
+        return res.status(400).json({
+          error: `El kilometraje del cambio de aceite (${oilOdometerKm.toLocaleString("es-CO")} km) debe ser mayor que la última lectura de ${normPlates[0]} (${Number(prev.mileage_km).toLocaleString("es-CO")} km el ${String(prev.recorded_at).slice(0, 10)}).`,
+        });
+      }
+    }
+
     // 3.1. Pre-validación de leasing y anticipos operativos ANTES de guardar el gasto
     const applyToLeasing = Boolean(req.body?.apply_to_leasing);
     const leasingExcessMethod = req.body?.leasing_excess_method as "cash" | "advance" | "none" | undefined;

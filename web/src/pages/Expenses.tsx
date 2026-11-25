@@ -452,7 +452,7 @@ export default function Expenses() {
         leasing_advance_start_date: advanceStartDate,
         leasing_advance_rate_percent: Math.max(0, Math.round(advTerms.rate * 100) / 100),
         leasing_advance_daily_installment: advTerms.daily,
-        odometer_km: oilKmStr && finalPlates.length === 1 && finalCart.some(c => c.category === "Cambio de aceite") ? Number(oilKmStr) : undefined,
+        odometer_km: finalPlates.length === 1 && finalCart.some(c => c.category === "Cambio de aceite") ? Number(oilKmStr) : undefined,
       };
       const rs = await requestWithBasicAuth(`${API}/expenses`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -598,6 +598,18 @@ export default function Expenses() {
     }
 
     const { finalPlates, finalCart } = resolved;
+
+    // Cambio de aceite (Issue #85): se registra por carro y el km del tablero es obligatorio
+    if (finalCart.some(c => c.category === "Cambio de aceite")) {
+      if (finalPlates.length !== 1) {
+        setSubmitError("El cambio de aceite se registra por carro: deja una sola placa en este gasto (cada carro tiene su propio kilometraje).");
+        return;
+      }
+      if (!oilKmStr || Number(oilKmStr) <= 0) {
+        setSubmitError("Digita el kilometraje del tablero del carro en el cambio de aceite.");
+        return;
+      }
+    }
 
     // Notificar al usuario si se auto-incorporaron elementos desde los inputs
     if (plates.length === 0 && finalPlates.length > 0) {
@@ -1153,10 +1165,10 @@ export default function Expenses() {
               )}
             </div>
 
-            {/* Km del cambio de aceite (Issue #83): con él se calcula el próximo cambio (+10.000 km) */}
-            {(cart.some(c => c.category === "Cambio de aceite") || category === "Cambio de aceite") && plates.length <= 1 && (
+            {/* Km del cambio de aceite (Issues #83, #85): obligatorio; con él se calcula el próximo cambio (+10.000 km) */}
+            {(cart.some(c => c.category === "Cambio de aceite") || category === "Cambio de aceite") && (
               <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4">
-                <label className="mb-1 block text-sm font-bold text-amber-800">Kilometraje del carro en el cambio de aceite (opcional)</label>
+                <label className="mb-1 block text-sm font-bold text-amber-800">Kilometraje del tablero en el cambio de aceite *</label>
                 <input
                   className="w-full md:w-64 rounded-xl border border-amber-300 px-3 py-2 bg-white font-mono"
                   inputMode="numeric"
@@ -1165,8 +1177,15 @@ export default function Expenses() {
                   onChange={e => setOilKmStr(e.target.value.replace(/[^\d]/g, ""))}
                 />
                 <p className="text-[11px] text-amber-700 mt-1">
-                  El próximo cambio queda a este km + 10.000. Si lo dejas vacío se estima con el odómetro (lecturas + GPS) de esa fecha.
+                  Obligatorio. El próximo cambio queda a este km + 10.000.
+                  {(() => {
+                    const v = plates.length === 1 ? fleet.find(f => f.plate === plates[0]) : null;
+                    return v?.current_mileage ? ` Odómetro estimado hoy: ${fmtCOP.format(v.current_mileage)} km.` : "";
+                  })()}
                 </p>
+                {plates.length > 1 && (
+                  <p className="text-[11px] font-bold text-red-600 mt-1">El cambio de aceite se registra por carro: deja una sola placa.</p>
+                )}
               </div>
             )}
 
