@@ -29,6 +29,8 @@ GitHub Action `reminders.yml` llama `POST /reminders/run` (header `X-Internal-Se
     - **Próximo cambio** = km del último cambio + **10.000 km**. 🟡 si faltan **≤ 1.000 km**, 🔴 si ya se pasó.
     - **Por días** (se mantiene): 🟡 **> 90 días**, 🔴 **> 120 días** desde el último cambio.
     - Manda el peor de los dos. Sin lectura de km de base el semáforo es solo por días ("km desconocido"). Vehículos sin ningún cambio de aceite registrado no se alertan.
+  - **Lectura de km semanal (Issue #87):** cada vehículo de la flota operativa debe tener al menos **una lectura manual de km por semana** (inspección, registro manual, evidencia del conductor por el link de WhatsApp o km del cambio de aceite). 🟡 si la última tiene **> 7 días**, 🔴 si tiene **> 14 días** o **nunca** hubo. Se ve en `/vehicles` (columna Odómetro, abre el modal de Kilometraje para pedirla) y en este resumen.
+  - **Km desconocido del último cambio de aceite:** 🟡 en este resumen y resaltado en `/vehicles`, hasta que se registre en `/vehicles` → Kilometraje una lectura manual con la fecha de ese cambio.
   - **Inspección:** 🔴 si la última inspección **finalizada** tiene **≥ 15 días** o el vehículo **nunca** se ha revisado. (Entre 10 y 14 días solo se marca en amarillo en `/vehicles`, sin correo.)
   - **Liquidaciones de conductores (Issue #23):** a partir de `liquidation_date` se cuentan **20 días calendario** para validar comparendos en SIMIT (`payment_due_date`). Se avisa **3 días antes** y mientras siga sin comprobante (`payment_proof_url IS NULL` y `paid_at IS NULL`), con enlace al calendario `/drivers?view=calendar`.
 - **Orden:** primero los vehículos con más alertas rojas. Si no hay nada por reportar, no se envía.

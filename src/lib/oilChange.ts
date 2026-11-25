@@ -9,12 +9,15 @@
 // - Semáforo por días: amarillo > OIL_WARN_DAYS, rojo > OIL_OVERDUE_DAYS.
 // - Manda el peor de los dos (lo que se cumpla primero).
 import { supabase } from "./supabase";
-import { fetchMileageRows, odometerFromRows } from "./odometer";
+import { fetchMileageRows, odometerFromRows, lastManualReading } from "./odometer";
 
 export const OIL_INTERVAL_KM = 10000;
 export const OIL_WARN_KM = 1000;
 export const OIL_WARN_DAYS = 90;
 export const OIL_OVERDUE_DAYS = 120;
+/** Lectura de km del tablero (Issue #87): al menos una por semana. Amarillo > 7 días, rojo > 14 días o nunca. */
+export const KM_READING_WARN_DAYS = 7;
+export const KM_READING_ALERT_DAYS = 14;
 
 export type OilLevel = "green" | "yellow" | "red" | "none";
 
@@ -28,6 +31,11 @@ export type OilStatus = {
   km_level: OilLevel;
   days_level: OilLevel;
   level: OilLevel;
+  // Última lectura manual del km (Issue #87)
+  last_km_reading_at: string | null;
+  last_km_reading_km: number | null;
+  km_reading_days: number | null;
+  km_reading_level: "green" | "yellow" | "red";
 };
 
 const RANK: Record<OilLevel, number> = { none: 0, green: 1, yellow: 2, red: 3 };
@@ -82,6 +90,13 @@ export async function getOilStatusByPlate(plates: string[]): Promise<Map<string,
       daysSince = Math.round((today - Date.parse(`${date}T00:00:00Z`)) / 86400000);
     }
 
+    const reading = lastManualReading(rows, plate);
+    const readingDays = reading
+      ? Math.max(0, Math.round((today - Date.parse(`${new Date(Date.parse(reading.at) - 5 * 3600 * 1000).toISOString().slice(0, 10)}T00:00:00Z`)) / 86400000))
+      : null;
+    const readingLevel: "green" | "yellow" | "red" =
+      readingDays == null || readingDays > KM_READING_ALERT_DAYS ? "red" : readingDays > KM_READING_WARN_DAYS ? "yellow" : "green";
+
     const nextKm = lastKm != null ? lastKm + OIL_INTERVAL_KM : null;
     const remaining = nextKm != null && current != null ? nextKm - current : null;
 
@@ -99,6 +114,10 @@ export async function getOilStatusByPlate(plates: string[]): Promise<Map<string,
       km_level: kmLevel,
       days_level: daysLevel,
       level: worst(kmLevel, daysLevel),
+      last_km_reading_at: reading?.at ?? null,
+      last_km_reading_km: reading?.km ?? null,
+      km_reading_days: readingDays,
+      km_reading_level: readingLevel,
     });
   }
   return out;
