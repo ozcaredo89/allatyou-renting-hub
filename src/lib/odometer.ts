@@ -1,21 +1,21 @@
 // src/lib/odometer.ts
-// Odómetro actual por vehículo a partir de vehicle_mileage_logs (Issue #51).
+// Odómetro por vehículo a partir de vehicle_mileage_logs (Issue #51).
 //
 // Contrato de la tabla:
 //   source = 'manual'       → mileage_km es una lectura ABSOLUTA del odómetro (inspecciones, registro manual)
 //   source = 'protrack_api' → mileage_km es el RECORRIDO DIARIO del GPS (delta), NO el odómetro
 //
-// Odómetro actual = última lectura manual + suma de km GPS registrados después de ella
+// Odómetro = última lectura manual + suma de km GPS registrados después de ella
 // (misma fórmula que la RPC get_global_mileage_stats). Sin lectura manual de base no hay
 // odómetro confiable → null.
 import { supabase } from "./supabase";
 
-export async function getCurrentOdometers(plates: string[]): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  if (plates.length === 0) return out;
+export type MileageRow = { plate: string; mileage_km: number | string; recorded_at: string; source: string };
 
-  // Paginado para no quedar cortos por el límite de 1000 filas de PostgREST
-  const rows: { plate: string; mileage_km: number | string; recorded_at: string; source: string }[] = [];
+/** Todas las filas de vehicle_mileage_logs de las placas (paginado por el límite de 1000 de PostgREST). */
+export async function fetchMileageRows(plates: string[]): Promise<MileageRow[]> {
+  const rows: MileageRow[] = [];
+  if (plates.length === 0) return rows;
   const PAGE = 1000;
   for (let page = 0; ; page++) {
     const { data, error } = await supabase
@@ -25,34 +25,43 @@ export async function getCurrentOdometers(plates: string[]): Promise<Map<string,
       .order("recorded_at", { ascending: false })
       .range(page * PAGE, (page + 1) * PAGE - 1);
     if (error) throw new Error(error.message);
-    rows.push(...((data || []) as any[]));
+    rows.push(...((data || []) as MileageRow[]));
     if (!data || data.length < PAGE) break;
   }
+  return rows;
+}
 
-  // 1. Última lectura manual por placa
-  const lastManual = new Map<string, { km: number; at: number }>();
+/**
+ * Odómetro de una placa en el instante `asOf` (ms) usando solo filas registradas hasta ese momento.
+ * Sin `asOf` = odómetro actual. Devuelve null si no hay lectura manual de base.
+ */
+export function odometerFromRows(rows: MileageRow[], plate: string, asOf = Infinity): number | null {
+  let base: { km: number; at: number } | null = null;
   for (const r of rows) {
-    if (r.source !== "manual") continue;
+    if (r.plate !== plate || r.source !== "manual") continue;
     const km = Number(r.mileage_km);
     const at = new Date(r.recorded_at).getTime();
-    if (!isFinite(km) || km <= 0 || isNaN(at)) continue;
-    const prev = lastManual.get(r.plate);
-    if (!prev || at > prev.at) lastManual.set(r.plate, { km, at });
+    if (!isFinite(km) || km <= 0 || isNaN(at) || at > asOf) continue;
+    if (!base || at > base.at) base = { km, at };
   }
+  if (!base) return null;
 
-  // 2. Sumar el recorrido GPS posterior a esa lectura
-  const gpsSince = new Map<string, number>();
+  let gps = 0;
   for (const r of rows) {
-    if (r.source !== "protrack_api") continue;
-    const base = lastManual.get(r.plate);
-    if (!base) continue;
+    if (r.plate !== plate || r.source !== "protrack_api") continue;
     const at = new Date(r.recorded_at).getTime();
     const km = Number(r.mileage_km);
-    if (at > base.at && isFinite(km)) gpsSince.set(r.plate, (gpsSince.get(r.plate) || 0) + km);
+    if (at > base.at && at <= asOf && isFinite(km)) gps += km;
   }
+  return Math.round(base.km + gps);
+}
 
-  for (const [plate, base] of lastManual) {
-    out.set(plate, Math.round(base.km + (gpsSince.get(plate) || 0)));
+export async function getCurrentOdometers(plates: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const rows = await fetchMileageRows(plates);
+  for (const plate of plates) {
+    const km = odometerFromRows(rows, plate);
+    if (km != null) out.set(plate, km);
   }
   return out;
 }

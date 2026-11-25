@@ -36,10 +36,75 @@ interface MonthData {
   sessions: OilSession[];
 }
 
+// Próximo cambio por km + días (Issue #83): cada 10.000 km o 90/120 días, lo que pase primero
+interface UpcomingOil {
+  plate: string;
+  last_oil_change_date: string | null;
+  last_oil_km: number | null;
+  next_oil_km: number | null;
+  current_km: number | null;
+  km_remaining: number | null;
+  days_since: number | null;
+  level: "green" | "yellow" | "red" | "none";
+}
+
 interface OilStats {
   total_changes: number;
   monthly_data: MonthData[];
+  upcoming?: UpcomingOil[];
   generated_at: string;
+}
+
+const fmtKm = (n: number) => new Intl.NumberFormat("es-CO").format(n);
+
+function UpcomingOilTable({ rows }: { rows: UpcomingOil[] }) {
+  const badge = (lvl: UpcomingOil["level"]) =>
+    lvl === "red" ? "bg-red-100 text-red-700"
+    : lvl === "yellow" ? "bg-amber-100 text-amber-700"
+    : lvl === "green" ? "bg-emerald-100 text-emerald-700"
+    : "bg-slate-100 text-slate-500";
+  const label = (lvl: UpcomingOil["level"]) =>
+    lvl === "red" ? "Vencido" : lvl === "yellow" ? "Próximo" : lvl === "green" ? "Al día" : "Sin datos";
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h3 className="text-sm font-bold text-slate-800">Próximo cambio por vehículo</h3>
+      <p className="text-xs text-slate-500 mt-0.5 mb-4">Cada 10.000 km o 90/120 días, lo que pase primero</p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wider text-slate-400 text-left">
+              <th className="py-2 pr-3">Placa</th>
+              <th className="py-2 pr-3">Estado</th>
+              <th className="py-2 pr-3">Último cambio</th>
+              <th className="py-2 pr-3 text-right">Km actual</th>
+              <th className="py-2 pr-3 text-right">Próximo</th>
+              <th className="py-2 text-right">Faltan</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((r) => (
+              <tr key={r.plate}>
+                <td className="py-2 pr-3 font-mono font-bold text-slate-800">{r.plate}</td>
+                <td className="py-2 pr-3">
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${badge(r.level)}`}>{label(r.level)}</span>
+                </td>
+                <td className="py-2 pr-3 text-slate-600 whitespace-nowrap">
+                  {r.last_oil_change_date
+                    ? `${r.last_oil_change_date}${r.last_oil_km != null ? ` · ${fmtKm(r.last_oil_km)} km` : ""} (${r.days_since} d)`
+                    : "Sin registro"}
+                </td>
+                <td className="py-2 pr-3 text-right font-mono text-slate-600">{r.current_km != null ? fmtKm(r.current_km) : "—"}</td>
+                <td className="py-2 pr-3 text-right font-mono text-slate-600">{r.next_oil_km != null ? fmtKm(r.next_oil_km) : "—"}</td>
+                <td className={`py-2 text-right font-mono font-bold ${r.km_remaining != null && r.km_remaining <= 0 ? "text-red-600" : "text-slate-800"}`}>
+                  {r.km_remaining == null ? "km desconocido" : r.km_remaining <= 0 ? `+${fmtKm(-r.km_remaining)} pasado` : fmtKm(r.km_remaining)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 interface GlobalOilReportProps {
@@ -468,6 +533,9 @@ export function GlobalOilReport({ isOpen, onClose }: GlobalOilReportProps) {
               </>
             ) : null}
           </div>
+
+          {/* Próximo cambio por km (Issue #83) */}
+          {stats?.upcoming && stats.upcoming.length > 0 && <UpcomingOilTable rows={stats.upcoming} />}
 
           {/* Bar Chart card */}
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

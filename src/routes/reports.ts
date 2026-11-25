@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { getOilStatusByPlate } from "../lib/oilChange";
 import { supabase } from "../lib/supabase";
 import {
   classifyReceipt,
@@ -473,9 +474,26 @@ r.get("/global-oil", async (_req: Request, res: Response) => {
       ),
     }));
 
+    // ── 7. Próximo cambio por km + días de la flota operativa (Issue #83) ──
+    const { data: fleet, error: fleetErr } = await supabase
+      .from("vehicles")
+      .select("plate, status")
+      .in("status", ["active", "maintenance", "leasing"]);
+    if (fleetErr) throw new Error(fleetErr.message);
+    const oilStatus = await getOilStatusByPlate((fleet ?? []).map((v: any) => v.plate));
+    const RANK: Record<string, number> = { red: 0, yellow: 1, none: 2, green: 3 };
+    const upcoming = Array.from(oilStatus.entries())
+      .map(([plate, st]) => ({ plate, ...st }))
+      .sort((a, b) =>
+        (RANK[a.level] ?? 9) - (RANK[b.level] ?? 9) ||
+        (a.km_remaining ?? Infinity) - (b.km_remaining ?? Infinity) ||
+        a.plate.localeCompare(b.plate)
+      );
+
     return res.json({
       total_changes: allSessions.length,
       monthly_data,
+      upcoming,
       generated_at: new Date().toISOString(),
     });
 

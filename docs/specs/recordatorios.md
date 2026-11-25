@@ -23,7 +23,12 @@ GitHub Action `reminders.yml` llama `POST /reminders/run` (header `X-Internal-Se
   - **SOAT** que vence en **≤ 15 días** o ya vencido (🔴 si vencido/hoy).
   - **Tecnomecánica** que vence en **≤ 10 días** o ya vencida.
   - **GPS — pago de renovación** (`vehicles.gps_renewal_date`) que vence en **≤ 30 días** o ya vencido (mismo semáforo de `/vehicles`).
-  - **Cambio de aceite:** último gasto con categoría `Cambio de aceite`; 🟡 si pasaron **> 90 días**, 🔴 si **> 120 días** (mismo semáforo de `/vehicles`). Vehículos sin ningún cambio de aceite registrado no se alertan.
+  - **Cambio de aceite (Issue #83, cada 10.000 km o por días, lo que pase primero):** cálculo único en `src/lib/oilChange.ts`, usado por `/vehicles`, el reporte global de aceite y este resumen.
+    - Último cambio = último gasto con categoría `Cambio de aceite` de la placa.
+    - **Km del último cambio** = odómetro al cierre de ese día (hora Colombia): última lectura manual hasta ese día + GPS posterior. Al registrar el gasto (una sola placa) se puede digitar el km; queda como lectura manual de ese día (12:00 Colombia, nota `Cambio de aceite (gasto #id)`) y es la que se usa. Para un cambio pasado sin km, se puede agregar en `/vehicles` → Kilometraje una lectura manual con la fecha del cambio.
+    - **Próximo cambio** = km del último cambio + **10.000 km**. 🟡 si faltan **≤ 1.000 km**, 🔴 si ya se pasó.
+    - **Por días** (se mantiene): 🟡 **> 90 días**, 🔴 **> 120 días** desde el último cambio.
+    - Manda el peor de los dos. Sin lectura de km de base el semáforo es solo por días ("km desconocido"). Vehículos sin ningún cambio de aceite registrado no se alertan.
   - **Inspección:** 🔴 si la última inspección **finalizada** tiene **≥ 15 días** o el vehículo **nunca** se ha revisado. (Entre 10 y 14 días solo se marca en amarillo en `/vehicles`, sin correo.)
   - **Liquidaciones de conductores (Issue #23):** a partir de `liquidation_date` se cuentan **20 días calendario** para validar comparendos en SIMIT (`payment_due_date`). Se avisa **3 días antes** y mientras siga sin comprobante (`payment_proof_url IS NULL` y `paid_at IS NULL`), con enlace al calendario `/drivers?view=calendar`.
 - **Orden:** primero los vehículos con más alertas rojas. Si no hay nada por reportar, no se envía.

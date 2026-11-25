@@ -47,6 +47,7 @@ type Vehicle = {
   // MÉTRICAS GLOBALES
   current_mileage?: number;
   last_oil_change_date?: string;
+  oil_status?: OilStatus | null; // cambio de aceite por km + días (Issue #83)
   last_inspection_at?: string | null; // última inspección finalizada (Issue #47)
 
   // NOTA: 'active' en vehicles.status significa "Disponible / Operativo", NO tiene
@@ -87,15 +88,44 @@ const formatMoneyInput = (value: string | undefined) => {
   return new Intl.NumberFormat("es-CO").format(Number(clean));
 };
 
-function getOilChangeStatus(dateStr?: string) {
-  if (!dateStr) return { color: "text-slate-400 bg-slate-100", label: "—" };
-  const diffTime = new Date().getTime() - new Date(dateStr).getTime();
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  const diffMonths = diffDays / 30;
+// Cambio de aceite (Issue #83): cada 10.000 km o 90/120 días, manda lo que se cumpla primero.
+// El backend (lib/oilChange.ts) calcula el estado; aquí solo se pinta.
+type OilStatus = {
+  last_oil_change_date: string | null;
+  last_oil_km: number | null;
+  next_oil_km: number | null;
+  current_km: number | null;
+  km_remaining: number | null;
+  days_since: number | null;
+  level: 'green' | 'yellow' | 'red' | 'none';
+};
 
-  if (diffMonths > 4) return { color: "text-red-700 bg-red-100 font-bold", label: dateStr };
-  if (diffMonths > 3) return { color: "text-amber-700 bg-amber-100 font-bold", label: dateStr };
-  return { color: "text-emerald-700 bg-emerald-100 font-medium", label: dateStr };
+const OIL_INTERVAL_KM = 10000;
+const fmtKm = (n: number) => new Intl.NumberFormat("es-CO").format(n);
+
+function getOilChangeStatus(oil?: OilStatus | null) {
+  const color =
+    oil?.level === 'red' ? "text-red-700 bg-red-100 font-bold"
+    : oil?.level === 'yellow' ? "text-amber-700 bg-amber-100 font-bold"
+    : oil?.level === 'green' ? "text-emerald-700 bg-emerald-100 font-medium"
+    : "text-slate-400 bg-slate-100";
+  if (!oil?.last_oil_change_date) return { color, label: "—", sub: null as string | null, pct: null as number | null, tooltip: "Sin cambio de aceite registrado" };
+
+  let sub: string | null = null;
+  let pct: number | null = null;
+  if (oil.km_remaining != null && oil.next_oil_km != null) {
+    sub = oil.km_remaining <= 0 ? `Pasado ${fmtKm(-oil.km_remaining)} km` : `Faltan ${fmtKm(oil.km_remaining)} km`;
+    pct = Math.max(0, Math.min(100, ((OIL_INTERVAL_KM - oil.km_remaining) / OIL_INTERVAL_KM) * 100));
+  } else {
+    sub = "km desconocido";
+  }
+  const tooltip = [
+    `Último: ${oil.last_oil_change_date}${oil.last_oil_km != null ? ` · ${fmtKm(oil.last_oil_km)} km` : ""} (hace ${oil.days_since} días)`,
+    oil.next_oil_km != null ? `Próximo: ${fmtKm(oil.next_oil_km)} km` : "Próximo por km: sin lectura de km al momento del cambio",
+    oil.current_km != null ? `Actual: ${fmtKm(oil.current_km)} km` : null,
+    "Regla: cada 10.000 km o 90/120 días, lo que pase primero",
+  ].filter(Boolean).join(" · ");
+  return { color, label: oil.last_oil_change_date, sub, pct, tooltip };
 }
 
 // Semáforo de inspecciones (Issue #47): amarillo desde 10 días sin revisión, rojo desde 15 (o nunca revisado)
@@ -1279,9 +1309,23 @@ export default function AdminVehicles() {
                       {/* ACEITE */}
                       {visibleColumns.aceite && (
                         <td className="px-4 py-3 text-center">
-                          <span className={`inline-block px-2 py-0.5 rounded text-[11px] ${getOilChangeStatus(v.last_oil_change_date).color}`}>
-                            {getOilChangeStatus(v.last_oil_change_date).label}
-                          </span>
+                          {(() => {
+                            const oil = getOilChangeStatus(v.oil_status);
+                            return (
+                              <div className="inline-flex flex-col items-center gap-0.5" title={oil.tooltip}>
+                                <span className={`inline-block px-2 py-0.5 rounded text-[11px] ${oil.color}`}>{oil.label}</span>
+                                {oil.sub && <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap">{oil.sub}</span>}
+                                {oil.pct != null && (
+                                  <span className="block w-16 h-1 rounded-full bg-slate-200 overflow-hidden">
+                                    <span
+                                      className={`block h-full ${v.oil_status?.level === 'red' ? 'bg-red-500' : v.oil_status?.level === 'yellow' ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                      style={{ width: `${oil.pct}%` }}
+                                    />
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                       )}
                       {/* ÚLTIMA REVISIÓN (semáforo de inspecciones) */}

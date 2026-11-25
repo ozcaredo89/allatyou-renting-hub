@@ -196,6 +196,16 @@ r.post("/", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "No valid items/amounts provided" });
     }
 
+    // 3.0. Km del odómetro al hacer el cambio de aceite (opcional, Issue #83).
+    // Solo aplica a un gasto de UNA placa con algún ítem 'Cambio de aceite'.
+    const rawOdo = req.body?.odometer_km;
+    let oilOdometerKm: number | null = null;
+    if (rawOdo !== undefined && rawOdo !== null && String(rawOdo).trim() !== "") {
+      const n = Number(String(rawOdo).replace(/\D/g, ""));
+      if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: "odometer_km debe ser un número positivo" });
+      if (normPlates.length === 1 && expensesList.some((e) => e.category === "Cambio de aceite")) oilOdometerKm = n;
+    }
+
     // 3.1. Pre-validación de leasing y anticipos operativos ANTES de guardar el gasto
     const applyToLeasing = Boolean(req.body?.apply_to_leasing);
     const leasingExcessMethod = req.body?.leasing_excess_method as "cash" | "advance" | "none" | undefined;
@@ -303,6 +313,20 @@ r.post("/", async (req: Request, res: Response) => {
     if (expenseVehiclesRows.length > 0) await supabase.from("expense_vehicles").insert(expenseVehiclesRows);
     if (expenseAttachmentsRows.length > 0) await supabase.from("expense_attachments").insert(expenseAttachmentsRows);
     if (expenseAuditLogRows.length > 0) await supabase.from("expense_audit_log").insert(expenseAuditLogRows);
+
+    // 6.1. Lectura del odómetro del cambio de aceite → lectura manual de ese día (mediodía Colombia).
+    // Es la que usa lib/oilChange.ts como km del último cambio y sirve de base al odómetro.
+    if (oilOdometerKm) {
+      const oilExp = insertedExpenses.find((e: any) => e.category === "Cambio de aceite") || insertedExpenses[0];
+      const { error: odoErr } = await supabase.from("vehicle_mileage_logs").insert({
+        plate: normPlates[0],
+        mileage_km: oilOdometerKm,
+        recorded_at: `${date}T17:00:00Z`,
+        source: "manual",
+        notes: `Cambio de aceite (gasto #${oilExp?.id})`,
+      });
+      if (odoErr) console.error("[Expenses] No se pudo guardar el km del cambio de aceite:", odoErr.message);
+    }
 
     // 7. DESCUENTO DE FONDO DE MANTENIMIENTO LEASING (Si aplica)
     let leasingDebitNote: any = null;

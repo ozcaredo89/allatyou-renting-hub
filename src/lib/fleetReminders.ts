@@ -5,15 +5,14 @@
 // Es independiente de las suscripciones públicas del landing (reminder_subscriptions).
 import { supabase } from "./supabase";
 import { sendEmail } from "./email";
+import { getOilStatusByPlate } from "./oilChange";
 
 /** Días de anticipación (mismos defaults que las suscripciones públicas) */
 export const FLEET_DAYS_BEFORE_SOAT = 15;
 export const FLEET_DAYS_BEFORE_TECNO = 10;
 /** Renovación GPS: avisar 30 días antes (mismo semáforo amarillo de /vehicles) */
 export const FLEET_DAYS_BEFORE_GPS = 30;
-/** Cambio de aceite: amarillo > 90 días, rojo > 120 días desde el último (mismo semáforo de /vehicles) */
-export const OIL_WARN_DAYS = 90;
-export const OIL_OVERDUE_DAYS = 120;
+// Cambio de aceite (km + días): umbrales y cálculo en lib/oilChange.ts (Issue #83)
 /** Inspecciones: amarillo desde 10 días sin revisión, rojo (y correo) desde 15 días */
 export const INSPECTION_WARN_DAYS = 10;
 export const INSPECTION_ALERT_DAYS = 15;
@@ -185,27 +184,6 @@ async function getLastInspectionByPlate(plates: string[]): Promise<Map<string, s
   return out;
 }
 
-/** Último cambio de aceite por placa (gastos con categoría 'Cambio de aceite', igual que /vehicles) */
-async function getLastOilChangeByPlate(plates: string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  if (plates.length === 0) return out;
-  const { data, error } = await supabase
-    .from("expenses")
-    .select("date, expense_vehicles!inner(plate)")
-    .eq("category", "Cambio de aceite")
-    .in("expense_vehicles.plate", plates)
-    .order("date", { ascending: false });
-  if (error) throw new Error(error.message);
-  for (const e of data || []) {
-    const evs = Array.isArray(e.expense_vehicles) ? e.expense_vehicles : [e.expense_vehicles];
-    for (const ev of evs as any[]) {
-      const day = ymd(e.date);
-      if (ev?.plate && day && !out.has(ev.plate)) out.set(ev.plate, day);
-    }
-  }
-  return out;
-}
-
 /**
  * Alertas de la flota agrupadas por vehículo: SOAT, Tecno, GPS, aceite e inspección.
  * Solo vehículos de la flota operativa (active, maintenance, leasing).
@@ -221,7 +199,7 @@ export async function getFleetVehicleAlerts(todayStr: string): Promise<VehicleAl
   const plates = vehicles.map((v) => v.plate);
   const [lastInspection, lastOil] = await Promise.all([
     getLastInspectionByPlate(plates),
-    getLastOilChangeByPlate(plates),
+    getOilStatusByPlate(plates),
   ]);
 
   const groups: VehicleAlertGroup[] = [];
@@ -248,14 +226,23 @@ export async function getFleetVehicleAlerts(todayStr: string): Promise<VehicleAl
         alerts.push({ severity: d <= 0 ? "red" : "yellow", text: `GPS (pago renovación): ${describeExpiry(d, gps)}` });
     }
 
+    // Aceite: manda lo que se cumpla primero, km (cada 10.000) o días (90/120)
     const oil = lastOil.get(v.plate);
-    if (oil) {
-      const since = diffDays(oil, todayStr);
-      if (since > OIL_WARN_DAYS)
-        alerts.push({
-          severity: since > OIL_OVERDUE_DAYS ? "red" : "yellow",
-          text: `Cambio de aceite: último hace ${since} día(s) (${oil})${since > OIL_OVERDUE_DAYS ? " — VENCIDO" : " — próximo"}`,
-        });
+    if (oil && (oil.level === "yellow" || oil.level === "red")) {
+      const fmt = (n: number) => n.toLocaleString("es-CO");
+      const parts: string[] = [];
+      if (oil.km_remaining != null && oil.next_oil_km != null) {
+        parts.push(
+          oil.km_remaining <= 0
+            ? `pasado por ${fmt(-oil.km_remaining)} km (tocaba a los ${fmt(oil.next_oil_km)} km, va en ${fmt(oil.current_km!)} km)`
+            : `faltan ${fmt(oil.km_remaining)} km (próximo a los ${fmt(oil.next_oil_km)} km)`
+        );
+      }
+      parts.push(`último hace ${oil.days_since} día(s) (${oil.last_oil_change_date})`);
+      alerts.push({
+        severity: oil.level,
+        text: `Cambio de aceite: ${parts.join(" · ")}${oil.level === "red" ? " — VENCIDO" : " — próximo"}`,
+      });
     }
 
     const insp = lastInspection.get(v.plate);
