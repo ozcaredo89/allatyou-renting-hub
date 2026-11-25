@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../lib/supabase";
-import { getCurrentOdometers } from "../lib/odometer";
+import { getOilStatusByPlate } from "../lib/oilChange";
 
 const r = Router();
 
@@ -51,30 +51,9 @@ r.get("/", async (req: Request, res: Response) => {
     // Fetch dynamic metrics efficiently
     const plates = data.map((v: any) => v.plate);
 
-    // 1. Odómetro actual: última lectura manual + km GPS posteriores (Issue #51).
-    // Ojo: las filas protrack_api son recorrido diario, no odómetro.
-    const mileageMap = await getCurrentOdometers(plates);
-
-    // 2. Obtener la última fecha de cambio de aceite para cada placa
-    const { data: expenses } = await supabase
-      .from("expenses")
-      .select("date, expense_vehicles!inner(plate)")
-      .eq("category", "Cambio de aceite")
-      .in("expense_vehicles.plate", plates)
-      .order("date", { ascending: false });
-
-    const oilMap = new Map();
-    if (expenses) {
-      for (const e of expenses) {
-        // e.expense_vehicles could be array depending on relation setup
-        const pArr = Array.isArray(e.expense_vehicles) ? e.expense_vehicles : [e.expense_vehicles];
-        for (const ev of pArr) {
-          if (ev && typeof ev === 'object' && ev.plate && !oilMap.has(ev.plate)) {
-             oilMap.set(ev.plate, e.date);
-          }
-        }
-      }
-    }
+    // 1. Odómetro actual (última lectura manual + km GPS posteriores, Issue #51) y estado del
+    // cambio de aceite por km + días (Issue #83). Ojo: las filas protrack_api son recorrido diario.
+    const oilMap = await getOilStatusByPlate(plates);
 
     // 2b. Última inspección finalizada de cada placa (semáforo de revisiones, Issue #47)
     const { data: inspRows } = await supabase
@@ -102,8 +81,9 @@ r.get("/", async (req: Request, res: Response) => {
       return {
         ...v,
         driver: effectiveDriver,
-        current_mileage: mileageMap.get(v.plate) || null,
-        last_oil_change_date: oilMap.get(v.plate) || null,
+        current_mileage: oilMap.get(v.plate)?.current_km ?? null,
+        last_oil_change_date: oilMap.get(v.plate)?.last_oil_change_date ?? null,
+        oil_status: oilMap.get(v.plate) ?? null,
         last_inspection_at: inspectionMap.get(v.plate) || null,
       };
     });
@@ -514,4 +494,4 @@ r.get("/:plate/top-locations", async (req: Request, res: Response) => {
   }
 });
 
-export default r;
+export default r;

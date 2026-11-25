@@ -45,11 +45,12 @@ export async function syncGpsImeis() {
         const devices = data.records;
         console.log(`[SYNC-IMEI] 📡 Se encontraron ${devices.length} dispositivos en Protrack.`);
 
-        // Buscar vehículos locales que no tengan IMEI
+        // Buscar vehículos locales que no tengan IMEI (los vendidos no: su GPS pasa a otro carro, Issue #83)
         const { data: localVehicles, error } = await supabase
             .from('vehicles')
             .select('plate')
-            .is('gps_imei', null);
+            .is('gps_imei', null)
+            .neq('status', 'sold');
 
         if (error) throw error;
 

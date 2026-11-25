@@ -96,7 +96,8 @@ export async function syncProtrackMileage(daysBack = 1) {
         const { data: vehicles } = await supabase
             .from('vehicles')
             .select('plate, gps_imei')
-            .not('gps_imei', 'is', null);
+            .not('gps_imei', 'is', null)
+            .neq('status', 'sold'); // un carro vendido puede conservar un IMEI que ya usa otro (Issue #83)
 
         if (!vehicles || vehicles.length === 0) {
             console.log("[MILEAGE-DAEMON] No hay vehículos con gps_imei configurado.");

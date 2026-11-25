@@ -222,6 +222,8 @@ export default function Expenses() {
   // Inputs temporales para añadir al carrito
   const [item, setItem] = useState("");
   const [category, setCategory] = useState("Mantenimiento");
+  // Km del odómetro al hacer el cambio de aceite (opcional, Issue #83)
+  const [oilKmStr, setOilKmStr] = useState("");
   const [amountStr, setAmountStr] = useState("");
 
   // --- AUTOCOMPLETADO DE REGLAS E HISTORICOS ---
@@ -450,6 +452,7 @@ export default function Expenses() {
         leasing_advance_start_date: advanceStartDate,
         leasing_advance_rate_percent: Math.max(0, Math.round(advTerms.rate * 100) / 100),
         leasing_advance_daily_installment: advTerms.daily,
+        odometer_km: oilKmStr && finalPlates.length === 1 && finalCart.some(c => c.category === "Cambio de aceite") ? Number(oilKmStr) : undefined,
       };
       const rs = await requestWithBasicAuth(`${API}/expenses`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -475,6 +478,7 @@ export default function Expenses() {
 
       // Reset form
       setCart([]); setItem(""); setCategory("Mantenimiento"); setDescription(""); setAmountStr(""); setPlates([]); setPlateInput(""); setEvidenceFiles([]); setInvoiceFiles([]);
+      setOilKmStr("");
       setApplyToLeasing(false); setLeasingSummary(null); setExcessMethod("cash");
       setAdvanceRateStr(String(DEFAULT_ADVANCE_RATE)); setAdvanceDailyStr("");
       setSubmitError(null); setFieldErrors({});
@@ -1148,6 +1152,23 @@ export default function Expenses() {
                 ))
               )}
             </div>
+
+            {/* Km del cambio de aceite (Issue #83): con él se calcula el próximo cambio (+10.000 km) */}
+            {(cart.some(c => c.category === "Cambio de aceite") || category === "Cambio de aceite") && plates.length <= 1 && (
+              <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <label className="mb-1 block text-sm font-bold text-amber-800">Kilometraje del carro en el cambio de aceite (opcional)</label>
+                <input
+                  className="w-full md:w-64 rounded-xl border border-amber-300 px-3 py-2 bg-white font-mono"
+                  inputMode="numeric"
+                  placeholder="Ej: 85.400"
+                  value={oilKmStr ? fmtCOP.format(Number(oilKmStr)) : ""}
+                  onChange={e => setOilKmStr(e.target.value.replace(/[^\d]/g, ""))}
+                />
+                <p className="text-[11px] text-amber-700 mt-1">
+                  El próximo cambio queda a este km + 10.000. Si lo dejas vacío se estima con el odómetro (lecturas + GPS) de esa fecha.
+                </p>
+              </div>
+            )}
 
             {cart.length > 0 && (
               <div className="flex justify-between items-center mt-4 bg-emerald-50 border border-emerald-200 p-4 rounded-xl">

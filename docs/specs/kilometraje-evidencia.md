@@ -26,3 +26,5 @@ Pedirle al conductor, mediante un link enviado por WhatsApp, el kilometraje actu
 - **Ruido descartado**: tramos con motor apagado y velocidad 0 en ambos pings (carro estacionado) y tramos con velocidad implícita > 160 km/h (saltos del GPS). Un hueco largo entre pings sí cuenta si la velocidad implícita es plausible.
 - Limitación conocida: es distancia en línea recta entre pings cada ~3 min, así que en calles con curvas queda algo por debajo del real; las lecturas manuales/evidencia del conductor corrigen la base.
 - **Recalcular días pasados** (solo si hay `raw_telemetry` de esos días; días sin pings no se tocan): `npx ts-node src/oraculo/mileage-daemon.ts 30` con el `.env` de producción.
+
+- **Carros vendidos** (Issue #83): el cálculo GPS y el sync de IMEI ignoran los vehículos `sold`; un vendido que comparta IMEI con un carro activo pierde el IMEI (su GPS se reinstaló en otro carro).
