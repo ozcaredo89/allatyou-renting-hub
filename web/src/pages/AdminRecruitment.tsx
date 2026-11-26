@@ -35,6 +35,57 @@ export default function AdminRecruitment() {
   const [rejectError, setRejectError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [isEditingDriver, setIsEditingDriver] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editForm, setEditForm] = useState<Record<string, any>>({});
+
+  const startEditDriver = () => {
+    if (!selected) return;
+    setEditForm({
+      full_name: selected.full_name || "",
+      document_number: selected.document_number || "",
+      date_of_birth: selected.date_of_birth || "",
+      phone_mobile: selected.phone_mobile || "",
+      email: selected.email || "",
+      address: selected.address || "",
+      license_number_cat: selected.license_number_cat || "",
+      driving_exp_time: selected.driving_exp_time || "",
+      similar_job_exp: selected.similar_job_exp || "",
+    });
+    setActionError(null);
+    setIsEditingDriver(true);
+  };
+
+  const saveEditDriver = async () => {
+    if (!selected) return;
+    setSavingEdit(true);
+    setActionError(null);
+    try {
+      const rs = await fetch(`${API}/driver-applications/${selected.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: ensureBasicAuth(),
+        },
+        body: JSON.stringify(editForm),
+      });
+      const data = await rs.json().catch(() => ({}));
+      if (!rs.ok) {
+        throw new Error(data?.error || "Error al guardar los cambios");
+      }
+      if (data.application) {
+        setSelected(data.application);
+      } else {
+        setSelected((prev: any) => (prev ? { ...prev, ...editForm } : prev));
+      }
+      setIsEditingDriver(false);
+      loadData();
+    } catch (err: any) {
+      setActionError(err?.message || "Error al guardar los cambios");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -363,7 +414,118 @@ export default function AdminRecruitment() {
 
               {/* Data Específica */}
               <div>
-                <h3 className="text-lg font-bold text-slate-900 mb-4 border-b pb-2">Información del {tab === "drivers" ? "Candidato" : "Vehículo"}</h3>
+                <div className="flex items-center justify-between mb-4 border-b pb-2 gap-2">
+                  <h3 className="text-lg font-bold text-slate-900">Información del {tab === "drivers" ? "Candidato" : "Vehículo"}</h3>
+                  {tab === "drivers" && !isEditingDriver && (
+                    <button
+                      type="button"
+                      onClick={startEditDriver}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      ✏️ Editar datos
+                    </button>
+                  )}
+                </div>
+
+                {tab === "drivers" && isEditingDriver ? (
+                  <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Nombre completo</label>
+                        <input
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                          value={editForm.full_name || ""}
+                          onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Cédula</label>
+                        <input
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                          value={editForm.document_number || ""}
+                          onChange={(e) => setEditForm({ ...editForm, document_number: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Fecha nacimiento</label>
+                        <input
+                          type="date"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                          value={editForm.date_of_birth || ""}
+                          onChange={(e) => setEditForm({ ...editForm, date_of_birth: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Celular</label>
+                        <input
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                          value={editForm.phone_mobile || ""}
+                          onChange={(e) => setEditForm({ ...editForm, phone_mobile: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Correo electrónico</label>
+                        <input
+                          type="email"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                          value={editForm.email || ""}
+                          onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Categoría de licencia</label>
+                        <input
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                          value={editForm.license_number_cat || ""}
+                          onChange={(e) => setEditForm({ ...editForm, license_number_cat: e.target.value })}
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Dirección</label>
+                        <input
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                          value={editForm.address || ""}
+                          onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Años conduciendo</label>
+                        <input
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                          value={editForm.driving_exp_time || ""}
+                          onChange={(e) => setEditForm({ ...editForm, driving_exp_time: e.target.value })}
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Experiencia previa</label>
+                        <textarea
+                          rows={2}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                          value={editForm.similar_job_exp || ""}
+                          onChange={(e) => setEditForm({ ...editForm, similar_job_exp: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingDriver(false)}
+                        disabled={savingEdit}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveEditDriver}
+                        disabled={savingEdit}
+                        className="rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                      >
+                        {savingEdit ? "Guardando..." : "Guardar cambios"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-6 text-sm">
                   {tab === "drivers" ? (
                     <>
@@ -374,6 +536,21 @@ export default function AdminRecruitment() {
                       <div><dt className="text-slate-500">Años Conduciendo</dt><dd className="font-medium">{selected.driving_exp_time || "No indicado"}</dd></div>
                       <div><dt className="text-slate-500">Compromiso Semanal</dt><dd className="font-medium">{selected.weekly_delivery_commitment ? "✅ Aceptado" : "❌ Rechazado"}</dd></div>
                       <div><dt className="text-slate-500">Test Toxicología</dt><dd className="font-medium">{selected.toxicology_test_consent ? "✅ Aceptado" : "❌ Rechazado"}</dd></div>
+                      {selected.edit_token && (
+                        <div className="sm:col-span-2">
+                          <dt className="text-slate-500">Enlace de edición del postulante</dt>
+                          <dd className="mt-1">
+                            <a
+                              href={`https://www.allatyou.com/postulacion/editar/${selected.edit_token}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-emerald-700 underline break-all"
+                            >
+                              https://www.allatyou.com/postulacion/editar/{selected.edit_token}
+                            </a>
+                          </dd>
+                        </div>
+                      )}
                       <div className="sm:col-span-2"><dt className="text-slate-500">Experiencia previa</dt><dd className="font-medium mt-1 p-2 bg-slate-50 rounded-lg">{selected.similar_job_exp || "No especificada"}</dd></div>
                     </>
                   ) : (
@@ -428,6 +605,7 @@ export default function AdminRecruitment() {
                     </>
                   )}
                 </dl>
+                )}
               </div>
 
               {/* Sección Referencias Personales (Solo Conductores) */}
@@ -477,13 +655,16 @@ export default function AdminRecruitment() {
               {tab === "drivers" && (
                 <div>
                   <div className="flex items-center justify-between mb-3 border-b pb-2">
-                    <h3 className="text-lg font-bold text-slate-900">Documentos y Firma Digital</h3>
-                    <span className="text-xs text-slate-500 font-medium">Cédula, Licencia y Firma</span>
+                    <h3 className="text-lg font-bold text-slate-900">Documentos, Selfie y Firma Digital</h3>
+                    <span className="text-xs text-slate-500 font-medium">Selfie, Cédula (F/T), Licencia (F/T) y Firma</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {[
-                      { kind: "id_document_photo", label: "Cédula de Ciudadanía", icon: "🪪" },
-                      { kind: "driver_license_photo", label: "Licencia de Conducción", icon: "🚗" },
+                      { kind: "driver_selfie", label: "Selfie (Perfil)", icon: "🤳" },
+                      { kind: "id_front_photo", label: "Cédula (Frontal)", icon: "🪪" },
+                      { kind: "id_back_photo", label: "Cédula (Trasera)", icon: "🪪" },
+                      { kind: "license_front_photo", label: "Licencia (Frontal)", icon: "🚗" },
+                      { kind: "license_back_photo", label: "Licencia (Trasera)", icon: "🚗" },
                       { kind: "digital_signature", label: "Firma Digital", icon: "✍️" },
                     ].map(slot => {
                       const allDocs = (selected.driver_application_documents || selected.documents || []);
