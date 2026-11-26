@@ -3,30 +3,207 @@ import { compressImage } from "../utils/compressImage";
 
 const API = (import.meta.env.VITE_API_URL as string).replace(/\/+$/, "");
 
-interface DriverFormProps {
-  referralCode?: string;
+type DemoKind = "selfie" | "id_front" | "id_back" | "license_front" | "license_back";
+
+function DocumentDemoIllustration({ kind }: { kind: DemoKind }) {
+  if (kind === "selfie") {
+    return (
+      <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-full border-2 border-dashed border-emerald-400/60 bg-slate-900/90 text-emerald-400">
+        <svg viewBox="0 0 48 48" className="h-9 w-9" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="24" cy="18" r="7" />
+          <path d="M11 39c2.5-6.5 7.5-9.5 13-9.5s10.5 3 13 9.5" strokeLinecap="round" />
+        </svg>
+      </div>
+    );
+  }
+  const isBack = kind === "id_back" || kind === "license_back";
+  const isLicense = kind === "license_front" || kind === "license_back";
+  const accent = isLicense ? "border-sky-400/50 bg-sky-950/30" : "border-emerald-400/50 bg-emerald-950/30";
+  return (
+    <div className={`mx-auto mb-2 h-14 w-24 rounded-lg border ${accent} p-1.5 flex flex-col justify-between`}>
+      {!isBack ? (
+        <>
+          <div className="flex items-center gap-1.5">
+            <div className="h-6 w-5 rounded-sm bg-slate-700/80 border border-white/15 shrink-0" />
+            <div className="flex-1 space-y-1">
+              <div className="h-1.5 w-11 rounded bg-white/30" />
+              <div className="h-1.5 w-8 rounded bg-white/20" />
+            </div>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">
+              {isLicense ? "LIC. FRENTE" : "CC FRENTE"}
+            </span>
+            <div className="h-1.5 w-6 rounded bg-emerald-400/50" />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="space-y-1">
+            <div className="h-1.5 w-full rounded bg-white/20" />
+            <div className="h-1.5 w-3/4 rounded bg-white/15" />
+          </div>
+          <div className="flex items-end justify-between gap-1">
+            <div className="h-4 flex-1 rounded-sm bg-white/25" />
+            <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">
+              REVERSO
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
-export function DriverApplicationForm({ referralCode }: DriverFormProps) {
+function DocumentPhotoCard(props: {
+  demoKind: DemoKind;
+  title: string;
+  hint: string;
+  url?: string;
+  uploading: boolean;
+  accept?: string;
+  capture?: "user" | "environment";
+  onUpload: (file: File) => void;
+}) {
+  const isPdf = Boolean(props.url && props.url.toLowerCase().includes(".pdf"));
+  return (
+    <div className="rounded-xl border border-white/10 bg-slate-950/70 p-3 flex flex-col justify-between">
+      <div className="mb-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-white">{props.title} *</span>
+          {props.url && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">
+              ✓ Lista
+            </span>
+          )}
+        </div>
+        <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">{props.hint}</p>
+      </div>
+
+      {props.url ? (
+        <div className="space-y-2">
+          {!isPdf ? (
+            <a href={props.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-emerald-500/30 bg-slate-900">
+              <img src={props.url} alt={props.title} className="h-28 w-full object-cover" />
+            </a>
+          ) : (
+            <a href={props.url} target="_blank" rel="noreferrer" className="flex h-20 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs font-semibold text-emerald-300">
+              📄 Documento PDF adjunto
+            </a>
+          )}
+          <label className="block text-center cursor-pointer rounded-lg border border-white/15 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-white/5">
+            {props.uploading ? "Subiendo..." : "Cambiar foto"}
+            <input
+              type="file"
+              accept={props.accept || "image/*,application/pdf"}
+              capture={props.capture}
+              className="hidden"
+              disabled={props.uploading}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) props.onUpload(f);
+              }}
+            />
+          </label>
+        </div>
+      ) : (
+        <label className="flex flex-col items-center justify-center rounded-xl border border-dashed border-white/20 bg-slate-900/50 p-3 hover:bg-slate-900 cursor-pointer transition-colors text-center">
+          <DocumentDemoIllustration kind={props.demoKind} />
+          <span className="text-xs font-semibold text-emerald-400">
+            {props.uploading ? "Subiendo..." : "Toca para subir o tomar foto"}
+          </span>
+          <span className="text-[10px] text-slate-500 mt-0.5">
+            {props.demoKind === "selfie" ? "JPG o PNG (cámara frontal)" : "JPG, PNG o PDF"}
+          </span>
+          <input
+            type="file"
+            accept={props.accept || "image/*,application/pdf"}
+            capture={props.capture}
+            className="hidden"
+            disabled={props.uploading}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) props.onUpload(f);
+            }}
+          />
+        </label>
+      )}
+    </div>
+  );
+}
+
+interface DriverFormProps {
+  referralCode?: string;
+  editToken?: string;
+  initialData?: any;
+  onUpdated?: () => void;
+}
+
+export function DriverApplicationForm({ referralCode, editToken, initialData, onUpdated }: DriverFormProps) {
+  const isEditMode = Boolean(editToken);
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [submittedEditUrl, setSubmittedEditUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const initialDocs: Array<{ kind: string; url: string }> = Array.isArray(initialData?.driver_application_documents)
+    ? initialData.driver_application_documents
+        .filter((d: any) => d?.kind && d?.url && !String(d.url).includes("placeholder"))
+        .map((d: any) => ({ kind: String(d.kind), url: String(d.url) }))
+    : [];
+
+  const initialRefs = Array.isArray(initialData?.driver_application_references) && initialData.driver_application_references.length >= 2
+    ? [...initialData.driver_application_references]
+        .sort((a: any, b: any) => (a.position || 0) - (b.position || 0))
+        .slice(0, 2)
+        .map((r: any) => ({ name: r.ref_name || "", phone: r.ref_phone || "" }))
+    : [
+        { name: "", phone: "" },
+        { name: "", phone: "" },
+      ];
+
+  const rawFamiliar = String(initialData?.familiar_with_vehicle || "Sí");
+  const isFamiliarOtro = rawFamiliar.startsWith("Otro:");
 
   // Estado alineado con las columnas de driver_applications y tu backend
   const [formData, setFormData] = useState({
-    personal: { fullName: "", documentNumber: "", dateOfBirth: "", phoneMobile: "", email: "", address: "" },
-    workExperience: { hasCommercialExp: false, drivingExpTime: "", similarJobExp: "" },
-    license: { hasValidLicense: false, licenseNumberCat: "", familiarWithVehicle: "Sí", familiarWithVehicleOther: "" },
-    responsibilities: { willingBasicMaintenance: true, weeklyDeliveryCommitment: true },
-    substances: { substanceUseLast6Months: false, substanceDetails: "", toxicologyTestConsent: true },
-    confirmations: { acceptsWorkConditions: false, understandsDamageLiability: false, truthDeclarationAccepted: false },
-    references: [
-      { name: "", phone: "" },
-      { name: "", phone: "" }
-    ],
-    documents: [] as Array<{ kind: string; url: string }>,
-    referral: { referralCodeUsed: referralCode || "" }
+    personal: {
+      fullName: initialData?.full_name || "",
+      documentNumber: initialData?.document_number || "",
+      dateOfBirth: initialData?.date_of_birth || "",
+      phoneMobile: initialData?.phone_mobile || "",
+      email: initialData?.email || "",
+      address: initialData?.address || "",
+    },
+    workExperience: {
+      hasCommercialExp: Boolean(initialData?.has_commercial_exp),
+      drivingExpTime: initialData?.driving_exp_time || "",
+      similarJobExp: initialData?.similar_job_exp || "",
+    },
+    license: {
+      hasValidLicense: true,
+      licenseNumberCat: initialData?.license_number_cat || "",
+      familiarWithVehicle: isFamiliarOtro ? "Otro" : rawFamiliar || "Sí",
+      familiarWithVehicleOther: isFamiliarOtro ? rawFamiliar.replace(/^Otro:\s*/i, "") : "",
+    },
+    responsibilities: {
+      willingBasicMaintenance: initialData?.willing_basic_maintenance ?? true,
+      weeklyDeliveryCommitment: initialData?.weekly_delivery_commitment ?? true,
+    },
+    substances: {
+      substanceUseLast6Months: Boolean(initialData?.substance_use_last_6_months),
+      substanceDetails: initialData?.substance_details || "",
+      toxicologyTestConsent: initialData?.toxicology_test_consent ?? true,
+    },
+    confirmations: {
+      acceptsWorkConditions: Boolean(initialData?.accepts_work_conditions),
+      understandsDamageLiability: Boolean(initialData?.understands_damage_liability),
+      truthDeclarationAccepted: Boolean(initialData?.truth_declaration_accepted),
+    },
+    references: initialRefs,
+    documents: initialDocs,
+    referral: { referralCodeUsed: initialData?.referral_code_used || referralCode || "" }
   });
 
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
@@ -169,11 +346,23 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
         setError("La dirección de residencia debe tener mínimo 8 caracteres.");
         return false;
       }
+      if (!formData.documents.some(d => d.kind === "driver_selfie")) {
+        setError("Por favor tómate o sube una selfie clara para tu perfil de conductor.");
+        return false;
+      }
+      if (!formData.documents.some(d => d.kind === "id_front_photo") || !formData.documents.some(d => d.kind === "id_back_photo")) {
+        setError("Por favor adjunta ambas fotos de tu cédula (cara frontal y cara trasera).");
+        return false;
+      }
     }
 
     if (currentStep === 2) {
-      if (formData.license.hasValidLicense && !formData.license.licenseNumberCat.trim()) {
-        setError("Por favor ingresa la categoría de tu licencia (ej. C1, C2).");
+      if (!formData.license.licenseNumberCat.trim()) {
+        setError("Por favor ingresa la categoría de tu licencia vigente (ej. C1, C2).");
+        return false;
+      }
+      if (!formData.documents.some(d => d.kind === "license_front_photo") || !formData.documents.some(d => d.kind === "license_back_photo")) {
+        setError("Por favor adjunta ambas fotos de tu licencia de conducción (cara frontal y cara trasera).");
         return false;
       }
       if (!formData.workExperience.drivingExpTime.trim()) {
@@ -238,8 +427,11 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API}/driver-applications`, {
-        method: "POST",
+      const targetUrl = isEditMode
+        ? `${API}/driver-applications/by-token/${editToken}`
+        : `${API}/driver-applications`;
+      const response = await fetch(targetUrl, {
+        method: isEditMode ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
       });
@@ -273,7 +465,10 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
         }
         throw new Error(errData.message || "Error en la validación del formulario.");
       }
+      const okData = await response.json().catch(() => ({}));
+      if (okData?.editUrl) setSubmittedEditUrl(okData.editUrl);
       setSuccess(true);
+      onUpdated?.();
     } catch (err: any) {
       setError(err.message || "Ocurrió un error inesperado al enviar la postulación.");
     } finally {
@@ -283,10 +478,27 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
 
   if (success) {
     return (
-      <div className="rounded-3xl border border-emerald-500/30 bg-slate-900/80 p-8 text-center">
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-3xl text-emerald-400">✓</div>
-        <h3 className="text-xl font-bold text-white">¡Postulación Enviada!</h3>
-        <p className="mt-2 text-slate-300 text-sm">Pronto nos pondremos en contacto contigo.</p>
+      <div className="rounded-3xl border border-emerald-500/30 bg-slate-900/80 p-8 text-center space-y-3">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-3xl text-emerald-400">✓</div>
+        <h3 className="text-xl font-bold text-white">
+          {isEditMode ? "¡Postulación Actualizada!" : "¡Postulación Enviada!"}
+        </h3>
+        <p className="text-slate-300 text-sm">
+          {isEditMode
+            ? "Guardamos tus cambios y enviamos un correo con el resumen actualizado."
+            : `Pronto nos pondremos en contacto contigo. Enviamos un resumen de tus datos a ${formData.personal.email}.`}
+        </p>
+        {submittedEditUrl && (
+          <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/70 p-4 text-left text-xs text-slate-300">
+            <p className="font-semibold text-white mb-1">¿Necesitas corregir algún dato?</p>
+            <p className="text-slate-400 mb-2">
+              Puedes revisar o modificar tu postulación mientras esté en revisión usando el enlace que enviamos a tu correo:
+            </p>
+            <a href={submittedEditUrl} className="text-emerald-400 underline break-all font-medium">
+              {submittedEditUrl}
+            </a>
+          </div>
+        )}
       </div>
     );
   }
@@ -373,46 +585,46 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
             />
           </div>
 
-          {/* Foto Cédula */}
-          <div className="pt-2 border-t border-white/10">
-            <label className="block text-xs font-semibold text-slate-300 mb-1">
-              Foto de Cédula de Ciudadanía (Opcional)
-            </label>
-            {formData.documents.some(d => d.kind === "id_document_photo") ? (
-              <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs">
-                <span className="font-semibold flex items-center gap-2">✓ Cédula adjuntada con éxito</span>
-                <label className="cursor-pointer underline font-bold hover:text-emerald-300">
-                  Cambiar
-                  <input
-                    type="file"
-                    accept="image/*,application/pdf"
-                    className="hidden"
-                    onChange={e => {
-                      const f = e.target.files?.[0];
-                      if (f) handleDocumentUpload("id_document_photo", f);
-                    }}
-                  />
-                </label>
-              </div>
-            ) : (
-              <label className="flex flex-col items-center justify-center p-4 border border-dashed border-white/20 rounded-xl bg-slate-950/60 hover:bg-slate-950 cursor-pointer transition-colors group">
-                <span className="text-xl mb-1 group-hover:scale-110 transition-transform">🪪</span>
-                <span className="text-xs text-slate-300 font-semibold">
-                  {uploadingDoc === "id_document_photo" ? "Subiendo cédula..." : "Toca para subir foto de tu cédula"}
-                </span>
-                <span className="text-[11px] text-slate-500 mt-0.5">JPG, PNG o PDF</span>
-                <input
-                  type="file"
-                  accept="image/*,application/pdf"
-                  className="hidden"
-                  disabled={uploadingDoc === "id_document_photo"}
-                  onChange={e => {
-                    const f = e.target.files?.[0];
-                    if (f) handleDocumentUpload("id_document_photo", f);
-                  }}
-                />
-              </label>
-            )}
+          {/* Selfie + Cédula Frontal y Trasera (Obligatorios) */}
+          <div className="pt-3 border-t border-white/10 space-y-3">
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                Fotos obligatorias de identidad
+              </h4>
+              <p className="text-[11px] text-slate-400">
+                Sigue la guía visual: buena luz, sin reflejos y con las 4 esquinas del documento visibles.
+              </p>
+            </div>
+
+            <DocumentPhotoCard
+              demoKind="selfie"
+              title="Selfie (Foto de perfil)"
+              hint="Rostro centrado, buena iluminación, sin gorra ni gafas oscuras."
+              url={formData.documents.find(d => d.kind === "driver_selfie")?.url}
+              uploading={uploadingDoc === "driver_selfie"}
+              accept="image/*"
+              capture="user"
+              onUpload={(f) => handleDocumentUpload("driver_selfie", f)}
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <DocumentPhotoCard
+                demoKind="id_front"
+                title="Cédula — Cara Frontal"
+                hint="Donde aparece tu foto y número de documento."
+                url={formData.documents.find(d => d.kind === "id_front_photo")?.url}
+                uploading={uploadingDoc === "id_front_photo"}
+                onUpload={(f) => handleDocumentUpload("id_front_photo", f)}
+              />
+              <DocumentPhotoCard
+                demoKind="id_back"
+                title="Cédula — Cara Trasera"
+                hint="Reverso completo con huella y código de barras."
+                url={formData.documents.find(d => d.kind === "id_back_photo")?.url}
+                uploading={uploadingDoc === "id_back_photo"}
+                onUpload={(f) => handleDocumentUpload("id_back_photo", f)}
+              />
+            </div>
           </div>
 
           <button onClick={handleNext} className="w-full mt-2 rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400">
@@ -424,68 +636,37 @@ export function DriverApplicationForm({ referralCode }: DriverFormProps) {
       {step === 2 && (
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-white">2. Experiencia</h3>
-          <div className="flex flex-col gap-3 py-1">
-            <label className="flex items-center gap-3 cursor-pointer">
+          <div className="space-y-3 py-1">
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300 font-medium">
+              ✓ Requisito obligatorio: debes contar con licencia de conducción vigente.
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">Categoría de licencia vigente *</label>
               <input
-                type="checkbox"
-                className="h-4 w-4 accent-emerald-500"
-                checked={formData.license.hasValidLicense}
-                onChange={e => setFormData({...formData, license: {...formData.license, hasValidLicense: e.target.checked}})}
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white"
+                placeholder="Ej. C1, C2, B1"
+                value={formData.license.licenseNumberCat}
+                onChange={e => setFormData({...formData, license: {...formData.license, licenseNumberCat: e.target.value}})}
               />
-              <span className="text-sm text-slate-300">Tengo licencia de conducción vigente</span>
-            </label>
-            {formData.license.hasValidLicense && (
-              <div className="space-y-3 mt-1">
-                <input
-                  className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-2 text-sm text-white"
-                  placeholder="Categoría de licencia (Ej. C1, C2, B1)"
-                  value={formData.license.licenseNumberCat}
-                  onChange={e => setFormData({...formData, license: {...formData.license, licenseNumberCat: e.target.value}})}
-                />
-
-                {/* Foto Licencia */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Foto de Licencia de Conducción (Opcional)
-                  </label>
-                  {formData.documents.some(d => d.kind === "driver_license_photo") ? (
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs">
-                      <span className="font-semibold flex items-center gap-2">✓ Licencia adjuntada con éxito</span>
-                      <label className="cursor-pointer underline font-bold hover:text-emerald-300">
-                        Cambiar
-                        <input
-                          type="file"
-                          accept="image/*,application/pdf"
-                          className="hidden"
-                          onChange={e => {
-                            const f = e.target.files?.[0];
-                            if (f) handleDocumentUpload("driver_license_photo", f);
-                          }}
-                        />
-                      </label>
-                    </div>
-                  ) : (
-                    <label className="flex flex-col items-center justify-center p-4 border border-dashed border-white/20 rounded-xl bg-slate-950/60 hover:bg-slate-950 cursor-pointer transition-colors group">
-                      <span className="text-xl mb-1 group-hover:scale-110 transition-transform">🚗</span>
-                      <span className="text-xs text-slate-300 font-semibold">
-                        {uploadingDoc === "driver_license_photo" ? "Subiendo licencia..." : "Toca para subir foto de tu licencia"}
-                      </span>
-                      <span className="text-[11px] text-slate-500 mt-0.5">JPG, PNG o PDF</span>
-                      <input
-                        type="file"
-                        accept="image/*,application/pdf"
-                        className="hidden"
-                        disabled={uploadingDoc === "driver_license_photo"}
-                        onChange={e => {
-                          const f = e.target.files?.[0];
-                          if (f) handleDocumentUpload("driver_license_photo", f);
-                        }}
-                      />
-                    </label>
-                  )}
-                </div>
-              </div>
-            )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <DocumentPhotoCard
+                demoKind="license_front"
+                title="Licencia — Cara Frontal"
+                hint="Foto legible del frente con tus datos y número."
+                url={formData.documents.find(d => d.kind === "license_front_photo")?.url}
+                uploading={uploadingDoc === "license_front_photo"}
+                onUpload={(f) => handleDocumentUpload("license_front_photo", f)}
+              />
+              <DocumentPhotoCard
+                demoKind="license_back"
+                title="Licencia — Cara Trasera"
+                hint="Reverso legible con categorías y fechas de vigencia."
+                url={formData.documents.find(d => d.kind === "license_back_photo")?.url}
+                uploading={uploadingDoc === "license_back_photo"}
+                onUpload={(f) => handleDocumentUpload("license_back_photo", f)}
+              />
+            </div>
           </div>
 
           <div>

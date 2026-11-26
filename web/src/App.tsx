@@ -14,6 +14,7 @@ import Expenses from "./pages/Expenses";
 import Assistance from "./pages/Assistance";
 import RentYourCar from "./pages/RentYourCar";
 import RentCatalog from "./pages/RentCatalog";
+import EditDriverApplication from "./pages/EditDriverApplication";
 
 // Páginas Administrativas
 import AdminAdvances from "./pages/AdminAdvances";
@@ -81,6 +82,7 @@ export default function App() {
               {/* Catálogo de carros listos (Alquiler & Venta) y subida */}
               <Route path="/rent" element={<RentCatalog />} />
               <Route path="/rent-your-car" element={<RentYourCar />} />
+              <Route path="/postulacion/editar/:token" element={<EditDriverApplication />} />
 
               {/* RUTA DE PRUEBAS LOCALES PARA LA LANDING */}
               <Route path="/landing-test" element={<Landing />} />
@@ -139,6 +141,7 @@ export default function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/rent-your-car" element={<RentYourCar />} />
             <Route path="/rent" element={<RentCatalog />} />
+            <Route path="/postulacion/editar/:token" element={<EditDriverApplication />} />
 
             {/* Permitimos /pay también en la landing por comodidad de conductores */}
             <Route path="/pay" element={<Pay />} />
